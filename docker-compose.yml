@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: fastapi_web
+    restart: always
+    # .envファイルから環境変数を読み込む
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/chroma_db:/app/chroma_db
+      - ./data/feedback.csv:/app/feedback.csv
+      - ./data/shared_settings.json:/app/shared_settings.json
+      - ./data/login_log.csv:/app/login_log.csv
+    # Gunicornをワーカーとして使用するコマンド
+    # command: gunicorn --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 main:app
+    # environmentセクションは削除し、.envファイルにADMIN_PASSWORDを設定します
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    depends_on:
+      - web
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  grafana-storage:

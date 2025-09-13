@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+google-generativeai
+httpx
+chromadb
+pypdf
+python-docx
+beautifulsoup4
+lxml
+python-multipart
+prometheus-fastapi-instrumentator
+gunicorn
+authlib
+python-dotenv
+itsdangerous

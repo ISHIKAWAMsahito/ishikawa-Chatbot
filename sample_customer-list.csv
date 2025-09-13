@@ -1,0 +1,62 @@
+import chromadb
+
+# 1. インメモリのChromaDBクライアントを準備
+client = chromadb.Client()
+
+# 2. コレクションを作成（既に存在する場合はそれを取得）
+collection_name = "my_sample_collection"
+collection = client.get_or_create_collection(name=collection_name)
+
+# 3. コレクションに追加する仮のデータを作成
+# ドキュメント、メタデータ、IDはすべて同じ数だけ用意します
+documents_data = [
+    "これはAIに関する最初のドキュメントです。",
+    "ChromaDBは高性能なベクトルデータベースとして知られています。",
+    "北海道の札幌市は、美しい雪景色で有名です。",
+    "Pythonはデータサイエンスの分野で広く使われているプログラミング言語です。",
+    "最新のLLMは、自然な対話能力を持っています。",
+]
+
+metadatas_data = [
+    {"category": "AI", "source": "doc-a"},
+    {"category": "Database", "source": "doc-b"},
+    {"category": "Geography", "source": "doc-c"},
+    {"category": "Programming", "source": "doc-d"},
+    {"category": "AI", "source": "doc-e"},
+]
+
+ids_data = [
+    "doc_id_01",
+    "doc_id_02",
+    "doc_id_03",
+    "doc_id_04",
+    "doc_id_05",
+]
+
+
+# 4. データをコレクションに追加
+collection.add(
+    documents=documents_data,
+    metadatas=metadatas_data,
+    ids=ids_data
+)
+
+
+# --- 確認 ---
+# 5. データが追加されたか確認
+print(f"✅ コレクション '{collection_name}' に、{collection.count()} 件のドキュメントを追加しました。")
+
+# 6. 追加したデータを取得して表示
+print("\n--- 登録されたデータの一部 ---")
+retrieved_data = collection.get(ids=["doc_id_01", "doc_id_02", "doc_id_03"])
+print(retrieved_data)
+
+
+# 7. 簡単なクエリ（検索）を実行してみる
+print("\n--- 「AI」に関するデータを検索 ---")
+query_results = collection.query(
+    query_texts=["AI技術について教えて"],
+    n_results=2, # 上位2件を取得
+    where={"category": "AI"} # メタデータでカテゴリが "AI" のものに絞り込む
+)
+print(query_results)

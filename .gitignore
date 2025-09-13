@@ -21,3 +21,11 @@ oct_env/
 # Replitが自動生成するファイル
 .replit
 replit.nix
+
+# コンパイルされたファイルや圧縮ファイル
+*.exe
+*.zip
+*.7z
+.env
+諸資格過程/
+チャットボットdb/

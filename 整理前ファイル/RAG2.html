@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MySQL連携 RAG検索チャットボット</title>
+    <style>
+        /* CSS is unchanged, so it's omitted here for brevity. */
+        /* Paste the original CSS here. */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.98);
+            border-radius: 25px;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            animation: pulse 4s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+        }
+        .header h1 {
+            font-size: 3rem;
+            margin-bottom: 15px;
+            text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3);
+            position: relative;
+            z-index: 1;
+        }
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            position: relative;
+            z-index: 1;
+        }
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 30px;
+            padding: 30px;
+            min-height: 600px;
+        }
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            position: relative;
+        }
+        .chat-header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 500px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .message {
+            max-width: 80%;
+            padding: 15px 20px;
+            border-radius: 20px;
+            position: relative;
+            animation: slideIn 0.3s ease-out;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .message.user {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            align-self: flex-end;
+            margin-left: auto;
+        }
+        .message.bot {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            color: #333;
+            align-self: flex-start;
+            border-left: 4px solid #4facfe;
+        }
+        .message-content {
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        pre {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        code {
+            font-family: 'Courier New', Courier, monospace;
+        }
+        .message-time {
+            font-size: 0.8rem;
+            opacity: 0.7;
+            margin-top: 8px;
+        }
+        .chat-input-container {
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #e9ecef;
+        }
+        .chat-input-box {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+        .chat-input {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 25px;
+            font-size: 16px;
+            outline: none;
+            transition: all 0.3s ease;
+            resize: none;
+            min-height: 50px;
+            max-height: 120px;
+        }
+        .chat-input:focus {
+            border-color: #4facfe;
+            box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1);
+        }
+        .send-btn {
+            padding: 15px 25px;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .send-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(79, 172, 254, 0.3);
+        }
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .panel-section {
+            background: white;
+            padding: 25px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+        .section-title {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 3px solid #4facfe;
+            padding-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 MySQL連携 RAG検索チャットボット</h1>
+            <p>データベース連携・ベクトル検索・RAG機能搭載</p>
+        </div>
+
+        <div class="main-content">
+            <div class="chat-container">
+                <div class="chat-header">
+                    💬 AIアシスタントとのチャット
+                </div>
+                
+                <div class="chat-messages" id="chatMessages">
+                    <div class="message bot fade-in">
+                        <div class="message-content">
+                            こんにちは！私はMySQLに接続しているAIアシスタントです。🤖<br>
+                            データベースに関する質問をどうぞ！
+                        </div>
+                        <div class="message-time">システム起動時刻</div>
+                    </div>
+                </div>
+
+                <div class="chat-input-container">
+                    <div class="chat-input-box">
+                        <textarea 
+                            id="chatInput" 
+                            class="chat-input" 
+                            placeholder="質問を入力してください..." 
+                            rows="1"
+                        ></textarea>
+                        <button id="sendBtn" class="send-btn">
+                            <span>送信</span>
+                            <span>📤</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <div class="panel-section">
+                    <h3 class="section-title">💡 おすすめの質問</h3>
+                    <div class="search-suggestions">
+                        <div>特定の情報を検索して</div>
+                        <div>データの概要を見せて</div>
+                    </div>
+                </div>
+                <div class="panel-section">
+                    <h3 class="section-title">📊 データベース情報</h3>
+                    <div>MySQLデータベースに接続済みです。</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+
+        // Event listener for the send button
+        sendBtn.addEventListener('click', sendMessage);
+
+        // Event listener for Enter key (allows Shift+Enter for new lines)
+        chatInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Function to send a message
+        async function sendMessage() {
+            const message = chatInput.value.trim();
+            if (!message) return;
+
+            // Add user message to the screen
+            addMessage(message, 'user');
+            chatInput.value = ''; // Clear input field
+
+            try {
+                // Send request to the backend server
+                const response = await fetch('http://localhost:3001/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message: message }),
+                });
+
+                if (!response.ok) {
+                    throw new Error('Server responded with an error.');
+                }
+
+                const data = await response.json();
+                
+                // Format and add the server's response to the screen
+                let botReply = data.reply;
+                if (data.data && data.data.length > 0) {
+                    // Format the search result data for display
+                    const results = data.data.map(item => JSON.stringify(item)).join('\n');
+                    botReply += '\n\n**検索データ:**\n```\n' + results + '\n```';
+                }
+                
+                addMessage(botReply, 'bot');
+
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage('エラーが発生しました。バックエンドサーバーが起動しているか確認してください。', 'bot');
+            }
+        }
+
+        // Helper function to add a message to the screen
+        function addMessage(content, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            // Replace newlines with <br> for HTML display
+            let formattedContent = content.replace(/\n/g, '<br>');
+
+            // Wrap code blocks in ``` with <pre><code> for proper formatting
+            formattedContent = formattedContent.replace(/```<br>([\s\S]*?)<br>```/g, (match, code) => {
+                // Restore newlines within the code block
+                return `<pre><code>${code.replace(/<br>/g, '\n')}</code></pre>`;
+            });
+
+            messageDiv.innerHTML = `<div class="message-content">${formattedContent}</div>`;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight; // Auto-scroll
+        }
+    </script>
+</body>
+</html>

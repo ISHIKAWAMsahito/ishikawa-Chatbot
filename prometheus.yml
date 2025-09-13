@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'fastapi-app'
+    static_configs:
+      # 「app」から「fastapi_app」に変更
+       - targets: ['web:8000']

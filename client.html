@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>学生支援チャットボット</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; overflow-x: hidden; }
+        .container { max-width: 800px; margin: 0 auto; background: rgba(255, 255, 255, 0.98); border-radius: 25px; box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15); overflow: hidden; display: flex; flex-direction: column; height: calc(100vh - 40px); }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; position: relative; }
+        .header h1 { font-size: 2rem; margin-bottom: 10px; text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3); }
+        .header .subtitle { font-size: 1rem; opacity: 0.9; }
+        .settings-indicator { position: absolute; top: 15px; right: 15px; display: flex; align-items: center; gap: 10px; font-size: 0.85rem; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 15px; }
+        .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #28a745; animation: pulse-dot 2s infinite; }
+        .sync-dot.disconnected { background: #dc3545; animation: none; }
+        @keyframes pulse-dot { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
+        .chat-container { display: flex; flex-direction: column; flex-grow: 1; background: white; overflow: hidden; position: relative; }
+        .chat-header { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 15px; text-align: center; font-weight: 600; font-size: 1.1rem; }
+        .chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .message { max-width: 80%; padding: 15px 20px; border-radius: 20px; position: relative; animation: slideIn 0.3s ease-out; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .message.user { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; align-self: flex-end; margin-left: auto; }
+        .message.bot { background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); color: #333; align-self: flex-start; border-left: 4px solid #4facfe; }
+        .message-content { line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; }
+        .message-content a { color: #007bff; text-decoration: underline; }
+        .message-content a:hover { color: #0056b3; }
+        .message-time { font-size: 0.8rem; opacity: 0.7; margin-top: 8px; }
+        .chat-input-container { padding: 20px; background: #f8f9fa; border-top: 1px solid #e9ecef; }
+        .chat-input-box { display: flex; gap: 10px; align-items: flex-end; }
+        .chat-input { flex: 1; padding: 15px; border: 2px solid #e9ecef; border-radius: 25px; font-size: 16px; outline: none; transition: all 0.3s ease; resize: none; min-height: 50px; max-height: 120px; }
+        .chat-input:focus { border-color: #4facfe; box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1); }
+        .send-btn { padding: 15px 25px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; border: none; border-radius: 25px; cursor: pointer; font-weight: 600; transition: all 0.3s ease; display: flex; align-items: center; gap: 8px; }
+        .send-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(79, 172, 254, 0.3); }
+        .send-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .feedback-container { margin-top: 12px; padding-top: 8px; border-top: 1px solid #ddd; }
+        .feedback-btn { background: none; border: 1px solid #ccc; border-radius: 15px; padding: 3px 8px; margin-left: 8px; cursor: pointer; transition: all 0.2s ease; }
+        .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
+        .error-message { background: #ffebee; color: #c62828; padding: 10px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #f44336; }
+        .loading-indicator { display: inline-block; width: 20px; height: 20px; border: 2px solid #f3f3f3; border-top: 2px solid #4facfe; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 10px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .settings-update-notification { position: fixed; top: 20px; right: 20px; background: #28a745; color: white; padding: 15px 20px; border-radius: 10px; box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3); z-index: 1000; transform: translateX(350px); transition: transform 0.3s ease; }
+        .settings-update-notification.show { transform: translateX(0); }
+        .settings-update-notification .close-btn { background: none; border: none; color: white; font-size: 18px; margin-left: 10px; cursor: pointer; }
+        @media (max-width: 480px) {
+            body { padding: 5px; }
+            .container { height: calc(100vh - 10px); }
+            .header { padding: 20px; }
+            .header h1 { font-size: 1.6rem; }
+            .header .subtitle { font-size: 0.9rem; }
+            .settings-indicator { position: static; margin-top: 10px; justify-content: center; }
+            .chat-input-container { padding: 15px; }
+            .chat-input-box { flex-direction: column; align-items: stretch; }
+            .send-btn { justify-content: center; padding: 12px; }
+            .settings-update-notification { position: fixed; top: auto; bottom: 20px; right: 20px; left: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="settings-indicator" id="settingsIndicator">
+                <div class="sync-dot disconnected" id="syncDot"></div>
+                <span id="syncText">設定同期準備中...</span>
+            </div>
+            <h1>🔍 学生支援チャットボット</h1>
+            <p class="subtitle">学生生活に関する様々な質問にお答えします！</p>
+        </div>
+        <div class="chat-container">
+            <div class="chat-header">💬 AIチャット</div>
+            <div class="chat-messages" id="chatMessages">
+                <div class="message bot">
+                    <div class="message-content">
+                        私は学生支援チャットボットです。🚀<br>
+                        - 学生証を紛失・盗難・汚損したときは？<br>
+                        - 新しいサークルを作るには？<br>
+                        - 休学・復学・退学の手続きをしたいときは？<br>
+                        様々な質問にお答えします！
+                    </div>
+                    <div class="message-time">システム起動時刻</div>
+                </div>
+            </div>
+            <div class="chat-input-container">
+                <div class="chat-input-box">
+                    <textarea id="chatInput" class="chat-input" placeholder="質問を入力してください..." rows="1"></textarea>
+                    <button id="sendBtn" class="send-btn">
+                        <span>送信</span>
+                        <span>🔍</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 設定更新通知 -->
+    <div id="settingsNotification" class="settings-update-notification">
+        <span id="notificationText">設定が管理者によって更新されました</span>
+        <button class="close-btn" onclick="hideSettingsNotification()">&times;</button>
+    </div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const BACKEND_API_BASE_URL = window.location.origin;
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+        let settingsSocket = null;
+
+        function connectSettingsWebSocket() {
+            try {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
+                settingsSocket = new WebSocket(wsUrl);
+
+                settingsSocket.onopen = function() {
+                    console.log('クライアント設定同期WebSocket接続完了');
+                    updateSyncIndicator(true, '設定同期中');
+                    setInterval(() => {
+                        if (settingsSocket && settingsSocket.readyState === WebSocket.OPEN) {
+                            settingsSocket.send('ping');
+                        }
+                    }, 30000);
+                };
+
+                settingsSocket.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'settings_update') {
+                            console.log('設定更新を受信:', data.data);
+                            showSettingsUpdateNotification();
+                        }
+                    } catch (e) {
+                        console.log('WebSocketメッセージ:', event.data);
+                    }
+                };
+
+                settingsSocket.onclose = function() {
+                    console.log('クライアント設定同期WebSocket切断');
+                    updateSyncIndicator(false, '設定同期切断');
+                    setTimeout(connectSettingsWebSocket, 5000);
+                };
+
+                settingsSocket.onerror = function(error) {
+                    console.error('クライアント設定同期WebSocketエラー:', error);
+                    updateSyncIndicator(false, '設定同期エラー');
+                };
+
+            } catch (error) {
+                console.error('WebSocket接続エラー:', error);
+                updateSyncIndicator(false, '設定同期接続失敗');
+                setTimeout(connectSettingsWebSocket, 5000);
+            }
+        }
+
+        function updateSyncIndicator(connected, message) {
+            const syncDot = document.getElementById('syncDot');
+            const syncText = document.getElementById('syncText');
+            if (syncDot && syncText) {
+                syncDot.className = connected ? 'sync-dot' : 'sync-dot disconnected';
+                syncText.textContent = message;
+            }
+        }
+
+        function showSettingsUpdateNotification() {
+            const notification = document.getElementById('settingsNotification');
+            notification.classList.add('show');
+            setTimeout(() => hideSettingsNotification(), 5000);
+        }
+
+        function hideSettingsNotification() {
+            document.getElementById('settingsNotification').classList.remove('show');
+        }
+        window.hideSettingsNotification = hideSettingsNotification;
+
+        function addMessage(text, type) {
+            const messageWrapper = document.createElement('div');
+            messageWrapper.className = `message ${type}`;
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+            messageContent.innerHTML = text; // innerHTML to render links
+            messageWrapper.appendChild(messageContent);
+            const messageTime = document.createElement('div');
+            messageTime.className = 'message-time';
+            messageTime.textContent = new Date().toLocaleTimeString();
+            messageWrapper.appendChild(messageTime);
+            chatMessages.appendChild(messageWrapper);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return messageWrapper;
+        }
+
+        async function sendFeedback(element, rating) {
+            const messageWrapper = element.closest('.message');
+            const logId = messageWrapper.dataset.logId;
+            if (!logId) {
+                console.error("Log ID not found for feedback.");
+                return;
+            }
+            try {
+                await fetch(`${BACKEND_API_BASE_URL}/feedback`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ log_id: logId, rating: rating })
+                });
+                element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
+            } catch (error) {
+                console.error("Error sending feedback:", error);
+            }
+        }
+        
+        async function initializeSystem() {
+            try {
+                const healthResponse = await fetch(`${BACKEND_API_BASE_URL}/health`);
+                if (!healthResponse.ok) {
+                    addMessage('⚠️ システムが準備中です。しばらくお待ちください。', 'bot');
+                    return;
+                }
+                connectSettingsWebSocket();
+            } catch (error) {
+                addMessage('❌ システムに接続できません。サーバーが起動していることを確認してください。', 'bot');
+                updateSyncIndicator(false, '接続エラー');
+            }
+        }
+
+        async function sendMessage() {
+            const userInput = chatInput.value.trim();
+            if (!userInput) return;
+
+            addMessage(userInput.replace(/</g, "&lt;").replace(/>/g, "&gt;"), 'user');
+            chatInput.value = '';
+            chatInput.style.height = 'auto';
+            sendBtn.disabled = true;
+
+            const botMessageElement = addMessage('<div class="loading-indicator"></div>思考中...', 'bot');
+            const botMessageContent = botMessageElement.querySelector('.message-content');
+            let fullResponse = '';
+
+            try {
+                const response = await fetch(`${BACKEND_API_BASE_URL}/chat_for_client`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: userInput })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: `サーバーエラー: ${response.statusText}` }));
+                    throw new Error(errorData.detail || `サーバーエラー: ${response.statusText}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                botMessageContent.innerHTML = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        if (botMessageElement.dataset.logId) {
+                            const feedbackContainer = document.createElement('div');
+                            feedbackContainer.className = 'feedback-container';
+                            feedbackContainer.innerHTML = `
+                                <span>この回答は役に立ちましたか？</span>
+                                <button class="feedback-btn">👍</button>
+                                <button class="feedback-btn">👎</button>
+                            `;
+                            feedbackContainer.querySelector('button:first-of-type').onclick = (e) => sendFeedback(e.target, 'good');
+                            feedbackContainer.querySelector('button:last-of-type').onclick = (e) => sendFeedback(e.target, 'bad');
+                            botMessageElement.appendChild(feedbackContainer);
+                        }
+                        break;
+                    }
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.trim().startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                if (data.content) {
+                                    fullResponse += data.content;
+                                    botMessageContent.innerHTML = fullResponse;
+                                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                                }
+                                if (data.log_id) {
+                                    botMessageElement.dataset.logId = data.log_id;
+                                }
+                            } catch (e) {
+                                // Ignore JSON parsing errors during streaming
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('メッセージ送信エラー:', error);
+                botMessageContent.innerHTML = `エラーが発生しました: ${error.message}`;
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        chatInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+        });
+
+        sendBtn.addEventListener('click', sendMessage);
+        
+        initializeSystem();
+    });
+</script>
+</body>
+</html>
+
