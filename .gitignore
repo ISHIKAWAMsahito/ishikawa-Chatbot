@@ -2,9 +2,6 @@
 __pycache__/
 *.pyc
 
-# ChromaDBのデータベース（クラウド上で毎回自動作成するため、PC上の保存データはアップロード不要）
-chroma_db/
-chroma_data/
 
 # Sentence Transformersのモデルキャッシュフォルダ
 model_cache/
