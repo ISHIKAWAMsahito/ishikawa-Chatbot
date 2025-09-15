@@ -9,11 +9,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# アプリケーションのコード全体をコピー
+# ★★★★★ ここが重要 ★★★★★
+# データベースとアプリケーションのコード全体をコピー
 # .dockerignore ファイルで指定されたファイル/フォルダは除外される
+COPY chroma_db ./chroma_db
 COPY . .
 
 # アプリケーションがリッスンするポートを指定
+# Renderは自動で80/443にマッピングするが、コンテナ内のポートを指定しておく
 EXPOSE 8000
 
 # コンテナ起動時に実行するコマンド
