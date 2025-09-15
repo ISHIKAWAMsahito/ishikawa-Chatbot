@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   web:
     build: .
@@ -39,9 +37,6 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - grafana-storage:/var/lib/grafana
+      - ./grafana_data:/var/lib/grafana
     depends_on:
       - prometheus
-
-volumes:
-  grafana-storage:

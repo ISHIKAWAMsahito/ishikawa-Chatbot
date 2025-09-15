@@ -22,6 +22,9 @@ RUN ls -la
 
 # コンテナの10000番ポートを外部に公開することを宣言
 EXPOSE 10000
+# ...
+COPY chroma_db ./chroma_db
+# ...
 
 # コンテナが起動したときに実行されるコマンド
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]

@@ -13,3 +13,6 @@ gunicorn
 authlib
 python-dotenv
 itsdangerous
+pandas
+pytest
+httpx

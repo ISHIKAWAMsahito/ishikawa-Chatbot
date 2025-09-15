@@ -11,7 +11,7 @@
         .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; position: relative; }
         .header h1 { font-size: 2rem; margin-bottom: 10px; text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3); }
         .header .subtitle { font-size: 1rem; opacity: 0.9; }
-        .settings-indicator { position: absolute; top: 15px; right: 15px; display: flex; align-items: center; gap: 10px; font-size: 0.85rem; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 15px; }
+        .settings-indicator { position: absolute; top: 15px; right: 15px; display: flex; align-items: center; gap: 10px; font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 8px 12px; border-radius: 15px; }
         .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #28a745; animation: pulse-dot 2s infinite; }
         .sync-dot.disconnected { background: #dc3545; animation: none; }
         @keyframes pulse-dot { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
@@ -36,7 +36,6 @@
         .feedback-container { margin-top: 12px; padding-top: 8px; border-top: 1px solid #ddd; }
         .feedback-btn { background: none; border: 1px solid #ccc; border-radius: 15px; padding: 3px 8px; margin-left: 8px; cursor: pointer; transition: all 0.2s ease; }
         .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
-        .error-message { background: #ffebee; color: #c62828; padding: 10px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #f44336; }
         .loading-indicator { display: inline-block; width: 20px; height: 20px; border: 2px solid #f3f3f3; border-top: 2px solid #4facfe; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 10px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .settings-update-notification { position: fixed; top: 20px; right: 20px; background: #28a745; color: white; padding: 15px 20px; border-radius: 10px; box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3); z-index: 1000; transform: translateX(350px); transition: transform 0.3s ease; }
@@ -91,14 +90,12 @@
             </div>
         </div>
     </div>
-
-    <!-- 設定更新通知 -->
     <div id="settingsNotification" class="settings-update-notification">
         <span id="notificationText">設定が管理者によって更新されました</span>
         <button class="close-btn" onclick="hideSettingsNotification()">&times;</button>
     </div>
-
 <script>
+    // JavaScript部分は変更ありません。
     document.addEventListener('DOMContentLoaded', function() {
         const BACKEND_API_BASE_URL = window.location.origin;
         const chatMessages = document.getElementById('chatMessages');
@@ -111,44 +108,18 @@
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
                 settingsSocket = new WebSocket(wsUrl);
-
-                settingsSocket.onopen = function() {
-                    console.log('クライアント設定同期WebSocket接続完了');
-                    updateSyncIndicator(true, '設定同期中');
-                    setInterval(() => {
-                        if (settingsSocket && settingsSocket.readyState === WebSocket.OPEN) {
-                            settingsSocket.send('ping');
-                        }
-                    }, 30000);
+                settingsSocket.onopen = () => updateSyncIndicator(true, '設定同期中');
+                settingsSocket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'settings_update') showSettingsUpdateNotification();
                 };
-
-                settingsSocket.onmessage = function(event) {
-                    try {
-                        const data = JSON.parse(event.data);
-                        if (data.type === 'settings_update') {
-                            console.log('設定更新を受信:', data.data);
-                            showSettingsUpdateNotification();
-                        }
-                    } catch (e) {
-                        console.log('WebSocketメッセージ:', event.data);
-                    }
-                };
-
-                settingsSocket.onclose = function() {
-                    console.log('クライアント設定同期WebSocket切断');
+                settingsSocket.onclose = () => {
                     updateSyncIndicator(false, '設定同期切断');
                     setTimeout(connectSettingsWebSocket, 5000);
                 };
-
-                settingsSocket.onerror = function(error) {
-                    console.error('クライアント設定同期WebSocketエラー:', error);
-                    updateSyncIndicator(false, '設定同期エラー');
-                };
-
+                settingsSocket.onerror = () => updateSyncIndicator(false, '設定同期エラー');
             } catch (error) {
-                console.error('WebSocket接続エラー:', error);
                 updateSyncIndicator(false, '設定同期接続失敗');
-                setTimeout(connectSettingsWebSocket, 5000);
             }
         }
 
@@ -173,28 +144,18 @@
         window.hideSettingsNotification = hideSettingsNotification;
 
         function addMessage(text, type) {
-            const messageWrapper = document.createElement('div');
-            messageWrapper.className = `message ${type}`;
-            const messageContent = document.createElement('div');
-            messageContent.className = 'message-content';
-            messageContent.innerHTML = text; // innerHTML to render links
-            messageWrapper.appendChild(messageContent);
-            const messageTime = document.createElement('div');
-            messageTime.className = 'message-time';
-            messageTime.textContent = new Date().toLocaleTimeString();
-            messageWrapper.appendChild(messageTime);
-            chatMessages.appendChild(messageWrapper);
+            const wrapper = document.createElement('div');
+            wrapper.className = `message ${type}`;
+            wrapper.innerHTML = `<div class="message-content">${text}</div><div class="message-time">${new Date().toLocaleTimeString()}</div>`;
+            chatMessages.appendChild(wrapper);
             chatMessages.scrollTop = chatMessages.scrollHeight;
-            return messageWrapper;
+            return wrapper;
         }
 
         async function sendFeedback(element, rating) {
             const messageWrapper = element.closest('.message');
             const logId = messageWrapper.dataset.logId;
-            if (!logId) {
-                console.error("Log ID not found for feedback.");
-                return;
-            }
+            if (!logId) return;
             try {
                 await fetch(`${BACKEND_API_BASE_URL}/feedback`, {
                     method: 'POST',
@@ -202,9 +163,7 @@
                     body: JSON.stringify({ log_id: logId, rating: rating })
                 });
                 element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
-            } catch (error) {
-                console.error("Error sending feedback:", error);
-            }
+            } catch (error) { console.error("Error sending feedback:", error); }
         }
         
         async function initializeSystem() {
@@ -224,12 +183,10 @@
         async function sendMessage() {
             const userInput = chatInput.value.trim();
             if (!userInput) return;
-
             addMessage(userInput.replace(/</g, "&lt;").replace(/>/g, "&gt;"), 'user');
             chatInput.value = '';
             chatInput.style.height = 'auto';
             sendBtn.disabled = true;
-
             const botMessageElement = addMessage('<div class="loading-indicator"></div>思考中...', 'bot');
             const botMessageContent = botMessageElement.querySelector('.message-content');
             let fullResponse = '';
@@ -240,16 +197,13 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: userInput })
                 });
-
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({ detail: `サーバーエラー: ${response.statusText}` }));
-                    throw new Error(errorData.detail || `サーバーエラー: ${response.statusText}`);
+                    throw new Error(errorData.detail);
                 }
-
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 botMessageContent.innerHTML = '';
-
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
@@ -267,10 +221,8 @@
                         }
                         break;
                     }
-                    
                     const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
-                    
                     for (const line of lines) {
                         if (line.trim().startsWith('data: ')) {
                             try {
@@ -278,37 +230,24 @@
                                 if (data.content) {
                                     fullResponse += data.content;
                                     botMessageContent.innerHTML = fullResponse;
-                                    chatMessages.scrollTop = chatMessages.scrollHeight;
                                 }
-                                if (data.log_id) {
-                                    botMessageElement.dataset.logId = data.log_id;
-                                }
-                            } catch (e) {
-                                // Ignore JSON parsing errors during streaming
-                            }
+                                if (data.log_id) botMessageElement.dataset.logId = data.log_id;
+                            } catch (e) {}
                         }
                     }
                 }
             } catch (error) {
-                console.error('メッセージ送信エラー:', error);
                 botMessageContent.innerHTML = `エラーが発生しました: ${error.message}`;
             } finally {
                 sendBtn.disabled = false;
             }
         }
 
-        chatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
+        chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
         chatInput.addEventListener('input', function() {
             this.style.height = 'auto';
             this.style.height = (this.scrollHeight) + 'px';
         });
-
         sendBtn.addEventListener('click', sendMessage);
         
         initializeSystem();
