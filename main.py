@@ -175,8 +175,19 @@ CATEGORY_INFO = {
     "授業": {"url_to_summarize": "https://www.sgu.ac.jp/information/schedule.html", "static_response": "学事暦や年間スケジュールに関するご質問ですね。\n- **夏期休業期間（夏休み）**: 8月上旬～9月中旬\n- **冬季休業期間（冬休み）**: 12月下旬～1月上旬\n- **春季休業期間（春休み）**: 2月上旬～3月下旬\n正確な日付は、[2025年度 学事暦](https://www.sgu.ac.jp/information/schedule.html)でご確認ください。"},
     "証明書": {"url_to_summarize": "https://www.sgu.ac.jp/campuslife/support/certification.html", "static_response": "各種証明書の発行については、[諸証明・各種願出・届出について](https://www.sgu.ac.jp/campuslife/support/certification.html)のページをご確認ください。"},
     "経済支援": {"url_to_summarize": "https://www.sgu.ac.jp/campuslife/scholarship/", "static_response": "奨学金や授業料減免については、[奨学金制度](https://www.sgu.ac.jp/campuslife/scholarship/)や[授業料減免制度](https://www.sgu.ac.jp/tuition/j09tjo00000f665g.html)のページをご確認ください。"},
-    # 他のカテゴリ情報も同様に追加
 }
+
+# [追加] シナリオの定義
+SCENARIOS = {
+    'leave_of_absence': {
+        'trigger_keywords': ['休学したい', '休学手続き'],
+        'steps': {
+            0: "休学をご希望ですね。手続きをご案内します。理由を簡単に入力してください。（例：病気のため、留学のため）",
+            1: "承知いたしました。「{user_input}」が理由ですね。次のステップとして、学生支援課で正式な手続きが必要です。必要な書類など、詳細は学生支援課にご確認ください。これで手続き案内を終了します。"
+        }
+    }
+}
+
 
 # --- テキスト処理・Webスクレイピング関数 ---
 async def read_file_content(file: UploadFile):
@@ -268,7 +279,6 @@ async def create_tiered_response(category: str, model: str):
 # 5. APIエンドポイント定義
 # --------------------------------------------------------------------------
 
-# --- 認証とHTML提供 ---
 # --- 認証とHTML提供 ---
 @app.get('/login')
 async def login(request: Request):
@@ -450,52 +460,95 @@ async def websocket_settings_endpoint(websocket: WebSocket):
 
 
 # --- チャットAPI (統合ロジック) ---
-async def enhanced_chat_logic(req: ChatRequest):
+# [修正] `SyntaxError` が発生しないように非同期ジェネレーター内の return 文を修正
+async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
+    """
+    This is an async generator that handles different chat logics (scenarios, RAG, general chat)
+    and yields Server-Sent Events (SSE) formatted strings.
+    """
+    session = request.session
+    scenario_state = session.get('scenario_state')
+    
+    # --- 1. 進行中のシナリオがあれば処理 ---
+    if scenario_state:
+        name = scenario_state.get('name')
+        step = scenario_state.get('step')
+        scenario = SCENARIOS.get(name)
+
+        if scenario and (step + 1) in scenario['steps']:
+            response_message = scenario['steps'][step + 1].format(user_input=chat_req.query)
+            session.pop('scenario_state', None) # シナリオを終了
+
+            # シナリオ完了の応答を直接yieldし、ログを保存してジェネレーターを終了する
+            log_id = str(uuid.uuid4())
+            try:
+                with open(FEEDBACK_FILE_PATH, 'a', newline='', encoding='utf-8') as f:
+                    csv.writer(f).writerow([log_id, datetime.now(JST).isoformat(), chat_req.query, response_message, "", f"シナリオ({name})", False])
+                yield f"data: {json.dumps({'log_id': log_id})}\n\n"
+            except Exception as e:
+                print(f"シナリオのログ保存失敗: {e}")
+            
+            yield f"data: {json.dumps({'content': response_message})}\n\n"
+            # ジェネレーターをここで終了（returnではなくそのまま関数を終了）
+            return
+
+    # --- 2. 新しいシナリオを開始するか判定 ---
+    for name, scenario in SCENARIOS.items():
+        if any(keyword in chat_req.query for keyword in scenario['trigger_keywords']):
+            session['scenario_state'] = {'name': name, 'step': 0}
+            first_message = scenario['steps'][0]
+            
+            # シナリオ開始の応答を直接yieldして、ジェネレーターを終了する
+            yield f"data: {json.dumps({'content': first_message})}\n\n"
+            # ジェネレーターをここで終了（returnではなくそのまま関数を終了）
+            return
+
+    # --- 3. シナリオに該当しない場合のFAQ(RAG)/雑談ロジック ---
     log_id = str(uuid.uuid4())
     full_response, category, has_specific_info = "", "その他", False
     
     try:
         yield f"data: {json.dumps({'log_id': log_id})}\n\n"
-        if not all([db_client, GEMINI_API_KEY]): raise HTTPException(503, "サービスが利用できません。")
+        if not all([db_client, GEMINI_API_KEY]): 
+            raise HTTPException(503, "サービスが利用できません。")
 
-        intent = await classify_query_intent(req.query, req.model)
-        model = genai.GenerativeModel(req.model)
+        intent = await classify_query_intent(chat_req.query, chat_req.model)
+        model = genai.GenerativeModel(chat_req.model)
 
         if intent == "雑談":
             category = "雑談"
-            prompt = f"あなたは札幌学院大学の親しみやすいAIアシスタントです。ユーザーから雑談をもちかけられています。フレンドリーかつ簡潔な日本語で、自然な会話をしてください。\nユーザー: {req.query}\nあなた:"
+            prompt = f"あなたは札幌学院大学の親しみやすいAIアシスタントです。ユーザーから雑談をもちかけられています。フレンドリーかつ簡潔な日本語で、自然な会話をしてください。\nユーザー: {chat_req.query}\nあなた:"
             stream = await model.generate_content_async(prompt, stream=True)
             async for chunk in stream:
                 if chunk.text:
                     full_response += chunk.text
                     yield f"data: {json.dumps({'content': chunk.text})}\n\n"
-            return
-
-        category = next((cat for cat, keys in KEYWORD_MAP.items() if any(key in req.query for key in keys)), "その他")
-        
-        context = ""
-        try:
-            collection = await asyncio.to_thread(db_client.get_collection, name=req.collection)
-            result = await asyncio.to_thread(genai.embed_content, model=f"models/{req.embedding_model}", content=[req.query], task_type="retrieval_query")
+        else: # "学内情報"
+            category = next((cat for cat, keys in KEYWORD_MAP.items() if any(key in chat_req.query for key in keys)), "その他")
             
-            results = await asyncio.to_thread(collection.query, query_embeddings=result['embedding'], n_results=req.top_k)
-            if results['documents'] and results['documents'][0]:
-                context = "\n".join(results['documents'][0])
-                has_specific_info = True
-        except Exception as e:
-            print(f"DB検索エラー: {e}")
+            context = ""
+            try:
+                collection = await asyncio.to_thread(db_client.get_collection, name=chat_req.collection)
+                result = await asyncio.to_thread(genai.embed_content, model=f"models/{chat_req.embedding_model}", content=[chat_req.query], task_type="retrieval_query")
+                
+                results = await asyncio.to_thread(collection.query, query_embeddings=result['embedding'], n_results=chat_req.top_k)
+                if results['documents'] and results['documents'][0]:
+                    context = "\n".join(results['documents'][0])
+                    has_specific_info = True
+            except Exception as e:
+                print(f"DB検索エラー: {e}")
 
-        if has_specific_info:
-            prompt = f"あなたは札幌学院大学の学生を支援するAIです。以下の情報を元に、質問に日本語で回答してください。\n情報: {context}\n質問: {req.query}\n回答:"
-            stream = await model.generate_content_async(prompt, stream=True)
-            async for chunk in stream:
-                if chunk.text:
-                    full_response += chunk.text
-                    yield f"data: {json.dumps({'content': chunk.text})}\n\n"
-        else:
-            tiered_response = await create_tiered_response(category, req.model)
-            full_response = tiered_response
-            yield f"data: {json.dumps({'content': full_response})}\n\n"
+            if has_specific_info:
+                prompt = f"あなたは札幌学院大学の学生を支援するAIです。以下の情報を元に、質問に日本語で回答してください。\n情報: {context}\n質問: {chat_req.query}\n回答:"
+                stream = await model.generate_content_async(prompt, stream=True)
+                async for chunk in stream:
+                    if chunk.text:
+                        full_response += chunk.text
+                        yield f"data: {json.dumps({'content': chunk.text})}\n\n"
+            else:
+                tiered_response = await create_tiered_response(category, chat_req.model)
+                full_response = tiered_response
+                yield f"data: {json.dumps({'content': full_response})}\n\n"
 
     except Exception as e:
         full_response = f"エラーが発生しました: {str(e)}"
@@ -506,22 +559,19 @@ async def enhanced_chat_logic(req: ChatRequest):
         full_response = format_urls_as_links(full_response)
         try:
             with open(FEEDBACK_FILE_PATH, 'a', newline='', encoding='utf-8') as f:
-                csv.writer(f).writerow([log_id, datetime.now(JST).isoformat(), req.query, full_response, "", category, has_specific_info])
+                csv.writer(f).writerow([log_id, datetime.now(JST).isoformat(), chat_req.query, full_response, "", category, has_specific_info])
         except Exception as e:
             print(f"ログ保存失敗: {e}")
 
 @app.post("/chat", dependencies=[Depends(require_sgu_member)])
-async def admin_chat(req: ChatRequest):
-    # 管理画面から受け取った req をそのまま渡すのが正しい
-    return StreamingResponse(enhanced_chat_logic(req), media_type="text/event-stream")
+async def admin_chat(request: Request, req: ChatRequest):
+    return StreamingResponse(enhanced_chat_logic(request, req), media_type="text/event-stream")
 
 @app.post("/chat_for_client")
-async def client_chat(req: ClientChatRequest):
+async def client_chat(request: Request, req: ClientChatRequest):
     if not settings_manager: raise HTTPException(503, "Settings not initialized.")
-    # ユーザーの質問(req)とサーバー設定を合体させた chat_request を作成
     chat_request = ChatRequest(query=req.query, **settings_manager.settings)
-    # 新しく作った chat_request を渡すのが正しい
-    return StreamingResponse(enhanced_chat_logic(chat_request), media_type="text/event-stream")
+    return StreamingResponse(enhanced_chat_logic(request, chat_request), media_type="text/event-stream")
 
 # --------------------------------------------------------------------------
 # 6. 開発用サーバー起動
@@ -530,4 +580,3 @@ if __name__ == "__main__":
     import uvicorn
     print("=== 札幌学院大学 学生サポートAI (ローカル開発モード) ===")
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
-
