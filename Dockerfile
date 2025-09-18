@@ -1,30 +1,23 @@
-# ベースを互換性の高いDebianベースのslimイメージに変更
+# ベースイメージとしてPython 3.11のスリム版を使用
 FROM python:3.11-slim-bookworm
 
-# コンテナ内の作業ディレクトリを設定
+# 作業ディレクトリを設定
 WORKDIR /app
 
-# 必要なライブラリをインストールするためのファイルをコピー
+# 最初に requirements.txt をコピーして、ライブラリをインストール
+# これにより、コードを変更してもライブラリの再インストールが不要になる（キャッシュが効く）
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 脆弱性対策とビルド依存関係のインストール
-RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends build-essential gcc && \
-    pip install --no-cache-dir -r requirements.txt && \
-    apt-get purge -y --auto-remove build-essential gcc && \
-    rm -rf /var/lib/apt/lists/*
-
-# アプリケーションのソースコードをすべてコピー  <--- ★まず、すべてのファイルをコピー
+# ★★★★★ ここが重要 ★★★★★
+# データベースとアプリケーションのコード全体をコピー
+# .dockerignore ファイルで指定されたファイル/フォルダは除外される
+COPY chroma_db ./chroma_db
 COPY . .
 
-# ★次に、コピーされたファイルの一覧を出力
-RUN ls -la
+# アプリケーションがリッスンするポートを指定
+# Renderは自動で80/443にマッピングするが、コンテナ内のポートを指定しておく
+EXPOSE 8000
 
-# コンテナの10000番ポートを外部に公開することを宣言
-EXPOSE 10000
-# ...
-COPY chroma_db ./chroma_db
-# ...
-
-# コンテナが起動したときに実行されるコマンド
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
+# コンテナ起動時に実行するコマンド
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
