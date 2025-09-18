@@ -460,9 +460,12 @@ async def websocket_settings_endpoint(websocket: WebSocket):
 
 
 # --- チャットAPI (統合ロジック) ---
-# [変更] request引数を追加してセッションを扱えるように
+# [修正] `SyntaxError` が発生しないように非同期ジェネレーター内の return 文を修正
 async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
-    # [追加] シナリオ型チャットの処理をここから開始
+    """
+    This is an async generator that handles different chat logics (scenarios, RAG, general chat)
+    and yields Server-Sent Events (SSE) formatted strings.
+    """
     session = request.session
     scenario_state = session.get('scenario_state')
     
@@ -476,39 +479,38 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
             response_message = scenario['steps'][step + 1].format(user_input=chat_req.query)
             session.pop('scenario_state', None) # シナリオを終了
 
-            async def scenario_streamer():
-                # ログ保存のための情報を準備
-                log_id = str(uuid.uuid4())
-                try:
-                    with open(FEEDBACK_FILE_PATH, 'a', newline='', encoding='utf-8') as f:
-                        csv.writer(f).writerow([log_id, datetime.now(JST).isoformat(), chat_req.query, response_message, "", f"シナリオ({name})", False])
-                    # ログIDを最初に送信
-                    yield f"data: {json.dumps({'log_id': log_id})}\n\n"
-                except Exception as e:
-                    print(f"シナリオのログ保存失敗: {e}")
-                
-                # 応答メッセージを送信
-                yield f"data: {json.dumps({'content': response_message})}\n\n"
-            return scenario_streamer()
-    
+            # シナリオ完了の応答を直接yieldし、ログを保存してジェネレーターを終了する
+            log_id = str(uuid.uuid4())
+            try:
+                with open(FEEDBACK_FILE_PATH, 'a', newline='', encoding='utf-8') as f:
+                    csv.writer(f).writerow([log_id, datetime.now(JST).isoformat(), chat_req.query, response_message, "", f"シナリオ({name})", False])
+                yield f"data: {json.dumps({'log_id': log_id})}\n\n"
+            except Exception as e:
+                print(f"シナリオのログ保存失敗: {e}")
+            
+            yield f"data: {json.dumps({'content': response_message})}\n\n"
+            # ジェネレーターをここで終了（returnではなくそのまま関数を終了）
+            return
+
     # --- 2. 新しいシナリオを開始するか判定 ---
     for name, scenario in SCENARIOS.items():
         if any(keyword in chat_req.query for keyword in scenario['trigger_keywords']):
             session['scenario_state'] = {'name': name, 'step': 0}
             first_message = scenario['steps'][0]
             
-            async def scenario_streamer():
-                 yield f"data: {json.dumps({'content': first_message})}\n\n"
-            return scenario_streamer()
-    # [追加] シナリオ処理ここまで
+            # シナリオ開始の応答を直接yieldして、ジェネレーターを終了する
+            yield f"data: {json.dumps({'content': first_message})}\n\n"
+            # ジェネレーターをここで終了（returnではなくそのまま関数を終了）
+            return
 
-    # --- 以下は、これまでのFAQ(RAG)処理ロジック ---
+    # --- 3. シナリオに該当しない場合のFAQ(RAG)/雑談ロジック ---
     log_id = str(uuid.uuid4())
     full_response, category, has_specific_info = "", "その他", False
     
     try:
         yield f"data: {json.dumps({'log_id': log_id})}\n\n"
-        if not all([db_client, GEMINI_API_KEY]): raise HTTPException(503, "サービスが利用できません。")
+        if not all([db_client, GEMINI_API_KEY]): 
+            raise HTTPException(503, "サービスが利用できません。")
 
         intent = await classify_query_intent(chat_req.query, chat_req.model)
         model = genai.GenerativeModel(chat_req.model)
@@ -521,33 +523,32 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
                 if chunk.text:
                     full_response += chunk.text
                     yield f"data: {json.dumps({'content': chunk.text})}\n\n"
-            return
-
-        category = next((cat for cat, keys in KEYWORD_MAP.items() if any(key in chat_req.query for key in keys)), "その他")
-        
-        context = ""
-        try:
-            collection = await asyncio.to_thread(db_client.get_collection, name=chat_req.collection)
-            result = await asyncio.to_thread(genai.embed_content, model=f"models/{chat_req.embedding_model}", content=[chat_req.query], task_type="retrieval_query")
+        else: # "学内情報"
+            category = next((cat for cat, keys in KEYWORD_MAP.items() if any(key in chat_req.query for key in keys)), "その他")
             
-            results = await asyncio.to_thread(collection.query, query_embeddings=result['embedding'], n_results=chat_req.top_k)
-            if results['documents'] and results['documents'][0]:
-                context = "\n".join(results['documents'][0])
-                has_specific_info = True
-        except Exception as e:
-            print(f"DB検索エラー: {e}")
+            context = ""
+            try:
+                collection = await asyncio.to_thread(db_client.get_collection, name=chat_req.collection)
+                result = await asyncio.to_thread(genai.embed_content, model=f"models/{chat_req.embedding_model}", content=[chat_req.query], task_type="retrieval_query")
+                
+                results = await asyncio.to_thread(collection.query, query_embeddings=result['embedding'], n_results=chat_req.top_k)
+                if results['documents'] and results['documents'][0]:
+                    context = "\n".join(results['documents'][0])
+                    has_specific_info = True
+            except Exception as e:
+                print(f"DB検索エラー: {e}")
 
-        if has_specific_info:
-            prompt = f"あなたは札幌学院大学の学生を支援するAIです。以下の情報を元に、質問に日本語で回答してください。\n情報: {context}\n質問: {chat_req.query}\n回答:"
-            stream = await model.generate_content_async(prompt, stream=True)
-            async for chunk in stream:
-                if chunk.text:
-                    full_response += chunk.text
-                    yield f"data: {json.dumps({'content': chunk.text})}\n\n"
-        else:
-            tiered_response = await create_tiered_response(category, chat_req.model)
-            full_response = tiered_response
-            yield f"data: {json.dumps({'content': full_response})}\n\n"
+            if has_specific_info:
+                prompt = f"あなたは札幌学院大学の学生を支援するAIです。以下の情報を元に、質問に日本語で回答してください。\n情報: {context}\n質問: {chat_req.query}\n回答:"
+                stream = await model.generate_content_async(prompt, stream=True)
+                async for chunk in stream:
+                    if chunk.text:
+                        full_response += chunk.text
+                        yield f"data: {json.dumps({'content': chunk.text})}\n\n"
+            else:
+                tiered_response = await create_tiered_response(category, chat_req.model)
+                full_response = tiered_response
+                yield f"data: {json.dumps({'content': full_response})}\n\n"
 
     except Exception as e:
         full_response = f"エラーが発生しました: {str(e)}"
@@ -563,12 +564,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
             print(f"ログ保存失敗: {e}")
 
 @app.post("/chat", dependencies=[Depends(require_sgu_member)])
-# [変更] request引数を追加
 async def admin_chat(request: Request, req: ChatRequest):
     return StreamingResponse(enhanced_chat_logic(request, req), media_type="text/event-stream")
 
 @app.post("/chat_for_client")
-# [変更] request引数を追加
 async def client_chat(request: Request, req: ClientChatRequest):
     if not settings_manager: raise HTTPException(503, "Settings not initialized.")
     chat_request = ChatRequest(query=req.query, **settings_manager.settings)
@@ -581,4 +580,3 @@ if __name__ == "__main__":
     import uvicorn
     print("=== 札幌学院大学 学生サポートAI (ローカル開発モード) ===")
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
-
