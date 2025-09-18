@@ -287,7 +287,20 @@
                         }
                     }, 30000);
                 };
-
+ /**
+         * メッセージ内のMarkdownリンクをHTMLの<a>タグに変換し、改行を<br>に置換します。
+         * @param {string} text - 変換するテキスト
+         * @returns {string} - HTMLに変換された文字列
+         */
+        function formatMessageContent(text) {
+            // Markdownリンク [text](url) を <a href="url" target="_blank">text</a> に変換
+            const markdownLinkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g;
+            let html = text.replace(markdownLinkRegex, '<a href="$2" target="_blank">$1</a>');
+            
+            // 改行コードを<br>タグに変換
+            html = html.replace(/\n/g, '<br>');
+            return html;
+        }
                 settingsSocket.onmessage = function(event) {
                     try {
                         const data = JSON.parse(event.data);
