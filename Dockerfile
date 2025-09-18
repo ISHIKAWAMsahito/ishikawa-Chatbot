@@ -5,18 +5,16 @@ FROM python:3.11-slim-bookworm
 WORKDIR /app
 
 # 最初に requirements.txt をコピーして、ライブラリをインストール
-# これにより、コードを変更してもライブラリの再インストールが不要になる（キャッシュが効く）
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ★★★★★ ここが重要 ★★★★★
-# データベースとアプリケーションのコード全体をコピー
-# .dockerignore ファイルで指定されたファイル/フォルダは除外される
-COPY chroma_db ./chroma_db
+# アプリケーションのコード全体をコピー
 COPY . .
 
+# 必要なディレクトリを作成
+RUN mkdir -p chroma_db
+
 # アプリケーションがリッスンするポートを指定
-# Renderは自動で80/443にマッピングするが、コンテナ内のポートを指定しておく
 EXPOSE 8000
 
 # コンテナ起動時に実行するコマンド
