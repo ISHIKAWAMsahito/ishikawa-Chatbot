@@ -607,35 +607,34 @@
             fileInput.value = '';
         }
 
-     async function createCollection() {
-    const collectionName = document.getElementById('newCollectionName').value.trim();
-    if (!collectionName) {
-        addMessage('❌ コレクション名を入力してください。', 'bot');
-        return;
-    }
-    try {
-        const response = await fetch(`/collections`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: collectionName })
-        });
-        const result = await response.json();
-        addMessage(response.ok ? `✅ コレクション「${collectionName}」を作成しました` : `❌ 作成失敗: ${result.detail}`, 'bot');
-        if (response.ok) {
-            document.getElementById('newCollectionName').value = '';
-            
-            // --- ここから修正 ---
-            // データベースの反映を待つために、500ミリ秒（0.5秒）待機します。
-            setTimeout(() => {
-                refreshCollections();
-            }, 500);
-            // --- ここまで修正 ---
-
+        async function createCollection() {
+            const collectionName = document.getElementById('newCollectionName').value.trim();
+            if (!collectionName) {
+                addMessage('❌ コレクション名を入力してください。', 'bot');
+                return;
+            }
+            try {
+                const response = await fetch(`/collections`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: collectionName })
+                });
+                const result = await response.json();
+                addMessage(response.ok ? `✅ コレクション「${collectionName}」を作成しました` : `❌ 作成失敗: ${result.detail}`, 'bot');
+                if (response.ok) {
+                    document.getElementById('newCollectionName').value = '';
+                    
+                    // --- ここから修正 ---
+                    // データベースの反映を待つために、より確実な方法で1秒待機します。
+                    addMessage('⏳ データベースの更新を待っています...', 'bot');
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await refreshCollections();
+                    // --- ここまで修正 ---
+                }
+            } catch (error) {
+                addMessage(`❌ 作成中に通信エラー: ${error.message}`, 'bot');
+            }
         }
-    } catch (error) {
-        addMessage(`❌ 作成中に通信エラー: ${error.message}`, 'bot');
-    }
-}
         
         async function deleteCollection() {
             const collectionName = collectionSelect.value;
@@ -659,6 +658,10 @@
                 const response = await fetch(`/collections`);
                 if (response.ok) {
                     const collections = await response.json();
+                    // --- デバッグ用ログを追加 ---
+                    // APIから取得したデータをコンソールに出力し、内容を確認できるようにします。
+                    console.log('APIから取得したコレクションデータ:', JSON.stringify(collections, null, 2));
+                    // --- ここまで ---
                     updateCollectionList(collections);
                 } else {
                    addMessage('❌ コレクション一覧の取得に失敗しました。', 'bot');
