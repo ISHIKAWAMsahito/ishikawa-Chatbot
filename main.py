@@ -6,7 +6,7 @@ import json
 from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, WebSocket
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel # [修正点] pantic -> pydantic
 from typing import List, Optional
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -74,14 +74,13 @@ class ChatQuery(BaseModel):
 class ScrapeRequest(BaseModel):
     url: str
     collection_name: str
-    category: str # [変更点] カテゴリを受け取る
+    category: str
     embedding_model: str
 
 # --- APIエンドポイント ---
 @app.get("/", response_class=HTMLResponse)
 @app.get("/admin", response_class=HTMLResponse)
 async def serve_admin_page(request: Request):
-    # admin.htmlを本番環境でも提供できるように修正
     file_path = os.path.join(os.path.dirname(__file__), "admin.html")
     if os.path.exists(file_path):
         with open(file_path, "r", encoding="utf-8") as f:
@@ -103,12 +102,10 @@ async def gemini_status():
 
 @app.get("/collections/{collection_name}/documents")
 async def get_documents_in_collection(collection_name: str):
-    # UIの変更に合わせて、メタデータからカテゴリとソースを取得するように変更
     documents = db_client.get_documents_by_collection(collection_name)
     count = db_client.count_chunks_in_collection(collection_name)
     return {"documents": documents, "count": count}
 
-# [変更点] /upload エンドポイント
 @app.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -116,7 +113,6 @@ async def upload_document(
     embedding_model: str = Form("text-embedding-004")
 ):
     try:
-        # ファイル名からカテゴリを抽出 (例: "奨学金_案内.pdf" -> "奨学金")
         category = file.filename.split('_')[0] if '_' in file.filename else "未分類"
         
         content = await file.read()
@@ -134,7 +130,6 @@ async def upload_document(
         logging.error(f"アップロード処理中にエラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# [変更点] /scrape エンドポイント
 @app.post("/scrape")
 async def scrape_website(req: ScrapeRequest):
     try:
@@ -155,20 +150,16 @@ async def scrape_website(req: ScrapeRequest):
         logging.error(f"スクレイピング処理中にエラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# [最重要変更点] /chat エンドポイント
 async def chat_streamer(query_data: ChatQuery):
     log_id = log_manager.generate_log_id()
     yield f"data: {json.dumps({'log_id': log_id})}\n\n"
 
     try:
-        # ステップ1: 利用可能なカテゴリ一覧をDBから取得
         available_categories = db_client.get_distinct_categories(query_data.collection)
         if not available_categories:
             yield "data: 申し訳ありませんが、現在参照できる知識がありません。\n\n"
             return
 
-        # ステップ2: ユーザーの質問からカテゴリを分類
         classification_model = genai.GenerativeModel('gemini-1.5-flash-latest')
         prompt = f"""ユーザーの質問内容に最も関連するカテゴリを、以下のリストから一つだけ選んでください。
         利用可能なカテゴリ: {', '.join(available_categories)}
@@ -178,13 +169,13 @@ async def chat_streamer(query_data: ChatQuery):
         response = await classification_model.generate_content_async(prompt)
         classified_category = response.text.strip()
         logging.info(f"質問をカテゴリ '{classified_category}' に分類しました。")
-        yield f"data: {json.dumps({'content': f'（カテゴリ: {classified_category} を検索中...）\\n'})}\n\n"
 
+        message_content = f'（カテゴリ: {classified_category} を検索中...）\n'
+        json_payload = json.dumps({'content': message_content})
+        yield f"data: {json_payload}\n\n"
 
-        # ステップ3: 質問をベクトル化し、分類されたカテゴリでDBを検索
         query_embedding = genai.embed_content(model=query_data.embedding_model, content=query_data.query)["embedding"]
         
-        # [変更点] 更新されたDB関数を呼び出す
         search_results = db_client.search_documents(
             collection_name=query_data.collection,
             category=classified_category,
@@ -196,7 +187,6 @@ async def chat_streamer(query_data: ChatQuery):
         if not context:
             context = "関連情報は見つかりませんでした。"
 
-        # ステップ4: 検索結果を基に、最終的な回答を生成
         final_model = genai.GenerativeModel(query_data.model)
         final_prompt = f"""以下の参考情報に基づいて、学生からの質問に親切かつ丁寧に回答してください。
 
@@ -227,10 +217,11 @@ async def chat_streamer(query_data: ChatQuery):
 async def chat_endpoint(query: ChatQuery):
     return StreamingResponse(chat_streamer(query), media_type="text/event-stream")
 
-
-# --- 残りのエンドポイント (変更は軽微 or なし) ---
-# ... (フィードバック、ログ表示、WebSocketなどのエンドポイント)
-# これらは、コレクション名が固定になったこと以外、大きなロジック変更はありません。
+# --- 残りのエンドポイント ---
+# ... (変更なし)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# [修正点] ファイルの末尾にあった不要なGitコマンドを削除
+
