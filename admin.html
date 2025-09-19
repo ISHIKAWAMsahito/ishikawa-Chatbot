@@ -181,48 +181,59 @@
                     </div>
                 </div>
 
-                <!-- ▼▼▼ [変更点1] ▼▼▼ -->
-                <!-- コレクション管理を簡素化し、ドキュメント管理に統合 -->
                 <div class="panel-section">
-                    <h3 class="section-title" id="collectionTitle">🗃️ 知識ベース管理</h3>
-                    <div class="db-info">
-                        <strong>操作対象コレクション:</strong> <span id="activeCollectionName">student-knowledge-base</span>
+                    <h3 class="section-title" id="collectionTitle">🗃️ データコレクション</h3>
+                    <div class="setting-item" id="collectionSetting">
+                        <label for="collectionSelect"><strong>コレクション:</strong></label><br>
+                        <select id="collectionSelect" class="collection-select"></select>
+                        <div class="sync-status" id="collectionSyncStatus">設定同期待機中...</div>
                     </div>
-                    <div class="document-list" id="documentList" style="margin-top: 15px;"></div>
-                    <button class="small-btn primary" onclick="refreshDocumentList()" style="margin-top: 10px;">リストを更新</button>
+                    <div>
+                        <input type="text" id="newCollectionName" class="collection-input" placeholder="新しいコレクション名">
+                        <div class="db-controls">
+                            <button class="small-btn success" onclick="createCollection()">作成</button>
+                            <button class="small-btn danger" onclick="deleteCollection()">削除</button>
+                            <button class="small-btn primary" onclick="refreshCollections()">更新</button>
+                        </div>
+                    </div>
                 </div>
-                <!-- ▲▲▲ [変更点1] ▲▲▲ -->
-
 
                 <div class="panel-section">
-                    <h3 class="section-title">📄 ファイルから知識を追加</h3>
+                    <h3 class="section-title">🔗 埋め込みモデル</h3>
+                    <div class="setting-item" id="embeddingSetting">
+                        <label for="embeddingModelSelect"><strong>埋め込みモデル:</strong></label><br>
+                        <select id="embeddingModelSelect" class="embedding-model-select">
+                           <option value="text-embedding-004" selected>text-embedding-004 (Gemini)</option>
+                        </select>
+                        <div class="sync-status" id="embeddingSyncStatus">設定同期待機中...</div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3 class="section-title">📄 文書管理</h3>
                     <div class="document-upload">
                         <input type="file" id="fileInput" accept=".txt,.md,.pdf,.docx" multiple>
-                        <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📁 ファイルをアップロード</button>
+                        <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📁 文書アップロード</button>
                         <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">
-                            ファイル名を「<b>カテゴリ名</b>_ファイル名.txt」の形式にしてください。<br>
-                            例: 「<b>奨学金</b>_給付型奨学金案内.pdf」
+                            ※メタデータ登録のため、ファイル名は「<b>カテゴリ名</b>_ファイル名.txt」の形式にしてください。
                         </p>
                     </div>
+                    <div class="document-list" id="documentList"></div>
                 </div>
 
-                <!-- ▼▼▼ [変更点2] ▼▼▼ -->
-                <!-- ウェブサイトからの情報取得にカテゴリ入力欄を追加 -->
                 <div class="panel-section">
-                    <h3 class="section-title">🌐 ウェブサイトから知識を追加</h3>
+                    <h3 class="section-title">🌐 ウェブサイトから取得</h3>
                     <div>
-                        <input type="text" id="scrapeCategoryInput" class="scrape-input" placeholder="カテゴリ名を入力 (例: 奨学金)" style="margin-bottom: 10px;">
                         <input type="text" id="scrapeUrlInput" class="scrape-input" placeholder="https://...">
                         <button id="scrapeBtn" class="scrape-btn" onclick="scrapeWebsite()">このURLから情報を取得</button>
                     </div>
                 </div>
-                <!-- ▲▲▲ [変更点2] ▲▲▲ -->
 
                 <div class="panel-section">
                     <h3 class="section-title">🎓 学習用ウェブサイト例</h3>
-                    <div class="website-example" onclick="setScrapeExample('窓口業務', 'https://www.sgu.ac.jp/campuslife/support/madoguchi.html')">窓口業務について</div>
-                    <div class="website-example" onclick="setScrapeExample('証明書発行', 'https://www.sgu.ac.jp/campuslife/support/certification.html')">証明書の発行について</div>
-                    <div class="website-example" onclick="setScrapeExample('各種届出', 'https://www.sgu.ac.jp/campuslife/support/j09tjo000003g3l6.html')">諸証明 / 各種願出・届出</div>
+                    <div class="website-example" onclick="setScrapeUrl('https://www.sgu.ac.jp/campuslife/support/madoguchi.html')">窓口業務について</div>
+                    <div class="website-example" onclick="setScrapeUrl('https://www.sgu.ac.jp/campuslife/support/certification.html')">証明書の発行について</div>
+                    <div class="website-example" onclick="setScrapeUrl('https://www.sgu.ac.jp/campuslife/support/j09tjo000003g3l6.html')">諸証明 / 各種願出・届出</div>
                 </div>
                 
                 <div class="panel-section">
@@ -251,34 +262,180 @@
         const modelSelect = document.getElementById('modelSelect');
         const fileInput = document.getElementById('fileInput');
         const documentList = document.getElementById('documentList');
-        // ▼▼▼ [変更点3] ▼▼▼
-        // コレクション名を固定値に変更
-        const ACTIVE_COLLECTION_NAME = "student-knowledge-base";
-        document.getElementById('activeCollectionName').textContent = ACTIVE_COLLECTION_NAME;
-        // ▲▲▲ [変更点3] ▲▲▲
-
+        const collectionSelect = document.getElementById('collectionSelect');
         const topKSelect = document.getElementById('topKSelect');
         const embeddingModelSelect = document.getElementById('embeddingModelSelect');
         const scrapeUrlInput = document.getElementById('scrapeUrlInput');
-        const scrapeCategoryInput = document.getElementById('scrapeCategoryInput'); // [変更点4]
         const scrapeBtn = document.getElementById('scrapeBtn');
         
+        let currentCollection = '';
+        let backendConnected = false;
         let settingsSocket = null;
 
-        // WebSocket関連の関数群 (変更なし)
-        // ... (connectSettingsWebSocket, updateSyncStatus, etc.)
+        function connectSettingsWebSocket() {
+            try {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
+                settingsSocket = new WebSocket(wsUrl);
+
+                settingsSocket.onopen = function() {
+                    console.log('設定同期WebSocket接続完了');
+                    updateSyncStatus(true, '設定同期接続済み');
+                };
+ 
+                settingsSocket.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'settings_update') {
+                            console.log('設定更新を受信:', data.data);
+                            applyReceivedSettings(data.data);
+                        }
+                    } catch (e) {
+                        console.log('WebSocketメッセージ:', event.data);
+                    }
+                };
+
+                settingsSocket.onclose = function() {
+                    console.log('設定同期WebSocket切断');
+                    updateSyncStatus(false, '設定同期切断');
+                    setTimeout(connectSettingsWebSocket, 5000);
+                };
+
+                settingsSocket.onerror = function(error) {
+                    console.error('設定同期WebSocketエラー:', error);
+                    updateSyncStatus(false, '設定同期エラー');
+                };
+
+            } catch (error) {
+                console.error('WebSocket接続エラー:', error);
+                updateSyncStatus(false, '設定同期接続失敗');
+                setTimeout(connectSettingsWebSocket, 5000);
+            }
+        }
+
+        function updateSyncStatus(connected, message) {
+            const syncStatus = document.getElementById('syncStatus');
+            const syncStatusText = document.getElementById('syncStatusText');
+            const autoSyncIndicator = document.getElementById('autoSyncIndicator');
+            
+            if (syncStatus && syncStatusText) {
+                syncStatus.className = `status-indicator ${connected ? 'status-connected' : 'status-disconnected'}`;
+                syncStatusText.textContent = message;
+                if (autoSyncIndicator) {
+                    autoSyncIndicator.style.display = connected ? 'inline-block' : 'none';
+                }
+            }
+        }
+
+        function applyReceivedSettings(settings) {
+            console.log('設定を適用中:', settings);
+            if (settings.model && modelSelect.value !== settings.model) {
+                if ([...modelSelect.options].some(opt => opt.value === settings.model)) {
+                    modelSelect.value = settings.model;
+                    highlightSettingChange('modelSetting', 'modelSyncStatus', 'モデルが更新されました');
+                }
+            }
+            if (settings.collection && collectionSelect.value !== settings.collection) {
+                if ([...collectionSelect.options].some(opt => opt.value === settings.collection)) {
+                    collectionSelect.value = settings.collection;
+                    currentCollection = settings.collection;
+                    updateDocumentList();
+                    highlightSettingChange('collectionSetting', 'collectionSyncStatus', 'コレクションが更新されました');
+                }
+            }
+            if (settings.embedding_model && embeddingModelSelect.value !== settings.embedding_model) {
+                if ([...embeddingModelSelect.options].some(opt => opt.value === settings.embedding_model)) {
+                    embeddingModelSelect.value = settings.embedding_model;
+                    highlightSettingChange('embeddingSetting', 'embeddingSyncStatus', '埋め込みモデルが更新されました');
+                }
+            }
+            if (settings.top_k && parseInt(topKSelect.value) !== settings.top_k) {
+                if ([...topKSelect.options].some(opt => parseInt(opt.value) === settings.top_k)) {
+                    topKSelect.value = settings.top_k.toString();
+                    highlightSettingChange('modelSetting', 'modelSyncStatus', '検索件数が更新されました');
+                }
+            }
+        }
+
+        function highlightSettingChange(settingId, statusId, message) {
+            const settingElement = document.getElementById(settingId);
+            const statusElement = document.getElementById(statusId);
+            if (settingElement) {
+                settingElement.classList.add('active');
+                setTimeout(() => settingElement.classList.remove('active'), 2000);
+            }
+            if (statusElement) {
+                statusElement.textContent = message;
+                statusElement.className = 'sync-status';
+                setTimeout(() => {
+                    statusElement.textContent = '設定同期待機中...';
+                    statusElement.className = 'sync-status';
+                }, 3000);
+            }
+        }
 
         async function updateServerSettings() {
             const settings = {
                 model: modelSelect.value,
-                collection: ACTIVE_COLLECTION_NAME, // 固定値を使用
+                collection: collectionSelect.value,
                 embedding_model: embeddingModelSelect.value,
                 top_k: parseInt(topKSelect.value, 10)
             };
-            // ... (fetch処理は変更なし)
+            try {
+                const response = await fetch('/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                if (response.ok) console.log('設定をサーバーに送信:', settings);
+                else console.error('設定送信エラー:', await response.text());
+            } catch (error) {
+                console.error('設定送信通信エラー:', error);
+            }
         }
 
-        // ... (addMessage, sendFeedbackなどは変更なし)
+        function addMessage(text, type) {
+            const messageWrapper = document.createElement('div');
+            messageWrapper.className = `message ${type}`;
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+             // HTMLとして解釈されるようにinnerHTMLを使用
+            messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+            messageWrapper.appendChild(messageContent);
+            const messageTime = document.createElement('div');
+            messageTime.className = 'message-time';
+            messageTime.textContent = new Date().toLocaleTimeString();
+            messageWrapper.appendChild(messageTime);
+            chatMessages.appendChild(messageWrapper);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return messageWrapper;
+        }
+
+        async function sendFeedback(element, rating) {
+            const messageWrapper = element.closest('.message');
+            const logId = messageWrapper.dataset.logId;
+            if (!logId) {
+                console.error("Log ID not found for feedback.");
+                addMessage('フィードバックの送信に失敗しました (log_idが見つかりません)', 'bot');
+                return;
+            }
+            try {
+                const res = await fetch(`/feedback`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ log_id: logId, rating: rating })
+                });
+                if(!res.ok) {
+                    const errorData = await res.json();
+                    throw new Error(errorData.detail || "Failed to send feedback.");
+                }
+                const feedbackContainer = element.parentElement;
+                feedbackContainer.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
+            } catch(error) {
+                console.error("Error sending feedback:", error);
+                addMessage(`フィードバックの送信中にエラーが発生しました: ${error.message}`, 'bot');
+            };
+        }
 
         async function initializeSystem() {
             document.getElementById('backendUrl').textContent = window.location.origin;
@@ -287,16 +444,68 @@
             if (backendConnected) {
                 checkDbConnection(dbType);
                 await checkGeminiConnection();
-                await refreshDocumentList(); // 関数名を変更
-                // connectSettingsWebSocket(); // WebSocketは一旦省略
+                await refreshCollections();
+                connectSettingsWebSocket();
+            }
+        }
+
+        async function checkBackendConnection() {
+            try {
+                const response = await fetch(`/health`);
+                const data = await response.json();
+                backendConnected = response.ok;
+                if (!backendConnected) addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
+                return data.database; // 'supabase' or 'chromadb'
+            } catch (error) {
+                backendConnected = false;
+                addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
+                return null;
             }
         }
         
-        // ... (checkBackendConnection, updateStatus, checkDbConnection, checkGeminiConnectionは変更なし)
+        function updateStatus(elementId, textId, connected, serviceName) {
+            const statusIndicator = document.getElementById(elementId);
+            const statusText = document.getElementById(textId);
+            if(statusIndicator && statusText) {
+                statusIndicator.className = `status-indicator ${connected ? 'status-connected' : 'status-disconnected'}`;
+                statusText.textContent = connected ? `${serviceName} 接続済み` : `${serviceName} 未接続`;
+            }
+        }
         
+        function checkDbConnection(dbType) {
+            const dbName = dbType || '不明';
+            const dbNameCapitalized = dbName.charAt(0).toUpperCase() + dbName.slice(1);
+            
+            updateStatus('dbStatusIndicator', 'dbStatusText', backendConnected, dbNameCapitalized);
+
+            const collectionTitle = document.getElementById('collectionTitle');
+            if(collectionTitle){
+                collectionTitle.innerHTML = `🗃️ ${dbNameCapitalized} コレクション`;
+            }
+        }
+
+        async function checkGeminiConnection() {
+            try {
+                const response = await fetch(`/gemini/status`);
+                const data = await response.json();
+                updateStatus('geminiStatus', 'geminiStatusText', response.ok && data.connected, 'Gemini API');
+                if (response.ok && data.connected && data.models) {
+                    updateGenericList(data.models.map(m => m), modelSelect, 'gemini-1.5-flash-latest');
+                } else if (response.ok && !data.connected) {
+                    addMessage(`❌ Gemini APIに接続できません: ${data.detail}`, 'bot');
+                }
+            } catch (error) {
+                updateStatus('geminiStatus', 'geminiStatusText', false, 'Gemini API');
+            }
+        }
+
         async function sendMessage() {
             const userInput = chatInput.value.trim();
             if (!userInput) return;
+            if (!currentCollection) {
+                addMessage('❌ コレクションが選択されていません。', 'bot');
+                return;
+            }
 
             addMessage(userInput, 'user');
             chatInput.value = '';
@@ -304,7 +513,8 @@
 
             const botMessageElement = addMessage('思考中...', 'bot');
             const botMessageContent = botMessageElement.querySelector('.message-content');
-            
+            let fullResponse = '';
+
             try {
                 const response = await fetch(`/chat`, {
                     method: 'POST',
@@ -312,36 +522,81 @@
                     body: JSON.stringify({
                         query: userInput,
                         model: modelSelect.value,
-                        collection: ACTIVE_COLLECTION_NAME, // 固定値を使用
+                        collection: currentCollection,
                         embedding_model: embeddingModelSelect.value,
                         top_k: parseInt(topKSelect.value, 10)
                     })
                 });
-                // ... (ストリーミング処理は変更なし)
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: `APIエラー: ${response.statusText}` }));
+                    throw new Error(errorData.detail);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                botMessageContent.innerHTML = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        if (botMessageElement.dataset.logId) {
+                            const feedbackContainer = document.createElement('div');
+                            feedbackContainer.className = 'feedback-container';
+                            feedbackContainer.innerHTML = `
+                                <span>この回答は役に立ちましたか？</span>
+                                <button class="feedback-btn" data-rating="good">👍</button>
+                                <button class="feedback-btn" data-rating="bad">👎</button>
+                            `;
+                            botMessageElement.appendChild(feedbackContainer);
+                        }
+                        break;
+                    }
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.trim().startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                if (data.log_id) {
+                                    botMessageElement.dataset.logId = data.log_id;
+                                }
+                                if (data.content) {
+                                    fullResponse += data.content;
+                                    botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
+                                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                                }
+                            } catch (e) {
+                                console.error("Error parsing stream data:", e);
+                            }
+                        }
+                    }
+                }
             } catch (error) {
-                // ... (エラー処理は変更なし)
+                console.error('メッセージ送信エラー:', error);
+                botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
             }
         }
 
-
         async function handleFileUpload(event) {
             const files = Array.from(event.target.files);
-            if (files.length === 0) {
-                addMessage('ファイルが選択されていません。', 'bot');
+            if (files.length === 0 || !currentCollection) {
+                addMessage(files.length === 0 ? 'ファイルが選択されていません。' : '❌ コレクションを選択してください。', 'bot');
                 return;
             }
             for (const file of files) {
                 const botMsg = addMessage(`⏳「${file.name}」を処理中...`, 'bot');
                 const formData = new FormData();
                 formData.append('file', file);
-                formData.append('collection_name', ACTIVE_COLLECTION_NAME); // 固定値を使用
+                formData.append('collection_name', currentCollection);
                 formData.append('embedding_model', embeddingModelSelect.value);
                 try {
                     const response = await fetch(`/upload`, { method: 'POST', body: formData });
                     const result = await response.json();
                     if (response.ok) {
-                        botMsg.querySelector('.message-content').textContent = `✅「${file.name}」をコレクションに追加しました（${result.chunks}チャンク）`;
-                        await refreshDocumentList();
+                        botMsg.querySelector('.message-content').textContent = `✅「${file.name}」をコレクション「${currentCollection}」に追加しました（${result.chunks}チャンク）`;
+                        await refreshCollections();
                     } else {
                         botMsg.querySelector('.message-content').textContent = `❌「${file.name}」の処理中にエラー: ${result.detail}`;
                     }
@@ -352,24 +607,79 @@
             fileInput.value = '';
         }
 
-        // ▼▼▼ [変更点5] ▼▼▼
-        // コレクション作成・削除関数は不要になったため削除
-        // window.createCollection, window.deleteCollection を削除
+        async function createCollection() {
+            const collectionName = document.getElementById('newCollectionName').value.trim();
+            if (!collectionName) {
+                addMessage('❌ コレクション名を入力してください。', 'bot');
+                return;
+            }
+            try {
+                const response = await fetch(`/collections`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: collectionName })
+                });
+                const result = await response.json();
+                addMessage(response.ok ? `✅ コレクション「${collectionName}」を作成しました` : `❌ 作成失敗: ${result.detail}`, 'bot');
+                if (response.ok) {
+                    document.getElementById('newCollectionName').value = '';
+                    
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await refreshCollections();
+                }
+            } catch (error) {
+                addMessage(`❌ 作成中に通信エラー: ${error.message}`, 'bot');
+            }
+        }
         
-        async function refreshDocumentList() {
+        async function deleteCollection() {
+            const collectionName = collectionSelect.value;
+            if (!collectionName) return;
+            const confirmed = await showConfirm(`コレクション「${collectionName}」を本当に削除しますか？`);
+            if (!confirmed) return;
+            try {
+                const response = await fetch(`/collections/${collectionName}`, { method: 'DELETE' });
+                const result = await response.json();
+                addMessage(response.ok ? `✅ ${result.message}` : `❌ 削除失敗: ${result.detail}`, 'bot');
+                if (response.ok) {
+                    await refreshCollections();
+                }
+            } catch (error) {
+                addMessage(`❌ 削除中に通信エラー: ${error.message}`, 'bot');
+            }
+        }
+
+        async function refreshCollections() {
+            try {
+                const response = await fetch(`/collections`);
+                if (response.ok) {
+                    const collections = await response.json();
+                    updateCollectionList(collections);
+                } else {
+                   addMessage('❌ コレクション一覧の取得に失敗しました。', 'bot');
+                   updateCollectionList([]);
+                }
+            } catch (error) {
+                addMessage(`❌ コレクションの更新に失敗: ${error.message}`, 'bot');
+                updateCollectionList([]);
+            }
+        }
+
+        async function updateDocumentList() {
+            if (!currentCollection) {
+                documentList.innerHTML = '<span>コレクションを選択してください</span>';
+                return;
+            }
             documentList.innerHTML = '読み込み中...';
             try {
-                const response = await fetch(`/collections/${ACTIVE_COLLECTION_NAME}/documents`);
+                const response = await fetch(`/collections/${currentCollection}/documents`);
                 const data = await response.json();
                 documentList.innerHTML = '';
                 if (response.ok && data.documents && data.documents.length > 0) {
                      data.documents.forEach(doc => {
                         const item = document.createElement('div');
                         item.className = 'document-item';
-                        // メタデータからカテゴリとソースを表示するように変更
-                        const category = doc.metadata.category || '未分類';
-                        const source = doc.metadata.source || '不明';
-                        item.textContent = `[${category}] ${source}`;
+                        item.textContent = doc.id;
                         documentList.appendChild(item);
                     });
                      const totalItem = document.createElement('div');
@@ -380,10 +690,7 @@
                      totalItem.innerHTML = `<strong>合計: ${data.count} チャンク</strong>`;
                      documentList.appendChild(totalItem);
 
-                } else if (response.status === 404) {
-                    documentList.innerHTML = `<span>コレクション「${ACTIVE_COLLECTION_NAME}」が存在しません。ドキュメントをアップロードすると自動的に作成されます。</span>`;
-                }
-                else {
+                } else {
                     documentList.innerHTML = '<span>ドキュメントはありません</span>';
                 }
             } catch (error) {
@@ -391,55 +698,98 @@
             }
         }
 
-        // ... (updateGenericList, updateCollectionListは不要になったため削除)
+        function updateGenericList(items, selectElement, defaultValue = '') {
+            const currentValue = selectElement.value;
+            selectElement.innerHTML = '';
+            items.forEach(item => {
+                const option = document.createElement('option');
+                option.value = typeof item === 'string' ? item : item.name;
+                option.textContent = typeof item === 'string' ? item : `${item.name} (${item.count})`;
+                selectElement.appendChild(option);
+            });
+            
+            const values = items.map(item => typeof item === 'string' ? item : item.name);
+
+            if (values.includes(currentValue)) {
+                selectElement.value = currentValue;
+            } else if (values.includes(defaultValue)) {
+                selectElement.value = defaultValue;
+            } else if (values.length > 0) {
+                selectElement.value = values[0];
+            }
+            return selectElement.value || '';
+        }
+        
+        function updateCollectionList(collections) {
+            currentCollection = updateGenericList(collections, collectionSelect);
+            updateDocumentList();
+        }
         
         async function scrapeWebsite() {
             const url = scrapeUrlInput.value.trim();
-            const category = scrapeCategoryInput.value.trim(); // [変更点6]
-
-            if (!url || !category) { // [変更点6]
-                addMessage(!category ? '❌ カテゴリ名を入力してください。' : '❌ URLを入力してください。', 'bot');
+            if (!url || !currentCollection) {
+                addMessage(!url ? '❌ URLを入力してください。' : '❌ コレクションを選択してください。', 'bot');
                 return;
             }
             scrapeBtn.disabled = true;
             scrapeBtn.textContent = '取得中...';
-            addMessage(`⏳ [${category}] ${url} から情報を取得中...`, 'bot');
+            addMessage(`⏳ URLから情報を取得中...\n${url}`, 'bot');
             try {
                 const response = await fetch(`/scrape`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         url: url,
-                        collection_name: ACTIVE_COLLECTION_NAME, // 固定値を使用
-                        category: category, // [変更点6]
+                        collection_name: currentCollection,
                         embedding_model: embeddingModelSelect.value
                     })
                 });
                 const result = await response.json();
                 addMessage(response.ok ? `✅ URLの情報を追加しました（${result.chunks}チャンク）` : `❌ 取得失敗: ${result.detail}`, 'bot');
-                if (response.ok) await refreshDocumentList();
+                if (response.ok) await refreshCollections();
             } catch (error) {
                 addMessage(`❌ 通信エラー: ${error.message}`, 'bot');
             } finally {
                 scrapeBtn.disabled = false;
                 scrapeBtn.textContent = 'このURLから情報を取得';
                 scrapeUrlInput.value = '';
-                scrapeCategoryInput.value = '';
             }
         }
 
-        // ... (showConfirmは変更なし)
+        function showConfirm(message) {
+            return new Promise(resolve => {
+                const modal = document.getElementById('confirmModal');
+                const msgEl = document.getElementById('modalMessage');
+                const confirmBtn = document.getElementById('modalConfirm');
+                const cancelBtn = document.getElementById('modalCancel');
 
-        // ▼▼▼ [変更点7] ▼▼▼
-        window.refreshDocumentList = refreshDocumentList;
+                msgEl.textContent = message;
+                modal.classList.add('visible');
+                const close = (value) => {
+                    modal.classList.remove('visible');
+                    confirmBtn.onclick = null;
+                    cancelBtn.onclick = null;
+                    resolve(value);
+                };
+                confirmBtn.onclick = () => close(true);
+                cancelBtn.onclick = () => close(false);
+            });
+        }
+
+        window.createCollection = createCollection;
+        window.deleteCollection = deleteCollection;
+        window.refreshCollections = refreshCollections;
         window.scrapeWebsite = scrapeWebsite;
-        window.setScrapeExample = function(category, url) { // 関数名を変更
-            scrapeCategoryInput.value = category;
+        window.setScrapeUrl = function(url) {
             scrapeUrlInput.value = url;
         }
 
         modelSelect.addEventListener('change', updateServerSettings);
-        // collectionSelectのイベントリスナーは不要になったため削除
+        collectionSelect.addEventListener('change', (e) => {
+            currentCollection = e.target.value;
+            updateDocumentList();
+            updateServerSettings();
+        });
         embeddingModelSelect.addEventListener('change', updateServerSettings);
         topKSelect.addEventListener('change', updateServerSettings);
         sendBtn.addEventListener('click', sendMessage);
@@ -469,4 +819,31 @@
 </script>
 </body>
 </html>
+```
+
+### Gitのコンフリクトを解決するためのコマンド手順
+
+`admin.html`を上記のコードで上書き保存したら、ターミナルで以下のコマンドを**1行ずつ順番に**実行してください。
+
+1.  **解決したことをGitに伝える (`git add`)**
+    まず、「`admin.html`のコンフリクトは、私が手動で修正しました」とGitに伝えます。
+
+    ```bash
+    git add admin.html
+    ```
+
+2.  **マージを完了させる (`git commit`)**
+    次に、`pull`によって発生したマージを正式に完了させます。
+
+    ```bash
+    git commit
+    ```
+    **【重要】** このコマンドを実行すると、テキストエディタ（VSCodeなど）が自動的に開きます。`Merge branch 'main' of ...`のようなメッセージが表示されているはずです。**何も編集せずに、そのままエディタを保存して閉じてください。** これでマージコミットが完了します。
+
+3.  **最後にプッシュする (`git push`)**
+    すべてのコンフリクトが解決され、ローカルの状態が最新になったので、今度こそGitHubにプッシュできます。
+
+    ```bash
+    git push origin main
+    
 
