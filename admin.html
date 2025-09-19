@@ -20,6 +20,8 @@
         .message.user { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; align-self: flex-end; margin-left: auto; }
         .message.bot { background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); color: #333; align-self: flex-start; border-left: 4px solid #4facfe; }
         .message-content { line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; }
+        .message-content a { color: #007bff; text-decoration: underline; }
+        .message-content a:hover { color: #0056b3; }
         .message-time { font-size: 0.8rem; opacity: 0.7; margin-top: 8px; }
         .chat-input-container { padding: 20px; background: #f8f9fa; border-top: 1px solid #e9ecef; }
         .chat-input-box { display: flex; gap: 10px; align-items: flex-end; }
@@ -48,9 +50,10 @@
         .document-list { max-height: 150px; overflow-y: auto; margin-top: 10px; }
         .document-item { padding: 8px 12px; background: #f8f9fa; margin: 5px 0; border-radius: 5px; font-size: 0.9rem; display: flex; justify-content: space-between; align-items: center; }
         .document-item:hover { background: #e9ecef; }
+        .document-count { font-size: 0.8rem; color: #6c757d; background-color: #e9ecef; padding: 2px 6px; border-radius: 5px; }
         .collection-input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 5px; margin-top: 10px; }
         .topk-select { width: 60px; padding: 2px; }
-        .chromadb-controls { display: flex; gap: 10px; margin-top: 10px; }
+        .db-controls { display: flex; gap: 10px; margin-top: 10px; }
         .small-btn { padding: 5px 10px; font-size: 0.8rem; border: none; border-radius: 3px; cursor: pointer; }
         .small-btn.primary { background: #007bff; color: white; }
         .small-btn.success { background: #28a745; color: white; }
@@ -145,8 +148,10 @@
                 <div class="panel-section">
                     <h3 class="section-title">🔗 接続状況</h3>
                     <div>
-                        <span id="chromadbStatus" class="status-indicator status-disconnected"></span>
-                        <span id="chromadbStatusText">ChromaDB接続確認中...</span>
+                        <!-- ▼ 修正箇所 ▼ -->
+                        <span id="dbStatusIndicator" class="status-indicator status-disconnected"></span>
+                        <span id="dbStatusText">データベース接続確認中...</span>
+                        <!-- ▲ 修正箇所 ▲ -->
                     </div>
                     <div class="margin-top-10">
                         <span id="geminiStatus" class="status-indicator status-disconnected"></span>
@@ -180,7 +185,9 @@
                 </div>
 
                 <div class="panel-section">
-                    <h3 class="section-title">🗃️ ChromaDBコレクション</h3>
+                    <!-- ▼ 修正箇所 ▼ -->
+                    <h3 class="section-title" id="collectionTitle">🗃️ データコレクション</h3>
+                    <!-- ▲ 修正箇所 ▲ -->
                     <div class="setting-item" id="collectionSetting">
                         <label for="collectionSelect"><strong>コレクション:</strong></label><br>
                         <select id="collectionSelect" class="collection-select"></select>
@@ -188,7 +195,7 @@
                     </div>
                     <div>
                         <input type="text" id="newCollectionName" class="collection-input" placeholder="新しいコレクション名">
-                        <div class="chromadb-controls">
+                        <div class="db-controls">
                             <button class="small-btn success" onclick="createCollection()">作成</button>
                             <button class="small-btn danger" onclick="deleteCollection()">削除</button>
                             <button class="small-btn primary" onclick="refreshCollections()">更新</button>
@@ -201,7 +208,7 @@
                     <div class="setting-item" id="embeddingSetting">
                         <label for="embeddingModelSelect"><strong>埋め込みモデル:</strong></label><br>
                         <select id="embeddingModelSelect" class="embedding-model-select">
-                            <option value="embedding-001" selected>embedding-001 (Gemini)</option>
+                           <option value="text-embedding-004" selected>text-embedding-004 (Gemini)</option>
                         </select>
                         <div class="sync-status" id="embeddingSyncStatus">設定同期待機中...</div>
                     </div>
@@ -269,7 +276,6 @@
         let currentCollection = '';
         let backendConnected = false;
         let settingsSocket = null;
-        let isSocketConnected = false;
 
         function connectSettingsWebSocket() {
             try {
@@ -279,28 +285,9 @@
 
                 settingsSocket.onopen = function() {
                     console.log('設定同期WebSocket接続完了');
-                    isSocketConnected = true;
                     updateSyncStatus(true, '設定同期接続済み');
-                    setInterval(() => {
-                        if (settingsSocket && settingsSocket.readyState === WebSocket.OPEN) {
-                            settingsSocket.send('ping');
-                        }
-                    }, 30000);
                 };
- /**
-         * メッセージ内のMarkdownリンクをHTMLの<a>タグに変換し、改行を<br>に置換します。
-         * @param {string} text - 変換するテキスト
-         * @returns {string} - HTMLに変換された文字列
-         */
-        function formatMessageContent(text) {
-            // Markdownリンク [text](url) を <a href="url" target="_blank">text</a> に変換
-            const markdownLinkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g;
-            let html = text.replace(markdownLinkRegex, '<a href="$2" target="_blank">$1</a>');
-            
-            // 改行コードを<br>タグに変換
-            html = html.replace(/\n/g, '<br>');
-            return html;
-        }
+ 
                 settingsSocket.onmessage = function(event) {
                     try {
                         const data = JSON.parse(event.data);
@@ -315,14 +302,12 @@
 
                 settingsSocket.onclose = function() {
                     console.log('設定同期WebSocket切断');
-                    isSocketConnected = false;
                     updateSyncStatus(false, '設定同期切断');
                     setTimeout(connectSettingsWebSocket, 5000);
                 };
 
                 settingsSocket.onerror = function(error) {
                     console.error('設定同期WebSocketエラー:', error);
-                    isSocketConnected = false;
                     updateSyncStatus(false, '設定同期エラー');
                 };
 
@@ -419,6 +404,7 @@
             messageWrapper.className = `message ${type}`;
             const messageContent = document.createElement('div');
             messageContent.className = 'message-content';
+             // HTMLとして解釈されるようにinnerHTMLを使用
             messageContent.innerHTML = text.replace(/\n/g, '<br>');
             messageWrapper.appendChild(messageContent);
             const messageTime = document.createElement('div');
@@ -460,8 +446,8 @@
             document.getElementById('backendUrl').textContent = window.location.origin;
             await checkBackendConnection();
             if (backendConnected) {
-                await checkChromaDBConnection();
-                await checkGeminiConnection(); // OllamaからGeminiに変更
+                await checkDbConnection(); // ▼ 修正箇所 ▼
+                await checkGeminiConnection();
                 await refreshCollections();
                 connectSettingsWebSocket();
             }
@@ -470,11 +456,14 @@
         async function checkBackendConnection() {
             try {
                 const response = await fetch(`/health`);
+                const data = await response.json();
                 backendConnected = response.ok;
                 if (!backendConnected) addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
+                return data.database; // 'supabase' or 'chromadb'
             } catch (error) {
                 backendConnected = false;
                 addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
+                return null;
             }
         }
         
@@ -486,13 +475,24 @@
                 statusText.textContent = connected ? `${serviceName} 接続済み` : `${serviceName} 未接続`;
             }
         }
-
-        async function checkChromaDBConnection() {
+        
+        // ▼ 修正箇所 ▼: checkChromaDBConnectionを汎用的なcheckDbConnectionに変更
+        async function checkDbConnection() {
             try {
-                const response = await fetch(`/chromadb/status`);
-                updateStatus('chromadbStatus', 'chromadbStatusText', response.ok, 'ChromaDB');
+                const response = await fetch(`/health`);
+                const data = await response.json();
+                const dbName = data.database || '不明';
+                const dbNameCapitalized = dbName.charAt(0).toUpperCase() + dbName.slice(1);
+                
+                updateStatus('dbStatusIndicator', 'dbStatusText', response.ok, dbNameCapitalized);
+
+                const collectionTitle = document.getElementById('collectionTitle');
+                if(collectionTitle){
+                    collectionTitle.innerHTML = `🗃️ ${dbNameCapitalized} コレクション`;
+                }
+
             } catch (error) {
-                updateStatus('chromadbStatus', 'chromadbStatusText', false, 'ChromaDB');
+                updateStatus('dbStatusIndicator', 'dbStatusText', false, 'データベース');
             }
         }
 
@@ -502,7 +502,7 @@
                 const data = await response.json();
                 updateStatus('geminiStatus', 'geminiStatusText', response.ok && data.connected, 'Gemini API');
                 if (response.ok && data.connected && data.models) {
-                    updateGenericList(data.models, modelSelect, 'gemini-1.5-flash-preview-0514');
+                    updateGenericList(data.models.map(m => m), modelSelect, 'gemini-1.5-flash-latest');
                 } else if (response.ok && !data.connected) {
                     addMessage(`❌ Gemini APIに接続できません: ${data.detail}`, 'bot');
                 }
@@ -608,7 +608,7 @@
                     const result = await response.json();
                     if (response.ok) {
                         botMsg.querySelector('.message-content').textContent = `✅「${file.name}」をコレクション「${currentCollection}」に追加しました（${result.chunks}チャンク）`;
-                        await updateDocumentList();
+                        await refreshCollections();
                     } else {
                         botMsg.querySelector('.message-content').textContent = `❌「${file.name}」の処理中にエラー: ${result.detail}`;
                     }
@@ -664,7 +664,7 @@
                 const response = await fetch(`/collections`);
                 if (response.ok) {
                     const collections = await response.json();
-                    updateCollectionList(collections.map(c => c.name));
+                    updateCollectionList(collections); // ▼ 修正箇所 ▼
                 }
             } catch (error) {
                 addMessage(`❌ コレクションの更新に失敗: ${error.message}`, 'bot');
@@ -686,8 +686,23 @@
                         const item = document.createElement('div');
                         item.className = 'document-item';
                         item.textContent = doc.id;
+                        
+                        const countSpan = document.createElement('span');
+                        countSpan.className = 'document-count';
+                        countSpan.textContent = `${data.count} chunks`;
+                        item.appendChild(countSpan);
+                        
                         documentList.appendChild(item);
                     });
+                     // Show total count once
+                     const totalItem = document.createElement('div');
+                     totalItem.style.textAlign = 'right';
+                     totalItem.style.fontSize = '0.9rem';
+                     totalItem.style.marginTop = '10px';
+                     totalItem.style.color = '#333';
+                     totalItem.innerHTML = `<strong>合計: ${data.count} チャンク</strong>`;
+                     documentList.appendChild(totalItem);
+
                 } else {
                     documentList.innerHTML = '<span>ドキュメントはありません</span>';
                 }
@@ -696,25 +711,29 @@
             }
         }
 
-        function updateGenericList(names, selectElement, defaultValue = '') {
+        function updateGenericList(items, selectElement, defaultValue = '') {
             const currentValue = selectElement.value;
             selectElement.innerHTML = '';
-            names.forEach(name => {
+            items.forEach(item => {
                 const option = document.createElement('option');
-                option.value = name;
-                option.textContent = name;
+                option.value = typeof item === 'string' ? item : item.name;
+                option.textContent = typeof item === 'string' ? item : `${item.name} (${item.count})`;
                 selectElement.appendChild(option);
             });
-            if (names.includes(currentValue)) {
+            
+            const values = items.map(item => typeof item === 'string' ? item : item.name);
+
+            if (values.includes(currentValue)) {
                 selectElement.value = currentValue;
-            } else if (names.includes(defaultValue)) {
+            } else if (values.includes(defaultValue)) {
                 selectElement.value = defaultValue;
-            } else if (names.length > 0) {
-                selectElement.value = names[0];
+            } else if (values.length > 0) {
+                selectElement.value = values[0];
             }
             return selectElement.value || '';
         }
-
+        
+        // ▼ 修正箇所 ▼: updateCollectionListがオブジェクトの配列を受け取るように変更
         function updateCollectionList(collections) {
             currentCollection = updateGenericList(collections, collectionSelect);
             updateDocumentList();
@@ -741,7 +760,7 @@
                 });
                 const result = await response.json();
                 addMessage(response.ok ? `✅ URLの情報を追加しました（${result.chunks}チャンク）` : `❌ 取得失敗: ${result.detail}`, 'bot');
-                if (response.ok) await updateDocumentList();
+                if (response.ok) await refreshCollections();
             } catch (error) {
                 addMessage(`❌ 通信エラー: ${error.message}`, 'bot');
             } finally {
@@ -814,4 +833,3 @@
 </script>
 </body>
 </html>
-
