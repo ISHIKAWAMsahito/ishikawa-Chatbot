@@ -3,6 +3,8 @@ uvicorn[standard]
 google-generativeai
 httpx
 chromadb
+supabase>=1.0.0
+asyncpg>=0.28.0
 pypdf
 python-docx
 beautifulsoup4
