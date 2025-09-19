@@ -1,0 +1,17 @@
+version: 1.0
+runtime: python311 # Dockerfile内のPythonバージョンに合わせる
+build:
+  commands:
+    build:
+      - pip install -r requirements.txt
+run:
+  command: uvicorn main:app --host 0.0.0.0 --port 8000
+  port: 8000
+# 以下のhealthcheckセクションは、アプリケーションの正常性を確認するために重要です
+healthcheck:
+  path: /health # main.pyに作成したヘルスチェック用エンドポイント
+  interval: 20
+  timeout: 10
+observability:
+  trace_configuration:
+    vendor: AWSXRAY

@@ -1,0 +1,37 @@
+# Fly.io アプリケーションの設定ファイル
+app = 'sgu-chatbot' # アプリケーション名 (全世界でユニークである必要があります)
+primary_region = 'nrt' # プライマリリージョン (nrt = 東京)
+
+[build]
+  dockerfile = "Dockerfile" # ビルドに使用するDockerfile
+
+# Webサービスを定義
+[[services]]
+  internal_port = 8000 # アプリケーションがリッスンするポート
+  protocol = "tcp"
+  auto_stop_machines = true # アクセスがない場合にマシンを停止して節約
+  auto_start_machines = true # アクセスがあった場合にマシンを自動起動
+  min_machines_running = 0 # 常に起動しておくマシンの最小数 (0でOK)
+
+  # HTTPヘルスチェック
+  [[services.http_checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "5s"
+    method = "GET"
+    path = "/health" # main.pyに実装済みのヘルスチェックエンドポイント
+
+  # ポートのマッピング
+  [[services.ports]]
+    force_https = true
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+  
+  # 永続ボリュームのマウント設定
+  [[services.mounts]]
+    source = "chroma_data" # 作成するボリュームの名前
+    destination = "/var/data" # コンテナ内のマウント先パス (main.pyと一致)
