@@ -177,10 +177,11 @@ CATEGORY_INFO = {
     "経済支援": {"url_to_summarize": "https://www.sgu.ac.jp/campuslife/scholarship/", "static_response": "奨学金や授業料減免については、[奨学金制度](https://www.sgu.ac.jp/campuslife/scholarship/)や[授業料減免制度](https://www.sgu.ac.jp/tuition/j09tjo00000f665g.html)のページをご確認ください。"},
 }
 
+
 # [更新] 提供されたデータに基づき、複数のシナリオを定義
 SCENARIOS = {
     'leave_of_absence': {
-        'trigger_keywords': ['休学したい', '休学手続き'],
+        'trigger_keywords': ['休学したい', '休学手続き', '休学'],
         'steps': {
             0: "病気などの理由で3ヶ月以上就学が難しい場合、休学が可能です。手続きをご案内します。理由を簡単に入力してください。（例：病気のため、留学のため）",
             1: "承知いたしました。「{user_input}」が理由ですね。休学の手続きは教育支援課で行います。期間は半年または1年で、通算2年まで可能です。休学期間中の学費は免除されます。以上でご案内を終了します。"
@@ -201,7 +202,7 @@ SCENARIOS = {
         }
     },
     'makeup_exam': {
-        'trigger_keywords': ['追試験', '試験を休んだ', 'テストを受けられなかった'],
+        'trigger_keywords': ['追試験', '試験を休んだ', 'テストを受けられなかった', 'テスト受けれなかった'],
         'steps': {
             0: "やむを得ない理由（病気、交通機関の遅延など）で定期試験を受けられなかったのですね。「追試験」の手続きをご案内します。準備はよろしいでしょうか？（「はい」と入力）",
             1: "試験実施日の翌日から【3日以内】に、証明書（診断書、遅延証明書など）を添えて、教育支援課に申請してください。以上でご案内を終了します。"
@@ -215,13 +216,76 @@ SCENARIOS = {
         }
     },
     'tuition_payment_issues': {
-        'trigger_keywords': ['学費が払えない', '授業料を延納したい', '学費の支払いが遅れる'],
+        'trigger_keywords': ['学費が払えない', '授業料を延納したい', '学費の支払いが遅れる', '授業料'],
         'steps': {
             0: "学費の納入に関するご相談ですね。状況についてお聞かせください。（例：「納期までに払えない」「家計が急変した」）",
             1: "承知いたしました。「{user_input}」とのこと、ご状況に応じて制度がございます。\n- **納期までの支払いが難しい場合**: 納期の延期や分割納入が可能です。**財務課**にご相談ください。\n- **家計の急変**: 緊急の奨学金制度があります。**学生支援課**にご相談ください。\n該当する窓口へ直接ご相談をお願いします。以上でご案内を終了します。"
         }
+    },
+    'dormitory_inquiry': {
+        'trigger_keywords': ['学生寮', '寮', '下宿'],
+        'steps': {
+            0: "学生寮に関するご質問ですね。どの寮についてお調べですか？（例：男子寮、女子寮）",
+            1: "承知いたしました。「{user_input}」ですね。学生寮の詳細は大学公式サイトの「学生寮のご案内」ページに掲載されています。入寮手続きや費用、施設についての情報はこちらをご確認ください。\n以上でご案内を終了します。"
+        }
     }
 }
+
+def find_scenario_by_user_input(user_input, scenarios):
+    """
+    ユーザーの入力内容に基づいて、最適なシナリオを検索します。
+    部分一致で検索するため、キーワードの揺らぎに対応できます。
+    """
+    for scenario_name, data in scenarios.items():
+        for keyword in data['trigger_keywords']:
+            # ユーザーの入力内容にキーワードが含まれているかをチェック
+            if keyword in user_input:
+                return scenario_name
+    return None
+
+def chatbot_flow(user_input):
+    """
+    チャットボットの応答フローをシミュレートします。
+    """
+    scenario_key = find_scenario_by_user_input(user_input, SCENARIOS)
+    
+    if scenario_key:
+        # シナリオが見つかった場合
+        scenario = SCENARIOS[scenario_key]
+        print(f"[{scenario_key} シナリオを検出しました]")
+        
+        # 最初のステップを表示
+        print(scenario['steps'][0])
+        
+        # ユーザーの応答を待つ（ここではデモのため固定値を使用）
+        response_input = input("あなたの答え: ")
+        
+        # 応答を反映して次のステップを表示
+        next_step = scenario['steps'][1].format(user_input=response_input)
+        print(next_step)
+        
+    else:
+        # シナリオが見つからない場合
+        print("申し訳ありません、その内容についてはお答えできません。")
+
+if __name__ == "__main__":
+    print("チャットボットを起動します。")
+    
+    # テストケース1: キーワードの揺らぎに対応
+    user_query_1 = "テスト受けれなかった"
+    print(f"\nユーザー入力: '{user_query_1}'")
+    chatbot_flow(user_query_1)
+    
+    # テストケース2: 別のキーワードに対応
+    user_query_2 = "授業料について知りたい"
+    print(f"\nユーザー入力: '{user_query_2}'")
+    chatbot_flow(user_query_2)
+    
+    # テストケース3: キーワードが見つからない場合
+    user_query_3 = "図書館の開館時間"
+    print(f"\nユーザー入力: '{user_query_3}'")
+    chatbot_flow(user_query_3)
+
 
 
 # --- テキスト処理・Webスクレイピング関数 ---
