@@ -50,7 +50,6 @@
         .document-list { max-height: 150px; overflow-y: auto; margin-top: 10px; }
         .document-item { padding: 8px 12px; background: #f8f9fa; margin: 5px 0; border-radius: 5px; font-size: 0.9rem; display: flex; justify-content: space-between; align-items: center; }
         .document-item:hover { background: #e9ecef; }
-        .document-count { font-size: 0.8rem; color: #6c757d; background-color: #e9ecef; padding: 2px 6px; border-radius: 5px; }
         .collection-input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 5px; margin-top: 10px; }
         .topk-select { width: 60px; padding: 2px; }
         .db-controls { display: flex; gap: 10px; margin-top: 10px; }
@@ -148,10 +147,8 @@
                 <div class="panel-section">
                     <h3 class="section-title">🔗 接続状況</h3>
                     <div>
-                        <!-- ▼ 修正箇所 ▼ -->
                         <span id="dbStatusIndicator" class="status-indicator status-disconnected"></span>
                         <span id="dbStatusText">データベース接続確認中...</span>
-                        <!-- ▲ 修正箇所 ▲ -->
                     </div>
                     <div class="margin-top-10">
                         <span id="geminiStatus" class="status-indicator status-disconnected"></span>
@@ -185,9 +182,7 @@
                 </div>
 
                 <div class="panel-section">
-                    <!-- ▼ 修正箇所 ▼ -->
                     <h3 class="section-title" id="collectionTitle">🗃️ データコレクション</h3>
-                    <!-- ▲ 修正箇所 ▲ -->
                     <div class="setting-item" id="collectionSetting">
                         <label for="collectionSelect"><strong>コレクション:</strong></label><br>
                         <select id="collectionSelect" class="collection-select"></select>
@@ -405,7 +400,7 @@
             const messageContent = document.createElement('div');
             messageContent.className = 'message-content';
              // HTMLとして解釈されるようにinnerHTMLを使用
-            messageContent.innerHTML = text.replace(/\n/g, '<br>');
+            messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
             messageWrapper.appendChild(messageContent);
             const messageTime = document.createElement('div');
             messageTime.className = 'message-time';
@@ -444,9 +439,10 @@
 
         async function initializeSystem() {
             document.getElementById('backendUrl').textContent = window.location.origin;
-            await checkBackendConnection();
+            
+            const dbType = await checkBackendConnection();
             if (backendConnected) {
-                await checkDbConnection(); // ▼ 修正箇所 ▼
+                checkDbConnection(dbType);
                 await checkGeminiConnection();
                 await refreshCollections();
                 connectSettingsWebSocket();
@@ -476,23 +472,15 @@
             }
         }
         
-        // ▼ 修正箇所 ▼: checkChromaDBConnectionを汎用的なcheckDbConnectionに変更
-        async function checkDbConnection() {
-            try {
-                const response = await fetch(`/health`);
-                const data = await response.json();
-                const dbName = data.database || '不明';
-                const dbNameCapitalized = dbName.charAt(0).toUpperCase() + dbName.slice(1);
-                
-                updateStatus('dbStatusIndicator', 'dbStatusText', response.ok, dbNameCapitalized);
+        function checkDbConnection(dbType) {
+            const dbName = dbType || '不明';
+            const dbNameCapitalized = dbName.charAt(0).toUpperCase() + dbName.slice(1);
+            
+            updateStatus('dbStatusIndicator', 'dbStatusText', backendConnected, dbNameCapitalized);
 
-                const collectionTitle = document.getElementById('collectionTitle');
-                if(collectionTitle){
-                    collectionTitle.innerHTML = `🗃️ ${dbNameCapitalized} コレクション`;
-                }
-
-            } catch (error) {
-                updateStatus('dbStatusIndicator', 'dbStatusText', false, 'データベース');
+            const collectionTitle = document.getElementById('collectionTitle');
+            if(collectionTitle){
+                collectionTitle.innerHTML = `🗃️ ${dbNameCapitalized} コレクション`;
             }
         }
 
@@ -650,7 +638,7 @@
             try {
                 const response = await fetch(`/collections/${collectionName}`, { method: 'DELETE' });
                 const result = await response.json();
-                addMessage(response.ok ? `✅ コレクション「${collectionName}」を削除しました` : `❌ 削除失敗: ${result.detail}`, 'bot');
+                addMessage(response.ok ? `✅ ${result.message}` : `❌ 削除失敗: ${result.detail}`, 'bot');
                 if (response.ok) {
                     await refreshCollections();
                 }
@@ -664,10 +652,14 @@
                 const response = await fetch(`/collections`);
                 if (response.ok) {
                     const collections = await response.json();
-                    updateCollectionList(collections); // ▼ 修正箇所 ▼
+                    updateCollectionList(collections);
+                } else {
+                   addMessage('❌ コレクション一覧の取得に失敗しました。', 'bot');
+                   updateCollectionList([]);
                 }
             } catch (error) {
                 addMessage(`❌ コレクションの更新に失敗: ${error.message}`, 'bot');
+                updateCollectionList([]);
             }
         }
 
@@ -686,15 +678,8 @@
                         const item = document.createElement('div');
                         item.className = 'document-item';
                         item.textContent = doc.id;
-                        
-                        const countSpan = document.createElement('span');
-                        countSpan.className = 'document-count';
-                        countSpan.textContent = `${data.count} chunks`;
-                        item.appendChild(countSpan);
-                        
                         documentList.appendChild(item);
                     });
-                     // Show total count once
                      const totalItem = document.createElement('div');
                      totalItem.style.textAlign = 'right';
                      totalItem.style.fontSize = '0.9rem';
@@ -733,7 +718,6 @@
             return selectElement.value || '';
         }
         
-        // ▼ 修正箇所 ▼: updateCollectionListがオブジェクトの配列を受け取るように変更
         function updateCollectionList(collections) {
             currentCollection = updateGenericList(collections, collectionSelect);
             updateDocumentList();
@@ -833,3 +817,4 @@
 </script>
 </body>
 </html>
+
