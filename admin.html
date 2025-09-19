@@ -607,28 +607,35 @@
             fileInput.value = '';
         }
 
-        async function createCollection() {
-            const collectionName = document.getElementById('newCollectionName').value.trim();
-            if (!collectionName) {
-                addMessage('❌ コレクション名を入力してください。', 'bot');
-                return;
-            }
-            try {
-                const response = await fetch(`/collections`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: collectionName })
-                });
-                const result = await response.json();
-                addMessage(response.ok ? `✅ コレクション「${collectionName}」を作成しました` : `❌ 作成失敗: ${result.detail}`, 'bot');
-                if (response.ok) {
-                    document.getElementById('newCollectionName').value = '';
-                    await refreshCollections();
-                }
-            } catch (error) {
-                addMessage(`❌ 作成中に通信エラー: ${error.message}`, 'bot');
-            }
+     async function createCollection() {
+    const collectionName = document.getElementById('newCollectionName').value.trim();
+    if (!collectionName) {
+        addMessage('❌ コレクション名を入力してください。', 'bot');
+        return;
+    }
+    try {
+        const response = await fetch(`/collections`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: collectionName })
+        });
+        const result = await response.json();
+        addMessage(response.ok ? `✅ コレクション「${collectionName}」を作成しました` : `❌ 作成失敗: ${result.detail}`, 'bot');
+        if (response.ok) {
+            document.getElementById('newCollectionName').value = '';
+            
+            // --- ここから修正 ---
+            // データベースの反映を待つために、500ミリ秒（0.5秒）待機します。
+            setTimeout(() => {
+                refreshCollections();
+            }, 500);
+            // --- ここまで修正 ---
+
         }
+    } catch (error) {
+        addMessage(`❌ 作成中に通信エラー: ${error.message}`, 'bot');
+    }
+}
         
         async function deleteCollection() {
             const collectionName = collectionSelect.value;
