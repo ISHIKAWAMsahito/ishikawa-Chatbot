@@ -562,6 +562,7 @@ async def websocket_settings_endpoint(websocket: WebSocket):
 # [修正] `SyntaxError` が発生しないように非同期ジェネレーター内の return 文を修正
 async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
     """
+    修正版: シナリオ処理中はFAQ/雑談に切り替わらないように改善
     This is an async generator that handles different chat logics (scenarios, RAG, general chat)
     and yields Server-Sent Events (SSE) formatted strings.
     """
@@ -575,8 +576,9 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
         scenario = SCENARIOS.get(name)
 
         if scenario and (step + 1) in scenario['steps']:
+            # シナリオの次のステップを実行
             response_message = scenario['steps'][step + 1].format(user_input=chat_req.query)
-            session.pop('scenario_state', None) # シナリオを終了
+            session.pop('scenario_state', None)  # シナリオを終了
 
             # シナリオ完了の応答を直接yieldし、ログを保存してジェネレーターを終了する
             log_id = str(uuid.uuid4())
@@ -588,19 +590,25 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
                 print(f"シナリオのログ保存失敗: {e}")
             
             yield f"data: {json.dumps({'content': response_message})}\n\n"
-            # ジェネレーターをここで終了（returnではなくそのまま関数を終了）
+            # ジェネレーターをここで終了
             return
+        else:
+            # シナリオに問題がある場合、状態をリセット
+            session.pop('scenario_state', None)
+            print(f"シナリオ状態をリセット: {name}, step: {step}")
 
-    # --- 2. 新しいシナリオを開始するか判定 ---
-    for name, scenario in SCENARIOS.items():
-        if any(keyword in chat_req.query for keyword in scenario['trigger_keywords']):
-            session['scenario_state'] = {'name': name, 'step': 0}
-            first_message = scenario['steps'][0]
-            
-            # シナリオ開始の応答を直接yieldして、ジェネレーターを終了する
-            yield f"data: {json.dumps({'content': first_message})}\n\n"
-            # ジェネレーターをここで終了（returnではなくそのまま関数を終了）
-            return
+    # --- 2. 新しいシナリオを開始するか判定（既存のシナリオがない場合のみ） ---
+    # 重要: scenario_stateが存在しない場合のみ新しいシナリオをチェック
+    if not session.get('scenario_state'):
+        for name, scenario in SCENARIOS.items():
+            if any(keyword in chat_req.query for keyword in scenario['trigger_keywords']):
+                session['scenario_state'] = {'name': name, 'step': 0}
+                first_message = scenario['steps'][0]
+                
+                # シナリオ開始の応答を直接yieldして、ジェネレーターを終了する
+                yield f"data: {json.dumps({'content': first_message})}\n\n"
+                # ジェネレーターをここで終了
+                return
 
     # --- 3. シナリオに該当しない場合のFAQ(RAG)/雑談ロジック ---
     log_id = str(uuid.uuid4())
@@ -661,6 +669,21 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
                 csv.writer(f).writerow([log_id, datetime.now(JST).isoformat(), chat_req.query, full_response, "", category, has_specific_info])
         except Exception as e:
             print(f"ログ保存失敗: {e}")
+
+# --- デバッグ用エンドポイント（オプション）---
+@app.get("/session/debug")
+async def debug_session(request: Request):
+    """デバッグ用：現在のセッション状態を確認"""
+    return {
+        "scenario_state": request.session.get('scenario_state'),
+        "session_keys": list(request.session.keys())
+    }
+
+@app.post("/session/reset")
+async def reset_session(request: Request):
+    """セッション状態をリセット（トラブル時用）"""
+    request.session.pop('scenario_state', None)
+    return {"message": "セッション状態をリセットしました"}
 
 @app.post("/chat", dependencies=[Depends(require_sgu_member)])
 async def admin_chat(request: Request, req: ChatRequest):
