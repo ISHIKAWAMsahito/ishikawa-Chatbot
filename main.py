@@ -569,16 +569,27 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
     session = request.session
     scenario_state = session.get('scenario_state')
     
+    # デバッグ情報を強制的にログ出力
+    print(f"[CHAT DEBUG] 開始 - scenario_state: {scenario_state}")
+    print(f"[CHAT DEBUG] ユーザー入力: {chat_req.query}")
+    print(f"[CHAT DEBUG] セッションID: {id(session)}")
+    
     # --- 1. 進行中のシナリオがあれば処理 ---
     if scenario_state:
         name = scenario_state.get('name')
         step = scenario_state.get('step')
         scenario = SCENARIOS.get(name)
+        
+        print(f"[CHAT DEBUG] シナリオ処理中: name={name}, step={step}")
+        print(f"[CHAT DEBUG] 利用可能なsteps: {list(scenario['steps'].keys()) if scenario else 'None'}")
+        print(f"[CHAT DEBUG] 次のstep {step + 1} は存在するか: {(step + 1) in scenario['steps'] if scenario else False}")
 
         if scenario and (step + 1) in scenario['steps']:
             # シナリオの次のステップを実行
             response_message = scenario['steps'][step + 1].format(user_input=chat_req.query)
             session.pop('scenario_state', None)  # シナリオを終了
+            
+            print(f"[CHAT DEBUG] シナリオ次ステップ実行: {response_message[:50]}...")
 
             # シナリオ完了の応答を直接yieldし、ログを保存してジェネレーターを終了する
             log_id = str(uuid.uuid4())
@@ -590,25 +601,35 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
                 print(f"シナリオのログ保存失敗: {e}")
             
             yield f"data: {json.dumps({'content': response_message})}\n\n"
+            print(f"[CHAT DEBUG] シナリオ完了で終了")
             # ジェネレーターをここで終了
             return
         else:
             # シナリオに問題がある場合、状態をリセット
+            print(f"[CHAT DEBUG] シナリオ状態リセット: name={name}, step={step}, 次ステップ存在={scenario and (step + 1) in scenario['steps'] if scenario else False}")
             session.pop('scenario_state', None)
-            print(f"シナリオ状態をリセット: {name}, step: {step}")
 
     # --- 2. 新しいシナリオを開始するか判定（既存のシナリオがない場合のみ） ---
     # 重要: scenario_stateが存在しない場合のみ新しいシナリオをチェック
-    if not session.get('scenario_state'):
+    current_scenario_state = session.get('scenario_state')
+    print(f"[CHAT DEBUG] 新シナリオ検索: scenario_state={current_scenario_state}")
+    
+    if not current_scenario_state:
         for name, scenario in SCENARIOS.items():
             if any(keyword in chat_req.query for keyword in scenario['trigger_keywords']):
                 session['scenario_state'] = {'name': name, 'step': 0}
                 first_message = scenario['steps'][0]
                 
+                print(f"[CHAT DEBUG] 新シナリオ開始: name={name}, step=0")
+                print(f"[CHAT DEBUG] セッションに保存: {session['scenario_state']}")
+                
                 # シナリオ開始の応答を直接yieldして、ジェネレーターを終了する
                 yield f"data: {json.dumps({'content': first_message})}\n\n"
+                print(f"[CHAT DEBUG] 新シナリオで終了")
                 # ジェネレーターをここで終了
                 return
+
+    print(f"[CHAT DEBUG] FAQ/雑談処理に進行")
 
     # --- 3. シナリオに該当しない場合のFAQ(RAG)/雑談ロジック ---
     log_id = str(uuid.uuid4())
@@ -670,20 +691,24 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
         except Exception as e:
             print(f"ログ保存失敗: {e}")
 
-# --- デバッグ用エンドポイント（オプション）---
+# --- デバッグ用エンドポイント（DB接続問題対応版）---
 @app.get("/session/debug")
 async def debug_session(request: Request):
     """デバッグ用：現在のセッション状態を確認"""
+    client_key = get_client_key(request)
+    scenario_state = get_scenario_state(client_key)
     return {
-        "scenario_state": request.session.get('scenario_state'),
-        "session_keys": list(request.session.keys())
+        "client_key": client_key,
+        "scenario_state": scenario_state,
+        "all_states": dict(scenario_states)  # 全体の状態を確認
     }
 
 @app.post("/session/reset")
 async def reset_session(request: Request):
     """セッション状態をリセット（トラブル時用）"""
-    request.session.pop('scenario_state', None)
-    return {"message": "セッション状態をリセットしました"}
+    client_key = get_client_key(request)
+    set_scenario_state(client_key, None)
+    return {"message": f"セッション状態をリセットしました: {client_key}"}
 
 @app.post("/chat", dependencies=[Depends(require_sgu_member)])
 async def admin_chat(request: Request, req: ChatRequest):
