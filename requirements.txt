@@ -1,20 +1,31 @@
+FastAPI & Server
 fastapi
 uvicorn[standard]
+gunicorn
+
+Google Gemini API
 google-generativeai
-httpx
-chromadb
+
+Supabase Client
 supabase>=1.0.0
 asyncpg>=0.28.0
-pypdf
+
+Document Processing
+PyPDF2
 python-docx
 beautifulsoup4
 lxml
-python-multipart
-prometheus-fastapi-instrumentator
-gunicorn
+
+Authentication
 authlib
-python-dotenv
 itsdangerous
+
+Utilities
+python-dotenv
+pydantic
+requests
 pandas
-pytest
-httpx
+python-multipart
+
+Monitoring
+prometheus-fastapi-instrumentator
