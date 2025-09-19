@@ -10,7 +10,14 @@ WORKDIR /app
 # まず、ライブラリのリスト(requirements.txt)をコピーします
 COPY requirements.txt .
 
+<<<<<<< HEAD
 
+=======
+# ▼▼▼【ここが最重要ポイントです】▼▼▼
+# 'custom_components' フォルダとその中身を、丸ごとコンテナにコピーします
+# これにより、main.py が 'from custom_components...' というインポート文を解決できるようになります
+COPY custom_components/ ./custom_components/
+>>>>>>> 60d72e17b4e23974c67d915281db7df0c640ad59
 
 # アプリケーション本体とHTMLファイルをコピーします
 COPY main.py .
