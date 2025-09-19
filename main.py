@@ -20,6 +20,10 @@ import asyncio
 import google.generativeai as genai
 import pandas as pd
 
+# Supabase関連のインポート
+from supabase import create_client, Client
+import asyncpg
+
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 from fastapi import Depends
@@ -43,6 +47,7 @@ except ImportError:
 # --------------------------------------------------------------------------
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Gemini API設定
 try:
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
     if not GEMINI_API_KEY: raise ValueError("環境変数 'GEMINI_API_KEY' が設定されていません。")
@@ -51,17 +56,24 @@ except Exception as e:
     print(f"重大なエラー: Gemini APIキーの設定に失敗しました。 - {e}")
     GEMINI_API_KEY = None
 
+# Auth0設定
 AUTH0_CLIENT_ID = os.getenv("AUTH0_CLIENT_ID")
 AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET")
 AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY")
 
+# Supabase設定
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+USE_SUPABASE = os.getenv("USE_SUPABASE", "false").lower() == "true"
+
 print("=" * 50)
 print("起動時設定確認:")
 print(f"  Auth0 CLIENT_ID: {'設定済み' if AUTH0_CLIENT_ID else '未設定'}")
 print(f"  Auth0 DOMAIN: {AUTH0_DOMAIN or '未設定'}")
-print(f"  Auth0 CLIENT_SECRET: {'設定済み' if AUTH0_CLIENT_SECRET else '未設定'}")
-print(f"  APP_SECRET_KEY: {'設定済み' if APP_SECRET_KEY else '未設定'}")
+print(f"  Supabase URL: {'設定済み' if SUPABASE_URL else '未設定'}")
+print(f"  USE_SUPABASE: {USE_SUPABASE}")
 print("=" * 50)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -72,26 +84,294 @@ SETTINGS_FILE_PATH = os.path.join(BASE_DIR, "shared_settings.json")
 JST = timezone(timedelta(hours=+9), 'JST')
 
 # --------------------------------------------------------------------------
-# 3. アプリケーションのライフサイクルと初期化
+# 3. データベースクライアント
 # --------------------------------------------------------------------------
 db_client = None
+supabase: Optional[Client] = None
 settings_manager = None
+
+class DatabaseManager:
+    def __init__(self):
+        self.use_supabase = USE_SUPABASE and SUPABASE_URL and SUPABASE_SERVICE_KEY
+        
+    async def initialize(self):
+        global db_client, supabase
+        
+        if self.use_supabase:
+            try:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                print("Supabaseクライアントの初期化完了。")
+                return True
+            except Exception as e:
+                print(f"Supabase接続エラー: {e}")
+                self.use_supabase = False
+        
+        # Supabaseが使用できない場合はChromaDBにフォールバック
+        try:
+            db_client = chromadb.PersistentClient(path=DB_PATH)
+            print("ChromaDBクライアントの初期化完了。")
+            return True
+        except Exception as e:
+            print(f"データベース初期化失敗: {e}")
+            return False
+    
+    async def add_documents(self, texts: List[str], embeddings: List[List[float]], 
+                           collection_name: str, metadata_list: List[dict]):
+        if self.use_supabase and supabase:
+            try:
+                documents = []
+                for i, (text, embedding, metadata) in enumerate(zip(texts, embeddings, metadata_list)):
+                    doc = {
+                        'content': text,
+                        'embedding': embedding,
+                        'collection_name': collection_name,
+                        'metadata': metadata
+                    }
+                    documents.append(doc)
+                
+                result = supabase.table('documents').insert(documents).execute()
+                return len(documents)
+            except Exception as e:
+                print(f"Supabase文書追加エラー: {e}")
+                raise e
+        else:
+            # ChromaDBでの処理（既存コード）
+            collection = await asyncio.to_thread(db_client.get_or_create_collection, name=collection_name)
+            await asyncio.to_thread(
+                collection.add,
+                embeddings=embeddings,
+                documents=texts,
+                ids=[str(uuid.uuid4()) for _ in texts],
+                metadatas=metadata_list
+            )
+            return len(texts)
+    
+    async def search_documents(self, query_embedding: List[float], collection_name: str, top_k: int):
+        if self.use_supabase and supabase:
+            try:
+                # pgvectorでのコサイン類似度検索
+                result = supabase.rpc('match_documents', {
+                    'query_embedding': query_embedding,
+                    'collection_name': collection_name,
+                    'match_count': top_k
+                }).execute()
+                
+                if result.data:
+                    return {'documents': [[doc['content'] for doc in result.data]]}
+                return {'documents': [[]]}
+            except Exception as e:
+                print(f"Supabase検索エラー: {e}")
+                return {'documents': [[]]}
+        else:
+            # ChromaDBでの処理（既存コード）
+            try:
+                collection = await asyncio.to_thread(db_client.get_collection, name=collection_name)
+                results = await asyncio.to_thread(
+                    collection.query, 
+                    query_embeddings=[query_embedding], 
+                    n_results=top_k
+                )
+                return results
+            except Exception:
+                return {'documents': [[]]}
+    
+    async def list_collections(self):
+        if self.use_supabase and supabase:
+            try:
+                result = supabase.table('documents').select('collection_name').execute()
+                collections = list(set(doc['collection_name'] for doc in result.data))
+                return [{'name': name, 'count': 0} for name in collections]  # TODO: 正確なカウント
+            except Exception as e:
+                print(f"Supabaseコレクション一覧エラー: {e}")
+                return []
+        else:
+            collections = await asyncio.to_thread(db_client.list_collections)
+            return [{"name": c.name, "count": c.count()} for c in collections]
+    
+    async def create_collection(self, name: str):
+        if self.use_supabase and supabase:
+            # Supabaseでは動的にコレクションが作成される
+            return {"name": name, "message": "Collection will be created on first document"}
+        else:
+            collection = await asyncio.to_thread(db_client.create_collection, name=name)
+            return {"name": collection.name, "message": "Collection created"}
+    
+    async def delete_collection(self, name: str):
+        if self.use_supabase and supabase:
+            try:
+                result = supabase.table('documents').delete().eq('collection_name', name).execute()
+                return {"message": "Collection documents deleted"}
+            except Exception as e:
+                raise HTTPException(500, f"Failed to delete collection: {e}")
+        else:
+            await asyncio.to_thread(db_client.delete_collection, name=name)
+            return {"message": "Collection deleted"}
+    
+    async def get_documents(self, collection_name: str):
+        if self.use_supabase and supabase:
+            try:
+                result = supabase.table('documents')\
+                    .select('metadata')\
+                    .eq('collection_name', collection_name)\
+                    .execute()
+                
+                sources = []
+                for doc in result.data:
+                    metadata = doc.get('metadata', {})
+                    source = metadata.get('filename') or metadata.get('source_url', 'unknown')
+                    if source not in sources:
+                        sources.append(source)
+                
+                return {"documents": [{"id": src} for src in sources], "count": len(result.data)}
+            except Exception as e:
+                print(f"Supabase文書取得エラー: {e}")
+                return {"documents": [], "count": 0}
+        else:
+            # ChromaDBでの処理（既存コード）
+            try:
+                collection = await asyncio.to_thread(db_client.get_collection, name=collection_name)
+                if collection.count() == 0: 
+                    return {"documents": [], "count": 0}
+                
+                data = await asyncio.to_thread(collection.get, include=['metadatas'])
+                sources = sorted(list(set(
+                    md.get('filename') or md.get('source_url', 'unknown') 
+                    for md in data['metadatas']
+                )))
+                return {"documents": [{"id": src} for src in sources], "count": collection.count()}
+            except ValueError:
+                return {"documents": [], "count": 0}
+            except Exception as e:
+                raise HTTPException(500, str(e))
+    
+    async def save_feedback(self, log_id: str, timestamp: str, query: str, response: str, 
+                           rating: str, category: str, has_specific_info: bool):
+        if self.use_supabase and supabase:
+            try:
+                supabase.table('feedback_logs').insert({
+                    'log_id': log_id,
+                    'timestamp': timestamp,
+                    'query': query,
+                    'response': response,
+                    'rating': rating,
+                    'category': category,
+                    'has_specific_info': has_specific_info
+                }).execute()
+            except Exception as e:
+                print(f"Supabaseフィードバック保存エラー: {e}")
+                # CSVにフォールバック
+                self._save_to_csv(log_id, timestamp, query, response, rating, category, has_specific_info)
+        else:
+            self._save_to_csv(log_id, timestamp, query, response, rating, category, has_specific_info)
+    
+    def _save_to_csv(self, log_id, timestamp, query, response, rating, category, has_specific_info):
+        try:
+            with open(FEEDBACK_FILE_PATH, 'a', newline='', encoding='utf-8') as f:
+                csv.writer(f).writerow([log_id, timestamp, query, response, rating, category, has_specific_info])
+        except Exception as e:
+            print(f"CSVフィードバック保存エラー: {e}")
+    
+    async def get_logs(self):
+        if self.use_supabase and supabase:
+            try:
+                result = supabase.table('feedback_logs').select('*').order('timestamp', desc=True).execute()
+                return result.data
+            except Exception as e:
+                print(f"Supabaseログ取得エラー: {e}")
+                # CSVにフォールバック
+                return self._get_csv_logs()
+        else:
+            return self._get_csv_logs()
+    
+    def _get_csv_logs(self):
+        if not os.path.exists(FEEDBACK_FILE_PATH): 
+            return []
+        try: 
+            return pd.read_csv(FEEDBACK_FILE_PATH).fillna("").to_dict('records')
+        except Exception as e: 
+            print(f"CSVログ取得エラー: {e}")
+            return []
+    
+    async def update_feedback(self, log_id: str, rating: str):
+        if self.use_supabase and supabase:
+            try:
+                result = supabase.table('feedback_logs')\
+                    .update({'rating': rating})\
+                    .eq('log_id', log_id)\
+                    .execute()
+                return len(result.data) > 0
+            except Exception as e:
+                print(f"Supabaseフィードバック更新エラー: {e}")
+                return False
+        else:
+            # CSV更新（既存コード）
+            try:
+                df = pd.read_csv(FEEDBACK_FILE_PATH)
+                if log_id in df['log_id'].values:
+                    df.loc[df['log_id'] == log_id, 'rating'] = rating
+                    df.to_csv(FEEDBACK_FILE_PATH, index=False)
+                    return True
+                return False
+            except Exception:
+                return False
+
+# Supabaseでのマッチング関数を作成するSQL（手動で実行）
+SUPABASE_MATCH_FUNCTION = """
+CREATE OR REPLACE FUNCTION match_documents(
+  query_embedding vector(768),
+  collection_name text,
+  match_count int DEFAULT 5
+)
+RETURNS TABLE (
+  id uuid,
+  content text,
+  metadata jsonb,
+  similarity float
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    documents.id,
+    documents.content,
+    documents.metadata,
+    1 - (documents.embedding <=> query_embedding) as similarity
+  FROM documents
+  WHERE documents.collection_name = match_documents.collection_name
+  ORDER BY documents.embedding <=> query_embedding
+  LIMIT match_count;
+END;
+$$;
+"""
+
+# --------------------------------------------------------------------------
+# 3. アプリケーションのライフサイクルと初期化
+# --------------------------------------------------------------------------
+db_manager = DatabaseManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global db_client, settings_manager
+    global settings_manager
     print("--- アプリケーション起動処理開始 ---")
     settings_manager = SettingsManager()
+    
     try:
+        # CSVファイル初期化（Supabaseフォールバック用）
         if not os.path.exists(FEEDBACK_FILE_PATH):
             with open(FEEDBACK_FILE_PATH, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(['log_id', 'timestamp', 'query', 'response', 'rating', 'category', 'has_specific_info'])
-        db_client = chromadb.PersistentClient(path=DB_PATH)
-        print("ChromaDBクライアントの初期化完了。")
+        
+        # データベース初期化
+        success = await db_manager.initialize()
+        if not success:
+            print("警告: データベースの初期化に失敗しました。")
+        
+        print("--- 起動処理完了 ---")
     except Exception as e:
         print(f"致命的エラー: ライフサイクル初期化中にエラーが発生しました - {e}\n{traceback.format_exc()}")
-    print("--- 起動処理完了 ---")
+    
     yield
     print("--- アプリケーション終了処理 ---")
 
@@ -115,7 +395,7 @@ else:
 Instrumentator().instrument(app).expose(app)
 
 # --------------------------------------------------------------------------
-# 4. ヘルパー関数とPydanticモデル
+# 4. ヘルパー関数とPydanticモデル（既存コードをそのまま維持）
 # --------------------------------------------------------------------------
 class SettingsManager:
     def __init__(self):
@@ -156,7 +436,7 @@ class FeedbackRequest(BaseModel): log_id: str; rating: str
 class ScrapeRequest(BaseModel):
     url: str; collection_name: str; embedding_model: str
 
-# --- カテゴリとキーワードのマッピング ---
+# --- カテゴリとキーワードのマッピング（既存コード維持）---
 KEYWORD_MAP = {
     "授業": ["学事暦", "シラバス", "授業計画", "年間スケジュール", "夏休み", "冬休み", "春休み", "夏季休業", "冬季休業", "春季休業"],
     "カリキュラム": ["カリキュラム", "履修",  "科目", "単位", "授業", "必修", "選択"],
@@ -171,14 +451,14 @@ KEYWORD_MAP = {
     "施設": ["図書館", "食堂", "購買", "場所", "どこ", "Wi-Fi", "PC", "パソコン", "教室", "体育館", "グラウンド", "駐車場"],
     "生協": ["生協", "コープ", "教科書", "共済", "組合員","購買", "食堂", "書籍", "パソコン", "カフェテリア", "学内ショップ"],
 }
+
 CATEGORY_INFO = {
     "授業": {"url_to_summarize": "https://www.sgu.ac.jp/information/schedule.html", "static_response": "学事暦や年間スケジュールに関するご質問ですね。\n- **夏期休業期間（夏休み）**: 8月上旬～9月中旬\n- **冬季休業期間（冬休み）**: 12月下旬～1月上旬\n- **春季休業期間（春休み）**: 2月上旬～3月下旬\n正確な日付は、[2025年度 学事暦](https://www.sgu.ac.jp/information/schedule.html)でご確認ください。"},
     "証明書": {"url_to_summarize": "https://www.sgu.ac.jp/campuslife/support/certification.html", "static_response": "各種証明書の発行については、[諸証明・各種願出・届出について](https://www.sgu.ac.jp/campuslife/support/certification.html)のページをご確認ください。"},
     "経済支援": {"url_to_summarize": "https://www.sgu.ac.jp/campuslife/scholarship/", "static_response": "奨学金や授業料減免については、[奨学金制度](https://www.sgu.ac.jp/campuslife/scholarship/)や[授業料減免制度](https://www.sgu.ac.jp/tuition/j09tjo00000f665g.html)のページをご確認ください。"},
 }
 
-
-# [更新] 提供されたデータに基づき、複数のシナリオを定義
+# シナリオ処理（既存コード維持）
 SCENARIOS = {
     'leave_of_absence': {
         'trigger_keywords': ['休学したい', '休学手続き', '休学'],
@@ -232,63 +512,14 @@ SCENARIOS = {
 }
 
 def find_scenario_by_user_input(user_input, scenarios):
-    """
-    ユーザーの入力内容に基づいて、最適なシナリオを検索します。
-    部分一致で検索するため、キーワードの揺らぎに対応できます。
-    """
+    """ユーザーの入力内容に基づいて、最適なシナリオを検索します。"""
     for scenario_name, data in scenarios.items():
         for keyword in data['trigger_keywords']:
-            # ユーザーの入力内容にキーワードが含まれているかをチェック
             if keyword in user_input:
                 return scenario_name
     return None
 
-def chatbot_flow(user_input):
-    """
-    チャットボットの応答フローをシミュレートします。
-    """
-    scenario_key = find_scenario_by_user_input(user_input, SCENARIOS)
-    
-    if scenario_key:
-        # シナリオが見つかった場合
-        scenario = SCENARIOS[scenario_key]
-        print(f"[{scenario_key} シナリオを検出しました]")
-        
-        # 最初のステップを表示
-        print(scenario['steps'][0])
-        
-        # ユーザーの応答を待つ（ここではデモのため固定値を使用）
-        response_input = input("あなたの答え: ")
-        
-        # 応答を反映して次のステップを表示
-        next_step = scenario['steps'][1].format(user_input=response_input)
-        print(next_step)
-        
-    else:
-        # シナリオが見つからない場合
-        print("申し訳ありません、その内容についてはお答えできません。")
-
-if __name__ == "__main__":
-    print("チャットボットを起動します。")
-    
-    # テストケース1: キーワードの揺らぎに対応
-    user_query_1 = "テスト受けれなかった"
-    print(f"\nユーザー入力: '{user_query_1}'")
-    chatbot_flow(user_query_1)
-    
-    # テストケース2: 別のキーワードに対応
-    user_query_2 = "授業料について知りたい"
-    print(f"\nユーザー入力: '{user_query_2}'")
-    chatbot_flow(user_query_2)
-    
-    # テストケース3: キーワードが見つからない場合
-    user_query_3 = "図書館の開館時間"
-    print(f"\nユーザー入力: '{user_query_3}'")
-    chatbot_flow(user_query_3)
-
-
-
-# --- テキスト処理・Webスクレイピング関数 ---
+# --- テキスト処理・Webスクレイピング関数（既存コード維持）---
 async def read_file_content(file: UploadFile):
     filename = file.filename or ""
     content_bytes = await file.read()
@@ -332,14 +563,12 @@ async def scrape_website_text(url: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing website content: {e}")
 
-
-# --- AIロジック関連のヘルパー関数 ---
+# --- AIロジック関連のヘルパー関数（既存コード維持）---
 def format_urls_as_links(text: str) -> str:
     url_pattern = r'(https?://[^\s\[\]()]+)'
     md_link_pattern = r'\[([^\]]+)\]\((https?://[^\s\)]+)\)'
     text = re.sub(url_pattern, r'<a href="\1" target="_blank">\1</a>', text)
     return re.sub(md_link_pattern, r'<a href="\2" target="_blank">\1</a>', text)
-
 
 async def classify_query_intent(query: str, model: str) -> str:
     prompt = f"""ユーザーからの入力が、「学内情報に関する質問」か「一般的な雑談」かを分類してください。
@@ -373,12 +602,11 @@ async def create_tiered_response(category: str, model: str):
         return f"**▼ {category}に関する公式サイトの要約**\n{summary}\n\nより詳しい情報は、以下のリンクから直接ご確認ください。\n[{category}関連ページ]({info['url_to_summarize']})"
     return info.get("static_response", "情報が見つかりませんでした。")
 
-
 # --------------------------------------------------------------------------
-# 5. APIエンドポイント定義
+# 5. 修正されたAPIエンドポイント定義
 # --------------------------------------------------------------------------
 
-# --- 認証とHTML提供 ---
+# --- 認証とHTML提供（既存コード維持）---
 @app.get('/login')
 async def login(request: Request):
     if 'auth0' not in oauth._clients: raise HTTPException(status_code=500, detail="Auth0 is not configured.")
@@ -413,60 +641,55 @@ async def serve_log_page(_: dict = Depends(require_sgu_member)): return FileResp
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon(): return Response(status_code=204)
 
-# --- ステータス確認 ---
+# --- ステータス確認（修正版）---
 @app.get("/health")
-async def health_check(): return {"status": "ok"}
+async def health_check(): 
+    return {"status": "ok", "database": "supabase" if db_manager.use_supabase else "chromadb"}
+
 @app.get("/chromadb/status", dependencies=[Depends(require_sgu_member)])
 async def chromadb_status():
+    if db_manager.use_supabase:
+        return {"status": "using_supabase", "message": "Using Supabase instead of ChromaDB"}
+    
     if not db_client: raise HTTPException(status_code=500, detail="DB not initialized")
-    try: db_client.heartbeat(); return {"status": "ok"}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+    try: 
+        db_client.heartbeat()
+        return {"status": "ok"}
+    except Exception as e: 
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/gemini/status", dependencies=[Depends(require_sgu_member)])
 async def gemini_status():
     if GEMINI_API_KEY: return {"connected": True, "models": ["gemini-1.5-flash-latest", "gemini-pro"]}
     return {"connected": False, "detail": "GEMINI_API_KEY not set."}
 
-# --- DBコレクション管理 ---
+# --- DBコレクション管理（修正版）---
 @app.get("/collections", dependencies=[Depends(require_sgu_member)])
 async def list_collections():
-    if not db_client: raise HTTPException(status_code=500, detail="ChromaDB client not initialized")
-    collections = await asyncio.to_thread(db_client.list_collections)
-    return [{"name": c.name, "count": c.count()} for c in collections]
+    return await db_manager.list_collections()
 
 @app.post("/collections", dependencies=[Depends(require_sgu_member)])
 async def create_collection_api(req: CreateCollectionRequest):
-    if not db_client: raise HTTPException(status_code=500, detail="ChromaDB client not initialized")
-    if not (name := req.name.strip()): raise HTTPException(status_code=400, detail="Collection name is empty")
+    if not (name := req.name.strip()): 
+        raise HTTPException(status_code=400, detail="Collection name is empty")
     try:
-        collection = await asyncio.to_thread(db_client.create_collection, name=name)
-        return {"name": collection.name, "message": "Collection created"}
-    except Exception as e: raise HTTPException(status_code=500, detail=f"Failed to create collection: {e}")
+        return await db_manager.create_collection(name)
+    except Exception as e: 
+        raise HTTPException(status_code=500, detail=f"Failed to create collection: {e}")
 
 @app.delete("/collections/{collection_name}", dependencies=[Depends(require_sgu_member)])
 async def delete_collection_api(collection_name: str):
-    if not db_client: raise HTTPException(status_code=500, detail="ChromaDB client not initialized")
     try:
-        await asyncio.to_thread(db_client.delete_collection, name=collection_name)
-        return {"message": "Collection deleted"}
-    except Exception as e: raise HTTPException(status_code=500, detail=f"Failed to delete collection: {e}")
+        return await db_manager.delete_collection(collection_name)
+    except Exception as e: 
+        raise HTTPException(status_code=500, detail=f"Failed to delete collection: {e}")
 
 @app.get("/collections/{collection_name}/documents", dependencies=[Depends(require_sgu_member)])
 async def get_documents(collection_name: str):
-    if not db_client: raise HTTPException(status_code=500, detail="ChromaDB not available")
-    try:
-        collection = await asyncio.to_thread(db_client.get_collection, name=collection_name)
-        if collection.count() == 0: return {"documents": [], "count": 0}
-        data = await asyncio.to_thread(collection.get, include=['metadatas'])
-        sources = sorted(list(set(md.get('filename') or md.get('source_url', 'unknown') for md in data['metadatas'])))
-        return {"documents": [{"id": src} for src in sources], "count": collection.count()}
-    except ValueError: return {"documents": [], "count": 0}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+    return await db_manager.get_documents(collection_name)
 
-# --- データ登録 (ファイル & URL) ---
+# --- データ登録（修正版）---
 async def add_text_to_collection(text: str, collection_name: str, embedding_model: str, metadata: dict):
-    if not db_client:
-        raise HTTPException(status_code=500, detail="DB client not ready")
-    
     chunks = split_text_into_chunks(text)
     if not chunks:
         return 0
@@ -474,11 +697,10 @@ async def add_text_to_collection(text: str, collection_name: str, embedding_mode
     total_chunks_added = 0
     batch_size = 50
 
-    collection = await asyncio.to_thread(db_client.get_or_create_collection, name=collection_name)
-
     for i in range(0, len(chunks), batch_size):
         batch_chunks = chunks[i:i + batch_size]
         
+        # Gemini APIでembeddingを取得
         result = await asyncio.to_thread(
             genai.embed_content,
             model=f"models/{embedding_model}",
@@ -486,16 +708,16 @@ async def add_text_to_collection(text: str, collection_name: str, embedding_mode
             task_type="retrieval_document"
         )
         embeddings = result['embedding']
+        metadata_list = [metadata for _ in batch_chunks]
 
-        await asyncio.to_thread(
-            collection.add,
-            embeddings=embeddings,
-            documents=batch_chunks,
-            ids=[str(uuid.uuid4()) for _ in batch_chunks],
-            metadatas=[metadata for _ in batch_chunks]
+        # データベースに追加
+        chunks_added = await db_manager.add_documents(
+            batch_chunks, embeddings, collection_name, metadata_list
         )
-        total_chunks_added += len(batch_chunks)
-        await asyncio.sleep(35)
+        total_chunks_added += chunks_added
+        
+        # API制限対策
+        await asyncio.sleep(1)
 
     return total_chunks_added
 
@@ -509,7 +731,6 @@ async def upload_file_api(file: UploadFile = File(...), collection_name: str = F
         print(f"Upload failed: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"ファイル処理中にエラーが発生しました: {str(e)}")
 
-
 @app.post("/scrape", dependencies=[Depends(require_sgu_member)])
 async def scrape_website_api(req: ScrapeRequest):
     try:
@@ -520,8 +741,7 @@ async def scrape_website_api(req: ScrapeRequest):
         print(f"Scrape failed: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Webサイトの処理中にエラーが発生しました: {str(e)}")
 
-
-# --- 設定とフィードバック ---
+# --- 設定とフィードバック（修正版）---
 @app.post("/settings", dependencies=[Depends(require_sgu_member)])
 async def update_settings_api(req: SettingsUpdateRequest):
     if not settings_manager: raise HTTPException(503, "Settings not initialized")
@@ -530,49 +750,41 @@ async def update_settings_api(req: SettingsUpdateRequest):
 
 @app.get("/logs", dependencies=[Depends(require_sgu_member)])
 async def get_logs_api():
-    if not os.path.exists(FEEDBACK_FILE_PATH): return []
-    try: return pd.read_csv(FEEDBACK_FILE_PATH).fillna("").to_dict('records')
-    except Exception as e: raise HTTPException(500, str(e))
+    return await db_manager.get_logs()
 
 @app.post("/feedback")
 async def handle_feedback_api(req: FeedbackRequest):
-    if not os.path.exists(FEEDBACK_FILE_PATH): raise HTTPException(404, "Log file not found")
-    try:
-        df = pd.read_csv(FEEDBACK_FILE_PATH)
-        if req.log_id in df['log_id'].values:
-            df.loc[df['log_id'] == req.log_id, 'rating'] = req.rating
-            df.to_csv(FEEDBACK_FILE_PATH, index=False)
-            return {"message": "Feedback received"}
+    success = await db_manager.update_feedback(req.log_id, req.rating)
+    if success:
+        return {"message": "Feedback received"}
+    else:
         raise HTTPException(status_code=404, detail="Log ID not found")
-    except Exception as e: raise HTTPException(500, str(e))
 
-# --- WebSocket ---
+# --- WebSocket（既存コード維持）---
 @app.websocket("/ws/settings")
 async def websocket_settings_endpoint(websocket: WebSocket):
     session_cookie = websocket.cookies.get("session")
-    if not session_cookie or not APP_SECRET_KEY: await websocket.close(1008); return
-    if not settings_manager: await websocket.close(1011); return
+    if not session_cookie or not APP_SECRET_KEY: 
+        await websocket.close(1008)
+        return
+    if not settings_manager: 
+        await websocket.close(1011)
+        return
     await settings_manager.add_websocket(websocket)
     try:
-        while True: await websocket.receive_text()
-    except WebSocketDisconnect: settings_manager.remove_websocket(websocket)
+        while True: 
+            await websocket.receive_text()
+    except WebSocketDisconnect: 
+        settings_manager.remove_websocket(websocket)
 
-
-# --- チャットAPI (統合ロジック) ---
-# [修正] `SyntaxError` が発生しないように非同期ジェネレーター内の return 文を修正
+# --- チャットAPI（修正版）---
 async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
-    """
-    修正版: シナリオ処理中はFAQ/雑談に切り替わらないように改善
-    This is an async generator that handles different chat logics (scenarios, RAG, general chat)
-    and yields Server-Sent Events (SSE) formatted strings.
-    """
+    """修正版: Supabase対応のチャットロジック"""
     session = request.session
     scenario_state = session.get('scenario_state')
     
-    # デバッグ情報を強制的にログ出力
     print(f"[CHAT DEBUG] 開始 - scenario_state: {scenario_state}")
     print(f"[CHAT DEBUG] ユーザー入力: {chat_req.query}")
-    print(f"[CHAT DEBUG] セッションID: {id(session)}")
     
     # --- 1. 進行中のシナリオがあれば処理 ---
     if scenario_state:
@@ -581,38 +793,28 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
         scenario = SCENARIOS.get(name)
         
         print(f"[CHAT DEBUG] シナリオ処理中: name={name}, step={step}")
-        print(f"[CHAT DEBUG] 利用可能なsteps: {list(scenario['steps'].keys()) if scenario else 'None'}")
-        print(f"[CHAT DEBUG] 次のstep {step + 1} は存在するか: {(step + 1) in scenario['steps'] if scenario else False}")
 
         if scenario and (step + 1) in scenario['steps']:
-            # シナリオの次のステップを実行
             response_message = scenario['steps'][step + 1].format(user_input=chat_req.query)
-            session.pop('scenario_state', None)  # シナリオを終了
+            session.pop('scenario_state', None)
             
             print(f"[CHAT DEBUG] シナリオ次ステップ実行: {response_message[:50]}...")
 
-            # シナリオ完了の応答を直接yieldし、ログを保存してジェネレーターを終了する
             log_id = str(uuid.uuid4())
-            try:
-                with open(FEEDBACK_FILE_PATH, 'a', newline='', encoding='utf-8') as f:
-                    csv.writer(f).writerow([log_id, datetime.now(JST).isoformat(), chat_req.query, response_message, "", f"シナリオ({name})", False])
-                yield f"data: {json.dumps({'log_id': log_id})}\n\n"
-            except Exception as e:
-                print(f"シナリオのログ保存失敗: {e}")
+            await db_manager.save_feedback(
+                log_id, datetime.now(JST).isoformat(), chat_req.query, 
+                response_message, "", f"シナリオ({name})", False
+            )
             
+            yield f"data: {json.dumps({'log_id': log_id})}\n\n"
             yield f"data: {json.dumps({'content': response_message})}\n\n"
-            print(f"[CHAT DEBUG] シナリオ完了で終了")
-            # ジェネレーターをここで終了
             return
         else:
-            # シナリオに問題がある場合、状態をリセット
-            print(f"[CHAT DEBUG] シナリオ状態リセット: name={name}, step={step}, 次ステップ存在={scenario and (step + 1) in scenario['steps'] if scenario else False}")
+            print(f"[CHAT DEBUG] シナリオ状態リセット")
             session.pop('scenario_state', None)
 
-    # --- 2. 新しいシナリオを開始するか判定（既存のシナリオがない場合のみ） ---
-    # 重要: scenario_stateが存在しない場合のみ新しいシナリオをチェック
+    # --- 2. 新しいシナリオを開始するか判定 ---
     current_scenario_state = session.get('scenario_state')
-    print(f"[CHAT DEBUG] 新シナリオ検索: scenario_state={current_scenario_state}")
     
     if not current_scenario_state:
         for name, scenario in SCENARIOS.items():
@@ -620,24 +822,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
                 session['scenario_state'] = {'name': name, 'step': 0}
                 first_message = scenario['steps'][0]
                 
-                print(f"[CHAT DEBUG] 新シナリオ開始: name={name}, step=0")
-                print(f"[CHAT DEBUG] セッションに保存: {session['scenario_state']}")
+                print(f"[CHAT DEBUG] 新シナリオ開始: name={name}")
                 
-                # シナリオ開始の応答を直接yieldして、ジェネレーターを終了する
                 yield f"data: {json.dumps({'content': first_message})}\n\n"
-                print(f"[CHAT DEBUG] 新シナリオで終了")
-                # ジェネレーターをここで終了
                 return
 
     print(f"[CHAT DEBUG] FAQ/雑談処理に進行")
 
-    # --- 3. シナリオに該当しない場合のFAQ(RAG)/雑談ロジック ---
+    # --- 3. FAQ(RAG)/雑談ロジック ---
     log_id = str(uuid.uuid4())
     full_response, category, has_specific_info = "", "その他", False
     
     try:
         yield f"data: {json.dumps({'log_id': log_id})}\n\n"
-        if not all([db_client, GEMINI_API_KEY]): 
+        if not GEMINI_API_KEY: 
             raise HTTPException(503, "サービスが利用できません。")
 
         intent = await classify_query_intent(chat_req.query, chat_req.model)
@@ -656,12 +854,21 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
             
             context = ""
             try:
-                collection = await asyncio.to_thread(db_client.get_collection, name=chat_req.collection)
-                result = await asyncio.to_thread(genai.embed_content, model=f"models/{chat_req.embedding_model}", content=[chat_req.query], task_type="retrieval_query")
+                # Gemini APIでクエリのembeddingを取得
+                result = await asyncio.to_thread(
+                    genai.embed_content, 
+                    model=f"models/{chat_req.embedding_model}", 
+                    content=[chat_req.query], 
+                    task_type="retrieval_query"
+                )
                 
-                results = await asyncio.to_thread(collection.query, query_embeddings=result['embedding'], n_results=chat_req.top_k)
-                if results['documents'] and results['documents'][0]:
-                    context = "\n".join(results['documents'][0])
+                # データベースで検索
+                search_results = await db_manager.search_documents(
+                    result['embedding'][0], chat_req.collection, chat_req.top_k
+                )
+                
+                if search_results['documents'] and search_results['documents'][0]:
+                    context = "\n".join(search_results['documents'][0])
                     has_specific_info = True
             except Exception as e:
                 print(f"DB検索エラー: {e}")
@@ -685,30 +892,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatRequest):
     
     finally:
         full_response = format_urls_as_links(full_response)
-        try:
-            with open(FEEDBACK_FILE_PATH, 'a', newline='', encoding='utf-8') as f:
-                csv.writer(f).writerow([log_id, datetime.now(JST).isoformat(), chat_req.query, full_response, "", category, has_specific_info])
-        except Exception as e:
-            print(f"ログ保存失敗: {e}")
-
-# --- デバッグ用エンドポイント（DB接続問題対応版）---
-@app.get("/session/debug")
-async def debug_session(request: Request):
-    """デバッグ用：現在のセッション状態を確認"""
-    client_key = get_client_key(request)
-    scenario_state = get_scenario_state(client_key)
-    return {
-        "client_key": client_key,
-        "scenario_state": scenario_state,
-        "all_states": dict(scenario_states)  # 全体の状態を確認
-    }
-
-@app.post("/session/reset")
-async def reset_session(request: Request):
-    """セッション状態をリセット（トラブル時用）"""
-    client_key = get_client_key(request)
-    set_scenario_state(client_key, None)
-    return {"message": f"セッション状態をリセットしました: {client_key}"}
+        await db_manager.save_feedback(
+            log_id, datetime.now(JST).isoformat(), chat_req.query,
+            full_response, "", category, has_specific_info
+        )
 
 @app.post("/chat", dependencies=[Depends(require_sgu_member)])
 async def admin_chat(request: Request, req: ChatRequest):
@@ -725,5 +912,5 @@ async def client_chat(request: Request, req: ClientChatRequest):
 # --------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    print("=== 札幌学院大学 学生サポートAI (ローカル開発モード) ===")
+    print("=== 札幌学院大学 学生サポートAI (Supabase対応版) ===")
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
