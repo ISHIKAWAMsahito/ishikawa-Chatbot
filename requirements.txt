@@ -1,31 +1,18 @@
-FastAPI & Server
 fastapi
 uvicorn[standard]
 gunicorn
-
-Google Gemini API
 google-generativeai
-
-Supabase Client
 supabase>=1.0.0
 asyncpg>=0.28.0
-
-Document Processing
 PyPDF2
 python-docx
 beautifulsoup4
 lxml
-
-Authentication
 authlib
 itsdangerous
-
-Utilities
 python-dotenv
 pydantic
 requests
 pandas
 python-multipart
-
-Monitoring
 prometheus-fastapi-instrumentator
