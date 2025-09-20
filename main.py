@@ -10,11 +10,14 @@ from datetime import datetime, timezone, timedelta
 import uuid
 import io
 import logging
-from typing import List, Optional
+import asyncio
+import re
+from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
 # --- サードパーティライブラリ ---
 import google.generativeai as genai
+from google.generativeai.types import GenerationConfig
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends
@@ -51,15 +54,75 @@ APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "default-secret-key-for-development
 
 # Supabase設定
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") # サービスキーを使用
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 # 定数
 ACTIVE_COLLECTION_NAME = "student-knowledge-base"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 JST = timezone(timedelta(hours=+9), 'JST')
 
+# キーワードマッピング
+KEYWORD_MAP = {
+    "授業": ["学事暦", "シラバス", "授業計画", "年間スケジュール", "夏休み", "冬休み", "春休み", "夏季休業", "冬季休業", "春季休業"],
+    "カリキュラム": ["カリキュラム", "履修", "科目", "単位", "授業", "必修", "選択"],
+    "欠席手続き": ["忌引き", "休む", "欠席", "休講", "病気", "インフルエンザ", "欠席届", "公認欠席", "特別欠席"],
+    "試験": ["試験", "テスト", "追試", "再試", "成績", "レポート", "課題"],
+    "証明書": ["証明書", "学割", "発行", "学生証", "学籍", "休学", "復学", "退学", "再入学", "転学部", "転学科", "卒業", "在学", "卒業見込"],
+    "留学": ["留学", "海外", "協定校", "IEC", "国際交流"],
+    "学生支援": ["サークル", "部活", "ボランティア", "障がい", "障害"],
+    "経済支援": ["奨学金", "授業料", "学費", "免除", "支援金", "学費支援", "家計急変", "被災学生", "授業料減免"],
+    "資格": ["資格", "免許", "講座", "キャリア"],
+    "相談": ["相談", "カウンセリング", "悩み", "メンタル", "ハラスメント", "トラブル"],
+    "施設": ["図書館", "食堂", "購買", "場所", "どこ", "Wi-Fi", "PC", "パソコン", "教室", "体育館", "グラウンド", "駐車場"],
+    "生協": ["生協", "コープ", "教科書", "共済", "組合員", "購買", "食堂", "書籍", "パソコン", "カフェテリア", "学内ショップ"],
+}
+
+# カテゴリ情報
+CATEGORY_INFO = {
+    "授業": {
+        "url_to_summarize": "https://www.sgu.ac.jp/information/schedule.html",
+        "static_response": "学事暦や年間スケジュールに関するご質問ですね。\n- **夏期休業期間（夏休み）**: 8月上旬～9月中旬\n- **冬季休業期間（冬休み）**: 12月下旬～1月上旬\n- **春季休業期間（春休み）**: 2月上旬～3月下旬\n正確な日付は、[2025年度 学事暦](https://www.sgu.ac.jp/information/schedule.html)でご確認ください。"
+    },
+    "証明書": {
+        "url_to_summarize": "https://www.sgu.ac.jp/campuslife/support/certification.html",
+        "static_response": "各種証明書の発行については、[諸証明・各種願出・届出について](https://www.sgu.ac.jp/campuslife/support/certification.html)のページをご確認ください。"
+    },
+    "経済支援": {
+        "url_to_summarize": "https://www.sgu.ac.jp/campuslife/scholarship/",
+        "static_response": "奨学金や授業料減免については、[奨学金制度](https://www.sgu.ac.jp/campuslife/scholarship/)や[授業料減免制度](https://www.sgu.ac.jp/tuition/j09tjo00000f665g.html)のページをご確認ください。"
+    },
+}
+
+# シナリオ定義
+SCENARIOS = {
+    'absence_procedure': {
+        'trigger_keywords': ['授業を休む', '欠席する', '忌引き', '公認欠席'],
+        'steps': {
+            0: "授業の欠席についてですね。理由に最も近いものを番号で選んで入力してください。\n1. 親族の不幸 (忌引き)\n2. 部活動や実習など (公認欠席)\n3. インフルエンザなどの感染症\n4. 上記以外",
+            1: {
+                '1': "忌引きによる特別欠席ですね。手続きは忌引き期間が終わった後に行います。情報ポータルから様式をダウンロードし、会葬礼状などを添えて教育支援課に提出してください。詳細は担当教員にも確認してください。",
+                '2': "公認欠席ですね。こちらは**事前**の手続きが必要です。活動開始の1週間前までに、情報ポータルから様式をダウンロードし、担当課（例：課外活動なら学生支援課）で証明印をもらった後、授業の担当教員に提出してください。",
+                '3': "感染症による欠席ですね。速やかに保健センターのホームページを確認し、指示に従って報告してください。出席停止期間が終わった後、教育支援課で手続きが必要です。",
+                '4': "承知いたしました。自己都合による欠席の場合、大学としての特別な手続きはありません。担当の先生に直接ご相談ください。何かご不明な点があれば、教育支援課にお問い合わせください。",
+                'default': "番号が正しくありません。お手数ですが、もう一度お試しいただくか、教育支援課にお問い合わせください。"
+            }
+        }
+    },
+    'leave_or_withdraw': {
+        'trigger_keywords': ['休学したい', '退学したい', '大学をやめたい'],
+        'steps': {
+            0: "学籍に関する手続きですね。ご希望の手続きはどちらですか？番号で選んで入力してください。\n1. 休学 (一時的に大学を休む)\n2. 退学 (大学をやめる)",
+            1: {
+                '1': "休学ですね。病気などで3ヶ月以上修学できない場合、通算2年まで休学できます。休学期間中の学費は免除されます。手続きは教育支援課で行いますので、まずは窓口でご相談ください。",
+                '2': "退学ですね。ご自身の意志で退学される場合は、「退学願」を教育支援課に提出し、教授会の許可を得る必要があります。まずはクラス担任の先生や、教育支援課にご相談ください。",
+                'default': "番号が正しくありません。学籍に関するご相談は、教育支援課が担当しています。窓口で詳細をお尋ねください。"
+            }
+        }
+    }
+}
+
 # --------------------------------------------------------------------------
-# 3. 内部コンポーネントの定義 (単一ファイル化)
+# 3. 内部コンポーネントの定義
 # --------------------------------------------------------------------------
 
 def split_text(text: str, max_length: int = 1000, overlap: int = 100) -> List[str]:
@@ -71,6 +134,63 @@ def split_text(text: str, max_length: int = 1000, overlap: int = 100) -> List[st
         chunks.append(text[start:end])
         start += max_length - overlap
     return chunks
+
+def format_urls_as_links(text: str) -> str:
+    """URLをHTMLリンクに変換"""
+    url_pattern = r'(https?://[^\s\[\]()]+)'
+    md_link_pattern = r'\[([^\]]+)\]\((https?://[^\s\)]+)\)'
+    text = re.sub(url_pattern, r'<a href="\1" target="_blank">\1</a>', text)
+    return re.sub(md_link_pattern, r'<a href="\2" target="_blank">\1</a>', text)
+
+# レート制限対応のヘルパー関数
+async def safe_generate_content(model, prompt, stream=False, max_retries=3):
+    """レート制限を考慮した安全なコンテンツ生成"""
+    for attempt in range(max_retries):
+        try:
+            if stream:
+                return await model.generate_content_async(
+                    prompt, 
+                    stream=True,
+                    generation_config=GenerationConfig(
+                        max_output_tokens=1024,
+                        temperature=0.7
+                    )
+                )
+            else:
+                return await model.generate_content_async(
+                    prompt,
+                    generation_config=GenerationConfig(
+                        max_output_tokens=512,
+                        temperature=0.3
+                    )
+                )
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "quota" in error_str.lower():
+                if attempt < max_retries - 1:
+                    # エラーメッセージから待機時間を抽出
+                    wait_time = 15  # デフォルト15秒
+                    if "retry in" in error_str:
+                        try:
+                            import re
+                            match = re.search(r'retry in (\d+(?:\.\d+)?)s', error_str)
+                            if match:
+                                wait_time = float(match.group(1)) + 2
+                        except:
+                            pass
+                    
+                    logging.warning(f"API制限により{wait_time}秒待機中... (試行 {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"APIクォータを超過しました。しばらく時間をおいてから再試行してください。"
+                    )
+            else:
+                raise e
+    
+    raise HTTPException(status_code=500, detail="最大リトライ回数を超えました。")
 
 class DocumentProcessor:
     """ドキュメント処理クラス"""
@@ -101,7 +221,8 @@ class WebScraper:
             soup = BeautifulSoup(response.content, 'html.parser')
             for element in soup(["script", "style", "header", "footer", "nav", "aside"]): 
                 element.decompose()
-            return " ".join(t.strip() for t in soup.stripped_strings)
+            text = " ".join(t.strip() for t in soup.stripped_strings)
+            return re.sub(r'\s+', ' ', text).strip()
         except Exception as e:
             logging.error(f"スクレイピングエラー ({url}): {e}")
             return ""
@@ -115,15 +236,15 @@ class LogManager:
     def generate_log_id(self) -> str: 
         return str(uuid.uuid4())
     
-    def save_log(self, log_id, query, response, context, category):
+    def save_log(self, log_id, query, response, context, category, has_specific_info=False):
         """チャットログを保存"""
         try:
             file_exists = os.path.exists(self.logs_file)
             with open(self.logs_file, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 if not file_exists:
-                    writer.writerow(['log_id', 'timestamp', 'query', 'response', 'context', 'category'])
-                writer.writerow([log_id, datetime.now(JST).isoformat(), query, response, context, category])
+                    writer.writerow(['log_id', 'timestamp', 'query', 'response', 'context', 'category', 'has_specific_info'])
+                writer.writerow([log_id, datetime.now(JST).isoformat(), query, response, context, category, has_specific_info])
         except Exception as e:
             logging.error(f"ログ保存エラー: {e}")
         
@@ -217,17 +338,120 @@ class SupabaseClientManager:
             logging.error(f"RPC 'get_distinct_categories' の呼び出しエラー: {e}")
             return ["その他"]
 
+class SettingsManager:
+    """設定管理クラス"""
+    def __init__(self):
+        self.settings = {
+            "model": "gemini-1.5-flash-latest", 
+            "collection": ACTIVE_COLLECTION_NAME, 
+            "embedding_model": "text-embedding-004", 
+            "top_k": 5
+        }
+        self.websocket_connections: List[WebSocket] = []
+        self.settings_file = os.path.join(BASE_DIR, "shared_settings.json")
+        self.load_settings()
+
+    def load_settings(self):
+        """設定ファイルから読み込み"""
+        try:
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, 'r', encoding='utf-8') as f:
+                    self.settings.update(json.load(f))
+        except Exception as e:
+            logging.error(f"設定ファイルの読み込みエラー: {e}")
+
+    def save_settings(self):
+        """設定ファイルに保存"""
+        try:
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
+                json.dump(self.settings, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logging.error(f"設定ファイルの保存エラー: {e}")
+
+    async def update_settings(self, new_settings: Dict[str, Any]):
+        """設定を更新してWebSocketでブロードキャスト"""
+        self.settings.update(new_settings)
+        self.save_settings()
+        await self.broadcast_settings()
+
+    async def add_websocket(self, websocket: WebSocket):
+        """WebSocket接続を追加"""
+        await websocket.accept()
+        self.websocket_connections.append(websocket)
+
+    def remove_websocket(self, websocket: WebSocket):
+        """WebSocket接続を削除"""
+        if websocket in self.websocket_connections:
+            self.websocket_connections.remove(websocket)
+
+    async def broadcast_settings(self):
+        """設定をすべてのWebSocket接続にブロードキャスト"""
+        message = {"type": "settings_update", "data": self.settings}
+        disconnected = []
+        
+        for conn in self.websocket_connections:
+            try:
+                await conn.send_json(message)
+            except:
+                disconnected.append(conn)
+        
+        for conn in disconnected:
+            self.remove_websocket(conn)
+
+# AI関連のヘルパー関数
+async def classify_query_intent(query: str, model: str) -> str:
+    """クエリの意図を分類（学内情報 or 雑談）"""
+    prompt = f"""ユーザーからの入力が、「学内情報に関する質問」か「一般的な雑談」かを分類してください。
+- 学内情報（履修、施設、奨学金など）に関する質問 -> "学内情報"
+- 挨拶、天気、日常会話、AI自身への質問など -> "雑談"
+入力: "{query}"
+分類結果:"""
+    
+    try:
+        gemini_model = genai.GenerativeModel(model)
+        response = await safe_generate_content(gemini_model, prompt, stream=False)
+        return "雑談" if "雑談" in response.text.strip() else "学内情報"
+    except Exception as e:
+        logging.warning(f"意図分類エラー: {e}")
+        return "学内情報"
+
+async def create_tiered_response(category: str, model: str) -> str:
+    """カテゴリに基づいてステージ応答を作成"""
+    info = CATEGORY_INFO.get(category)
+    if not info:
+        return "申し訳ありませんが、お尋ねの件について情報が見つかりませんでした。[大学公式サイト](https://www.sgu.ac.jp/)をご確認ください。"
+    
+    # URLから要約を試みる（エラー時は静的応答を使用）
+    if 'url_to_summarize' in info:
+        try:
+            web_scraper = WebScraper()
+            content = web_scraper.scrape(info['url_to_summarize'])
+            if content and len(content) > 100:
+                prompt = f"以下の大学公式サイトの内容を学生向けに要約してください：\n{content[:4000]}"
+                gemini_model = genai.GenerativeModel(model)
+                response = await safe_generate_content(gemini_model, prompt, stream=False)
+                return f"**▼ {category}に関する公式情報**\n{response.text}\n\n詳細は[こちら]({info['url_to_summarize']})をご確認ください。"
+        except Exception as e:
+            logging.warning(f"URL要約エラー: {e}")
+    
+    return info.get("static_response", "情報が見つかりませんでした。")
+
 # --------------------------------------------------------------------------
 # 4. FastAPIアプリケーションのセットアップ
 # --------------------------------------------------------------------------
 db_client: Optional[SupabaseClientManager] = None
+settings_manager: Optional[SettingsManager] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """アプリケーションのライフサイクル管理"""
-    global db_client
+    global db_client, settings_manager
     logging.info("--- アプリケーション起動処理開始 ---")
     
+    # 設定マネージャー初期化
+    settings_manager = SettingsManager()
+    
+    # Supabase初期化
     if SUPABASE_URL and SUPABASE_KEY:
         try:
             db_client = SupabaseClientManager(url=SUPABASE_URL, key=SUPABASE_KEY)
@@ -280,7 +504,7 @@ class ScrapeRequest(BaseModel):
 
 class FeedbackRequest(BaseModel):
     log_id: str
-    rating: str  # "good" or "bad"
+    rating: str
 
 class Settings(BaseModel):
     model: Optional[str] = None
@@ -432,9 +656,23 @@ async def upload_document(
                 "collection_name": collection_name, 
                 "category": category
             }
-            embedding_response = genai.embed_content(model=embedding_model, content=chunk)
-            embedding = embedding_response["embedding"]
-            db_client.insert_document(chunk, embedding, metadata)
+            # レート制限対応でembeddingを生成
+            try:
+                embedding_response = genai.embed_content(model=embedding_model, content=chunk)
+                embedding = embedding_response["embedding"]
+                db_client.insert_document(chunk, embedding, metadata)
+                # API制限を考慮して少し待機
+                await asyncio.sleep(1)
+            except Exception as e:
+                if "429" in str(e) or "quota" in str(e).lower():
+                    logging.warning("埋め込み生成でAPI制限に達しました。30秒待機します。")
+                    await asyncio.sleep(30)
+                    # 再試行
+                    embedding_response = genai.embed_content(model=embedding_model, content=chunk)
+                    embedding = embedding_response["embedding"]
+                    db_client.insert_document(chunk, embedding, metadata)
+                else:
+                    raise
         
         return {"chunks": len(chunks)}
     except Exception as e: 
@@ -457,98 +695,168 @@ async def scrape_website(req: ScrapeRequest):
                 "collection_name": req.collection_name, 
                 "category": req.category
             }
-            embedding_response = genai.embed_content(model=req.embedding_model, content=chunk)
-            embedding = embedding_response["embedding"]
-            db_client.insert_document(chunk, embedding, metadata)
+            # レート制限対応
+            try:
+                embedding_response = genai.embed_content(model=req.embedding_model, content=chunk)
+                embedding = embedding_response["embedding"]
+                db_client.insert_document(chunk, embedding, metadata)
+                await asyncio.sleep(1)
+            except Exception as e:
+                if "429" in str(e) or "quota" in str(e).lower():
+                    logging.warning("スクレイピングでAPI制限に達しました。30秒待機します。")
+                    await asyncio.sleep(30)
+                    embedding_response = genai.embed_content(model=req.embedding_model, content=chunk)
+                    embedding = embedding_response["embedding"]
+                    db_client.insert_document(chunk, embedding, metadata)
+                else:
+                    raise
         
         return {"chunks": len(chunks)}
     except Exception as e: 
         logging.error(f"Scrape error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- チャットAPI ---
-async def chat_streamer(query_data: ChatQuery):
-    """チャット応答のストリーミング処理"""
+# --- チャットAPI（統合ロジック） ---
+async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
+    """統合チャットロジック（シナリオ、RAG、雑談対応）"""
+    session = request.session
+    scenario_state = session.get('scenario_state')
+    user_input = chat_req.query.strip()
     log_id = log_manager.generate_log_id()
+    
     yield f"data: {json.dumps({'log_id': log_id})}\n\n"
-    
-    if not db_client: 
-        yield f"data: {json.dumps({'content': 'データベースが初期化されていません。'})}\n\n"
-        return
-    
+
     try:
-        # カテゴリ分類
-        available_categories = db_client.get_distinct_categories(query_data.collection)
-        if not available_categories:
-            yield f"data: {json.dumps({'content': '現在参照できる知識がありません。'})}\n\n"
+        # --- 1. 進行中のシナリオがあれば処理 ---
+        if scenario_state:
+            name = scenario_state.get('name')
+            step = scenario_state.get('step')
+            scenario = SCENARIOS.get(name)
+
+            if scenario and step in scenario['steps']:
+                next_step_options = scenario['steps'][step]
+                response_message = next_step_options.get(user_input, next_step_options.get('default'))
+                session.pop('scenario_state', None)
+
+                log_manager.save_log(log_id, user_input, response_message, "", f"シナリオ({name})", False)
+                yield f"data: {json.dumps({'content': response_message})}\n\n"
+                return
+
+        # --- 2. 新しいシナリオを開始するか判定 ---
+        for name, scenario in SCENARIOS.items():
+            if any(keyword in user_input for keyword in scenario['trigger_keywords']):
+                session['scenario_state'] = {'name': name, 'step': 1}
+                first_message = scenario['steps'][0]
+                
+                log_manager.save_log(log_id, user_input, first_message, "", f"シナリオ開始({name})", False)
+                yield f"data: {json.dumps({'content': first_message})}\n\n"
+                return
+
+        # --- 3. 通常のFAQ/雑談ロジック ---
+        if not all([db_client, GEMINI_API_KEY]):
+            error_msg = "システムが利用できません。管理者にお問い合わせください。"
+            log_manager.save_log(log_id, user_input, error_msg, "", "エラー", False)
+            yield f"data: {json.dumps({'content': error_msg})}\n\n"
             return
-        
-        classification_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        prompt = f"""利用可能なカテゴリ: {', '.join(available_categories)}
-ユーザーの質問: 「{query_data.query}」
 
-質問に最も関連するカテゴリ名を一つだけ出力してください。該当がなければ「その他」と出力。"""
+        # 意図分類
+        intent = await classify_query_intent(user_input, chat_req.model)
         
-        response = await classification_model.generate_content_async(prompt)
-        classified_category = response.text.strip()
-        
-        message_content = f'（カテゴリ: {classified_category} を検索中...）\n'
-        yield f"data: {json.dumps({'content': message_content})}\n\n"
+        full_response = ""
+        category = "その他"
+        has_specific_info = False
 
-        # 関連文書検索
-        query_embedding_response = genai.embed_content(model=query_data.embedding_model, content=query_data.query)
-        query_embedding = query_embedding_response["embedding"]
+        if intent == "雑談":
+            category = "雑談"
+            prompt = f"あなたは札幌学院大学の親しみやすいAIアシスタントです。ユーザーから雑談をもちかけられています。フレンドリーかつ簡潔な日本語で、自然な会話をしてください。\nユーザー: {user_input}\nあなた:"
+            
+            model = genai.GenerativeModel(chat_req.model)
+            stream = await safe_generate_content(model, prompt, stream=True)
+            
+            async for chunk in stream:
+                if chunk.text:
+                    full_response += chunk.text
+                    yield f"data: {json.dumps({'content': chunk.text})}\n\n"
         
-        search_results = db_client.search_documents(
-            collection_name=query_data.collection, 
-            category=classified_category,
-            embedding=query_embedding, 
-            match_count=query_data.top_k
-        )
-        
-        context = "\n".join([doc['content'] for doc in search_results]) or "関連情報は見つかりませんでした。"
+        else:  # "学内情報"
+            category = next((cat for cat, keys in KEYWORD_MAP.items() if any(key in user_input for key in keys)), "その他")
+            
+            context = ""
+            try:
+                # データベースから関連情報を検索
+                query_embedding_response = genai.embed_content(model=chat_req.embedding_model, content=user_input)
+                query_embedding = query_embedding_response["embedding"]
+                
+                search_results = db_client.search_documents(
+                    collection_name=chat_req.collection, 
+                    category=category,
+                    embedding=query_embedding, 
+                    match_count=chat_req.top_k
+                )
+                
+                if search_results:
+                    context = "\n".join([doc['content'] for doc in search_results])
+                    has_specific_info = True
+                
+            except Exception as e:
+                logging.error(f"データベース検索エラー: {e}")
 
-        # 最終回答生成
-        final_model = genai.GenerativeModel(query_data.model)
-        final_prompt = f"""参考情報:
----
+            if has_specific_info:
+                # データベースに情報がある場合
+                prompt = f"""あなたは札幌学院大学の学生を支援するAIです。以下の情報を元に、質問に日本語で回答してください。
+
+参考情報:
 {context}
----
 
-質問: 「{query_data.query}」
+質問: {user_input}
 
-参考情報に基づいて、学生からの質問に親切かつ丁寧に回答してください。参考情報に該当する内容がない場合は、一般的な回答を提供してください。"""
-        
-        stream = await final_model.generate_content_async(final_prompt, stream=True)
-        
-        full_response_text = ""
-        async for chunk in stream:
-            full_response_text += chunk.text
-            yield f"data: {json.dumps({'content': chunk.text})}\n\n"
+回答:"""
+                
+                model = genai.GenerativeModel(chat_req.model)
+                stream = await safe_generate_content(model, prompt, stream=True)
+                
+                async for chunk in stream:
+                    if chunk.text:
+                        full_response += chunk.text
+                        yield f"data: {json.dumps({'content': chunk.text})}\n\n"
+            
+            else:
+                # データベースに情報がない場合、階層化応答
+                tiered_response = await create_tiered_response(category, chat_req.model)
+                full_response = tiered_response
+                yield f"data: {json.dumps({'content': full_response})}\n\n"
+
+        # URLをリンクに変換
+        full_response = format_urls_as_links(full_response)
         
         # ログ保存
-        log_manager.save_log(log_id, query_data.query, full_response_text, context, classified_category)
-        
+        log_manager.save_log(log_id, user_input, full_response, context, category, has_specific_info)
+
     except Exception as e:
-        logging.error(f"チャット処理エラー: {e}\n{traceback.format_exc()}")
-        yield f"data: {json.dumps({'content': f'エラーが発生しました: {e}'})}\n\n"
+        error_message = f"エラーが発生しました: {str(e)}"
+        logging.error(f"チャットロジックエラー: {e}\n{traceback.format_exc()}")
+        log_manager.save_log(log_id, user_input, error_message, "", "エラー", False)
+        yield f"data: {json.dumps({'content': error_message})}\n\n"
 
 @app.post("/chat")
-async def chat_endpoint(query: ChatQuery):
+async def chat_endpoint(request: Request, query: ChatQuery):
     """管理者用チャットエンドポイント"""
-    return StreamingResponse(chat_streamer(query), media_type="text/event-stream")
+    return StreamingResponse(enhanced_chat_logic(request, query), media_type="text/event-stream")
 
 @app.post("/chat_for_client")
-async def chat_for_client(query: ClientChatQuery):
+async def chat_for_client(request: Request, query: ClientChatQuery):
     """クライアント用チャットエンドポイント（固定設定）"""
+    if not settings_manager:
+        raise HTTPException(503, "設定マネージャーが初期化されていません")
+    
     chat_query = ChatQuery(
         query=query.query,
-        model="gemini-1.5-flash-latest",
-        embedding_model="text-embedding-004",
-        top_k=5,
-        collection=ACTIVE_COLLECTION_NAME
+        model=settings_manager.settings.get("model", "gemini-1.5-flash-latest"),
+        embedding_model=settings_manager.settings.get("embedding_model", "text-embedding-004"),
+        top_k=settings_manager.settings.get("top_k", 5),
+        collection=settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
     )
-    return StreamingResponse(chat_streamer(chat_query), media_type="text/event-stream")
+    return StreamingResponse(enhanced_chat_logic(request, chat_query), media_type="text/event-stream")
 
 # --- フィードバックAPI ---
 @app.post("/feedback")
@@ -576,12 +884,11 @@ async def get_logs():
 @app.post("/settings")
 async def update_settings(settings: Settings):
     """設定更新（WebSocket経由で通知）"""
+    if not settings_manager:
+        raise HTTPException(503, "設定マネージャーが初期化されていません")
+    
     try:
-        # 設定をブロードキャスト
-        await manager.broadcast(json.dumps({
-            "type": "settings_update",
-            "data": settings.dict(exclude_none=True)
-        }))
+        await settings_manager.update_settings(settings.dict(exclude_none=True))
         return {"message": "設定を更新しました"}
     except Exception as e:
         logging.error(f"設定更新エラー: {e}")
@@ -591,13 +898,17 @@ async def update_settings(settings: Settings):
 @app.websocket("/ws/settings")
 async def websocket_endpoint(websocket: WebSocket):
     """設定同期用WebSocket"""
-    await manager.connect(websocket)
+    if not settings_manager:
+        await websocket.close(code=1011, reason="Settings manager not initialized")
+        return
+    
+    await settings_manager.add_websocket(websocket)
     try:
         while True:
             data = await websocket.receive_text()
             # クライアントからのメッセージは特に処理しない
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        settings_manager.remove_websocket(websocket)
 
 # --------------------------------------------------------------------------
 # 6. 開発用サーバー起動
