@@ -398,23 +398,6 @@ class SettingsManager:
         for conn in disconnected:
             self.remove_websocket(conn)
 
-# AI関連のヘルパー関数
-async def classify_query_intent(query: str, model: str) -> str:
-    """クエリの意図を分類（学内情報 or 雑談）"""
-    prompt = f"""ユーザーからの入力が、「学内情報に関する質問」か「一般的な雑談」かを分類してください。
-- 学内情報（履修、施設、奨学金など）に関する質問 -> "学内情報"
-- 挨拶、天気、日常会話、AI自身への質問など -> "雑談"
-入力: "{query}"
-分類結果:"""
-    
-    try:
-        gemini_model = genai.GenerativeModel(model)
-        response = await safe_generate_content(gemini_model, prompt, stream=False)
-        return "雑談" if "雑談" in response.text.strip() else "学内情報"
-    except Exception as e:
-        logging.warning(f"意図分類エラー: {e}")
-        return "学内情報"
-
 async def create_tiered_response(category: str, model: str) -> str:
     """カテゴリに基づいてステージ応答を作成"""
     info = CATEGORY_INFO.get(category)
@@ -547,46 +530,6 @@ def require_auth(request: Request):
     return user
 
 # --- 認証とHTML提供 ---
-@app.get('/login')
-async def login(request: Request):
-    if 'auth0' not in oauth._clients: 
-        raise HTTPException(status_code=500, detail="Auth0 is not configured.")
-    return await oauth.auth0.authorize_redirect(request, request.url_for('auth'))
-
-@app.get('/auth')
-async def auth(request: Request):
-    if 'auth0' not in oauth._clients: 
-        raise HTTPException(status_code=500, detail="Auth0 is not configured.")
-    token = await oauth.auth0.authorize_access_token(request)
-    if userinfo := token.get('userinfo'): 
-        request.session['user'] = dict(userinfo)
-    return RedirectResponse(url='/admin')
-
-@app.get('/logout')
-async def logout(request: Request):
-    request.session.pop('user', None)
-    if not all([AUTH0_DOMAIN, AUTH0_CLIENT_ID]): 
-        return RedirectResponse(url='/')
-    return RedirectResponse(f"https://{AUTH0_DOMAIN}/v2/logout?returnTo={request.url_for('serve_client')}&client_id={AUTH0_CLIENT_ID}")
-
-@app.get("/", response_class=FileResponse)
-async def serve_client(): 
-    return FileResponse(os.path.join(BASE_DIR, "client.html"))
-
-@app.get("/admin", response_class=FileResponse)
-async def serve_admin(request: Request):
-    # 認証設定がある場合は認証をチェック
-    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
-        require_auth(request)
-    return FileResponse(os.path.join(BASE_DIR, "admin.html"))
-
-@app.get("/log", response_class=FileResponse)
-async def serve_log(request: Request):
-    # 認証設定がある場合は認証をチェック
-    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
-        require_auth(request)
-    return FileResponse(os.path.join(BASE_DIR, "log.html"))
-
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon(): 
     return Response(status_code=204)
@@ -718,7 +661,7 @@ async def scrape_website(req: ScrapeRequest):
 
 # --- チャットAPI（統合ロジック） ---
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
-    """統合チャットロジック（シナリオ、RAG、雑談対応）"""
+    """統合チャットロジック（シナリオ、RAG対応）"""
     session = request.session
     scenario_state = session.get('scenario_state')
     user_input = chat_req.query.strip()
@@ -752,23 +695,49 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 yield f"data: {json.dumps({'content': first_message})}\n\n"
                 return
 
-        # --- 3. 通常のFAQ/雑談ロジック ---
+        # --- 3. 通常の学内情報FAQ処理 ---
         if not all([db_client, GEMINI_API_KEY]):
             error_msg = "システムが利用できません。管理者にお問い合わせください。"
             log_manager.save_log(log_id, user_input, error_msg, "", "エラー", False)
             yield f"data: {json.dumps({'content': error_msg})}\n\n"
             return
 
-        # 意図分類
-        intent = await classify_query_intent(user_input, chat_req.model)
+        # カテゴリ分類
+        category = next((cat for cat, keys in KEYWORD_MAP.items() if any(key in user_input for key in keys)), "その他")
         
         full_response = ""
-        category = "その他"
+        context = ""
         has_specific_info = False
 
-        if intent == "雑談":
-            category = "雑談"
-            prompt = f"あなたは札幌学院大学の親しみやすいAIアシスタントです。ユーザーから雑談をもちかけられています。フレンドリーかつ簡潔な日本語で、自然な会話をしてください。\nユーザー: {user_input}\nあなた:"
+        try:
+            # データベースから関連情報を検索
+            query_embedding_response = genai.embed_content(model=chat_req.embedding_model, content=user_input)
+            query_embedding = query_embedding_response["embedding"]
+            
+            search_results = db_client.search_documents(
+                collection_name=chat_req.collection, 
+                category=category,
+                embedding=query_embedding, 
+                match_count=chat_req.top_k
+            )
+            
+            if search_results:
+                context = "\n".join([doc['content'] for doc in search_results])
+                has_specific_info = True
+            
+        except Exception as e:
+            logging.error(f"データベース検索エラー: {e}")
+
+        if has_specific_info:
+            # データベースに情報がある場合
+            prompt = f"""あなたは札幌学院大学の学生を支援するAIです。以下の情報を元に、質問に日本語で回答してください。
+
+参考情報:
+{context}
+
+質問: {user_input}
+
+回答:"""
             
             model = genai.GenerativeModel(chat_req.model)
             stream = await safe_generate_content(model, prompt, stream=True)
@@ -778,53 +747,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     full_response += chunk.text
                     yield f"data: {json.dumps({'content': chunk.text})}\n\n"
         
-        else:  # "学内情報"
-            category = next((cat for cat, keys in KEYWORD_MAP.items() if any(key in user_input for key in keys)), "その他")
-            
-            context = ""
-            try:
-                # データベースから関連情報を検索
-                query_embedding_response = genai.embed_content(model=chat_req.embedding_model, content=user_input)
-                query_embedding = query_embedding_response["embedding"]
-                
-                search_results = db_client.search_documents(
-                    collection_name=chat_req.collection, 
-                    category=category,
-                    embedding=query_embedding, 
-                    match_count=chat_req.top_k
-                )
-                
-                if search_results:
-                    context = "\n".join([doc['content'] for doc in search_results])
-                    has_specific_info = True
-                
-            except Exception as e:
-                logging.error(f"データベース検索エラー: {e}")
-
-            if has_specific_info:
-                # データベースに情報がある場合
-                prompt = f"""あなたは札幌学院大学の学生を支援するAIです。以下の情報を元に、質問に日本語で回答してください。
-
-参考情報:
-{context}
-
-質問: {user_input}
-
-回答:"""
-                
-                model = genai.GenerativeModel(chat_req.model)
-                stream = await safe_generate_content(model, prompt, stream=True)
-                
-                async for chunk in stream:
-                    if chunk.text:
-                        full_response += chunk.text
-                        yield f"data: {json.dumps({'content': chunk.text})}\n\n"
-            
-            else:
-                # データベースに情報がない場合、階層化応答
-                tiered_response = await create_tiered_response(category, chat_req.model)
-                full_response = tiered_response
-                yield f"data: {json.dumps({'content': full_response})}\n\n"
+        else:
+            # データベースに情報がない場合、階層化応答
+            tiered_response = await create_tiered_response(category, chat_req.model)
+            full_response = tiered_response
+            yield f"data: {json.dumps({'content': full_response})}\n\n"
 
         # URLをリンクに変換
         full_response = format_urls_as_links(full_response)
@@ -915,4 +842,44 @@ async def websocket_endpoint(websocket: WebSocket):
 # --------------------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)('/login')
+async def login(request: Request):
+    if 'auth0' not in oauth._clients: 
+        raise HTTPException(status_code=500, detail="Auth0 is not configured.")
+    return await oauth.auth0.authorize_redirect(request, request.url_for('auth'))
+
+@app.get('/auth')
+async def auth(request: Request):
+    if 'auth0' not in oauth._clients: 
+        raise HTTPException(status_code=500, detail="Auth0 is not configured.")
+    token = await oauth.auth0.authorize_access_token(request)
+    if userinfo := token.get('userinfo'): 
+        request.session['user'] = dict(userinfo)
+    return RedirectResponse(url='/admin')
+
+@app.get('/logout')
+async def logout(request: Request):
+    request.session.pop('user', None)
+    if not all([AUTH0_DOMAIN, AUTH0_CLIENT_ID]): 
+        return RedirectResponse(url='/')
+    return RedirectResponse(f"https://{AUTH0_DOMAIN}/v2/logout?returnTo={request.url_for('serve_client')}&client_id={AUTH0_CLIENT_ID}")
+
+@app.get("/", response_class=FileResponse)
+async def serve_client(): 
+    return FileResponse(os.path.join(BASE_DIR, "client.html"))
+
+@app.get("/admin", response_class=FileResponse)
+async def serve_admin(request: Request):
+    # 認証設定がある場合は認証をチェック
+    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
+        require_auth(request)
+    return FileResponse(os.path.join(BASE_DIR, "admin.html"))
+
+@app.get("/log", response_class=FileResponse)
+async def serve_log(request: Request):
+    # 認証設定がある場合は認証をチェック
+    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
+        require_auth(request)
+    return FileResponse(os.path.join(BASE_DIR, "log.html"))
+
+@app.get
