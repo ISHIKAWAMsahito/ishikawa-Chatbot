@@ -881,5 +881,5 @@ async def websocket_endpoint(websocket: WebSocket):
 # 6. 開発用サーバー起動
 # --------------------------------------------------------------------------
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
+    port = int(os.getenv("PORT", 10000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
