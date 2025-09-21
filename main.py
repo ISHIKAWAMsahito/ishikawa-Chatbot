@@ -81,15 +81,15 @@ KEYWORD_MAP = {
 CATEGORY_INFO = {
     "授業": {
         "url_to_summarize": "https://www.sgu.ac.jp/information/schedule.html",
-        "static_response": "学事暦や年間スケジュールに関するご質問ですね。\n- **夏期休業期間（夏休み）**: 8月上旬～9月中旬\n- **冬季休業期間（冬休み）**: 12月下旬～1月上旬\n- **春季休業期間（春休み）**: 2月上旬～3月下旬\n正確な日付は、[2025年度 学事暦](https://www.sgu.ac.jp/information/schedule.html)でご確認ください。"
+        "static_response": "学事暦や年間スケジュールに関するご質問ですね。\n- **夏期休業期間（夏休み）**: 8月上旬～9月中旬\n- **冬季休業期間（冬休み）**: 12月下旬～1月上旬\n- **春季休業期間（春休み）**: 2月上旬～3月下旬\n正確な日付は、https://www.sgu.ac.jp/information/schedule.html でご確認ください。"
     },
     "証明書": {
         "url_to_summarize": "https://www.sgu.ac.jp/campuslife/support/certification.html",
-        "static_response": "各種証明書の発行については、[諸証明・各種願出・届出について](https://www.sgu.ac.jp/campuslife/support/certification.html)のページをご確認ください。"
+        "static_response": "各種証明書の発行については、https://www.sgu.ac.jp/campuslife/support/certification.html のページをご確認ください。"
     },
     "経済支援": {
         "url_to_summarize": "https://www.sgu.ac.jp/campuslife/scholarship/",
-        "static_response": "奨学金や授業料減免については、[奨学金制度](https://www.sgu.ac.jp/campuslife/scholarship/)や[授業料減免制度](https://www.sgu.ac.jp/tuition/j09tjo00000f665g.html)のページをご確認ください。"
+        "static_response": "奨学金や授業料減免については、https://www.sgu.ac.jp/campuslife/scholarship/ や https://www.sgu.ac.jp/tuition/j09tjo00000f665g.html のページをご確認ください。"
     },
 }
 
