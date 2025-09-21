@@ -530,6 +530,46 @@ def require_auth(request: Request):
     return user
 
 # --- 認証とHTML提供 ---
+@app.get('/login')
+async def login(request: Request):
+    if 'auth0' not in oauth._clients: 
+        raise HTTPException(status_code=500, detail="Auth0 is not configured.")
+    return await oauth.auth0.authorize_redirect(request, request.url_for('auth'))
+
+@app.get('/auth')
+async def auth(request: Request):
+    if 'auth0' not in oauth._clients: 
+        raise HTTPException(status_code=500, detail="Auth0 is not configured.")
+    token = await oauth.auth0.authorize_access_token(request)
+    if userinfo := token.get('userinfo'): 
+        request.session['user'] = dict(userinfo)
+    return RedirectResponse(url='/admin')
+
+@app.get('/logout')
+async def logout(request: Request):
+    request.session.pop('user', None)
+    if not all([AUTH0_DOMAIN, AUTH0_CLIENT_ID]): 
+        return RedirectResponse(url='/')
+    return RedirectResponse(f"https://{AUTH0_DOMAIN}/v2/logout?returnTo={request.url_for('serve_client')}&client_id={AUTH0_CLIENT_ID}")
+
+@app.get("/", response_class=FileResponse)
+async def serve_client(): 
+    return FileResponse(os.path.join(BASE_DIR, "client.html"))
+
+@app.get("/admin", response_class=FileResponse)
+async def serve_admin(request: Request):
+    # 認証設定がある場合は認証をチェック
+    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
+        require_auth(request)
+    return FileResponse(os.path.join(BASE_DIR, "admin.html"))
+
+@app.get("/log", response_class=FileResponse)
+async def serve_log(request: Request):
+    # 認証設定がある場合は認証をチェック
+    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
+        require_auth(request)
+    return FileResponse(os.path.join(BASE_DIR, "log.html"))
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon(): 
     return Response(status_code=204)
@@ -842,44 +882,4 @@ async def websocket_endpoint(websocket: WebSocket):
 # --------------------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)('/login')
-async def login(request: Request):
-    if 'auth0' not in oauth._clients: 
-        raise HTTPException(status_code=500, detail="Auth0 is not configured.")
-    return await oauth.auth0.authorize_redirect(request, request.url_for('auth'))
-
-@app.get('/auth')
-async def auth(request: Request):
-    if 'auth0' not in oauth._clients: 
-        raise HTTPException(status_code=500, detail="Auth0 is not configured.")
-    token = await oauth.auth0.authorize_access_token(request)
-    if userinfo := token.get('userinfo'): 
-        request.session['user'] = dict(userinfo)
-    return RedirectResponse(url='/admin')
-
-@app.get('/logout')
-async def logout(request: Request):
-    request.session.pop('user', None)
-    if not all([AUTH0_DOMAIN, AUTH0_CLIENT_ID]): 
-        return RedirectResponse(url='/')
-    return RedirectResponse(f"https://{AUTH0_DOMAIN}/v2/logout?returnTo={request.url_for('serve_client')}&client_id={AUTH0_CLIENT_ID}")
-
-@app.get("/", response_class=FileResponse)
-async def serve_client(): 
-    return FileResponse(os.path.join(BASE_DIR, "client.html"))
-
-@app.get("/admin", response_class=FileResponse)
-async def serve_admin(request: Request):
-    # 認証設定がある場合は認証をチェック
-    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
-        require_auth(request)
-    return FileResponse(os.path.join(BASE_DIR, "admin.html"))
-
-@app.get("/log", response_class=FileResponse)
-async def serve_log(request: Request):
-    # 認証設定がある場合は認証をチェック
-    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
-        require_auth(request)
-    return FileResponse(os.path.join(BASE_DIR, "log.html"))
-
-@app.get
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
