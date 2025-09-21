@@ -94,7 +94,6 @@ CATEGORY_INFO = {
 }
 
 
-
 # --------------------------------------------------------------------------
 # 3. 内部コンポーネントの定義
 # --------------------------------------------------------------------------
@@ -678,43 +677,16 @@ async def scrape_website(req: ScrapeRequest):
         logging.error(f"Scrape error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- チャットAPI（統合ロジック） ---
+# --- チャットAPI（RAG対応） ---
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
-    """統合チャットロジック（シナリオ、RAG対応）"""
-    session = request.session
-    scenario_state = session.get('scenario_state')
+    """統合チャットロジック（RAG対応）"""
     user_input = chat_req.query.strip()
     log_id = log_manager.generate_log_id()
     
     yield f"data: {json.dumps({'log_id': log_id})}\n\n"
 
     try:
-        # --- 1. 進行中のシナリオがあれば処理 ---
-        if scenario_state:
-            name = scenario_state.get('name')
-            step = scenario_state.get('step')
-            scenario = SCENARIOS.get(name)
-
-            if scenario and step in scenario['steps']:
-                next_step_options = scenario['steps'][step]
-                response_message = next_step_options.get(user_input, next_step_options.get('default'))
-                session.pop('scenario_state', None)
-
-                log_manager.save_log(log_id, user_input, response_message, "", f"シナリオ({name})", False)
-                yield f"data: {json.dumps({'content': response_message})}\n\n"
-                return
-
-        # --- 2. 新しいシナリオを開始するか判定 ---
-        for name, scenario in SCENARIOS.items():
-            if any(keyword in user_input for keyword in scenario['trigger_keywords']):
-                session['scenario_state'] = {'name': name, 'step': 1}
-                first_message = scenario['steps'][0]
-                
-                log_manager.save_log(log_id, user_input, first_message, "", f"シナリオ開始({name})", False)
-                yield f"data: {json.dumps({'content': first_message})}\n\n"
-                return
-
-        # --- 3. 通常の学内情報FAQ処理 ---
+        # --- 通常の学内情報FAQ処理 ---
         if not all([db_client, GEMINI_API_KEY]):
             error_msg = "システムが利用できません。管理者にお問い合わせください。"
             log_manager.save_log(log_id, user_input, error_msg, "", "エラー", False)
