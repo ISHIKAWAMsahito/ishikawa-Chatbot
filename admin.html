@@ -401,6 +401,15 @@
             messageContent.className = 'message-content';
              // HTMLとして解釈されるようにinnerHTMLを使用
             messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+            // リンクが含まれる場合はHTMLとして処理、そうでなければエスケープ
+if (text.includes('<a href=')) {
+    // リンクタグ以外のHTMLをエスケープ
+    let processedText = text.replace(/\n/g, '<br>');
+    messageContent.innerHTML = processedText;
+} else {
+    // 通常のテキストはエスケープしてから改行を<br>に変換
+    messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+}
             messageWrapper.appendChild(messageContent);
             const messageTime = document.createElement('div');
             messageTime.className = 'message-time';
@@ -563,10 +572,18 @@
                                     botMessageElement.dataset.logId = data.log_id;
                                 }
                                 if (data.content) {
-                                    fullResponse += data.content;
-                                    botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
-                                    chatMessages.scrollTop = chatMessages.scrollHeight;
-                                }
+    fullResponse += data.content;
+    // ストリーミング中もリンクを適切に処理
+    if (fullResponse.includes('<a href=')) {
+        let processedText = fullResponse
+            .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
+            .replace(/\n/g, '<br>');
+        botMessageContent.innerHTML = processedText;
+    } else {
+        botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
+    }
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
                             } catch (e) {
                                 console.error("Error parsing stream data:", e);
                             }
@@ -819,7 +836,6 @@
 </script>
 </body>
 </html>
-    
 
     
 
