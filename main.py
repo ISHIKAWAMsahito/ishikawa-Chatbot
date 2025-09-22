@@ -427,6 +427,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=APP_SECRET_KEY)
+from prometheus_fastapi_instrumentator import Instrumentator
+
+# ... (FastAPIの他の設定) ...
+
+# FastAPIアプリケーションのインスタンス化の後
+# 例: app = FastAPI(lifespan=lifespan) の後
+
+Instrumentator().instrument(app).expose(app)
 
 # OAuth設定
 oauth = OAuth()
