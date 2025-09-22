@@ -1,0 +1,48 @@
+# render.yaml
+# This file defines the services to be deployed on Render.
+# Place this file at the root of your repository.
+
+services:
+  # 1. The FastAPI Application (Your Chatbot)
+  - type: web
+    name: fastapi-chatbot
+    runtime: python # Corrected: Use 'runtime' instead of 'env'
+    plan: free # Or your preferred plan
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      # --- Add your other environment variables here ---
+      # - key: GEMINI_API_KEY
+      #   fromSecret: true
+      # - key: SUPABASE_URL
+      #   fromSecret: true
+      # - key: SUPABASE_SERVICE_KEY
+      #   fromSecret: true
+
+  # 2. The Prometheus Server
+  - type: web
+    name: prometheus
+    plan: free # Or your preferred plan
+    runtime: docker # Corrected: Use 'runtime' instead of 'env'
+    dockerfilePath: ./prometheus.Dockerfile
+    # Mount the configuration file into the container
+    disk:
+      name: prometheus-config
+      mountPath: /etc/prometheus
+      sizeGB: 1
+    # Note: Prometheus needs a disk for time-series data storage.
+
+  # 3. The Grafana Server
+  - type: web
+    name: grafana
+    plan: free # Or your preferred plan
+    runtime: docker # Corrected: Use 'runtime' instead of 'env'
+    dockerCommand: grafana/grafana-oss
+    # Grafana also needs a disk to store dashboard configurations
+    disk:
+      name: grafana-data
+      mountPath: /var/lib/grafana
+      sizeGB: 1
+
