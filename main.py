@@ -569,6 +569,10 @@ async def gemini_status():
         return {"connected": True, "models": models}
     except Exception as e: 
         return {"connected": False, "detail": str(e)}
+    
+@app.get("/healthz")
+def health_check():
+    return {"status": "ok"}
 
 # --- コレクション管理API ---
 @app.get("/collections")
