@@ -1,0 +1,21 @@
+# prometheus.remote.yml
+# This Prometheus configuration sends metrics to a remote storage (like Grafana Cloud).
+
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'fastapi'
+    static_configs:
+      - targets: ['fastapi-chatbot:10000']
+    # Add a label to distinguish this environment
+    labels:
+      environment: 'render'
+
+# This section sends all collected metrics to the configured remote endpoint.
+remote_write:
+  - url: "${GC_REMOTE_WRITE_URL}" # Comes from environment variable
+    basic_auth:
+      username: "${GC_REMOTE_WRITE_USER}" # Comes from environment variable
+      password: "${GC_API_KEY}" # Comes from environment variable
+
