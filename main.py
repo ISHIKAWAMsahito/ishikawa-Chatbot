@@ -77,22 +77,8 @@ KEYWORD_MAP = {
     "生協": ["生協", "コープ", "教科書", "共済", "組合員", "購買", "食堂", "書籍", "パソコン", "カフェテリア", "学内ショップ"],
 }
 
-# カテゴリ情報
-CATEGORY_INFO = {
-    "授業": {
-        "url_to_summarize": "https://www.sgu.ac.jp/information/schedule.html",
-        "static_response": "学事暦や年間スケジュールに関するご質問ですね。\n- **夏期休業期間（夏休み）**: 8月上旬～9月中旬\n- **冬季休業期間（冬休み）**: 12月下旬～1月上旬\n- **春季休業期間（春休み）**: 2月上旬～3月下旬\n正確な日付は、https://www.sgu.ac.jp/information/schedule.html でご確認ください。"
-    },
-    "証明書": {
-        "url_to_summarize": "https://www.sgu.ac.jp/campuslife/support/certification.html",
-        "static_response": "各種証明書の発行については、https://www.sgu.ac.jp/campuslife/support/certification.html のページをご確認ください。"
-    },
-    "経済支援": {
-        "url_to_summarize": "https://www.sgu.ac.jp/campuslife/scholarship/",
-        "static_response": "奨学金や授業料減免については、https://www.sgu.ac.jp/campuslife/scholarship/ や https://www.sgu.ac.jp/tuition/j09tjo00000f665g.html のページをご確認ください。"
-    },
-}
-
+# データベースから読み込むフォールバック情報を格納するグローバル変数
+g_category_fallbacks: Dict[str, Dict[str, Any]] = {}
 
 # --------------------------------------------------------------------------
 # 3. 内部コンポーネントの定義
@@ -376,26 +362,36 @@ class SettingsManager:
         for conn in disconnected:
             self.remove_websocket(conn)
 
-async def create_tiered_response(category: str, model: str) -> str:
-    """カテゴリに基づいてステージ応答を作成"""
-    info = CATEGORY_INFO.get(category)
+async def create_fallback_response_from_db(category: str, model: str) -> str:
+    """
+    DBに情報がない場合、カテゴリに応じたフォールバック応答をDBから取得して生成する。
+    URLがあれば要約を試み、失敗すれば静的応答を返す。
+    """
+    info = g_category_fallbacks.get(category)
+    
+    # カテゴリに対応するフォールバック情報がDBにない場合
     if not info:
         return "申し訳ありませんが、お尋ねの件について情報が見つかりませんでした。[大学公式サイト](https://www.sgu.ac.jp/)をご確認ください。"
-    
-    # URLから要約を試みる（エラー時は静的応答を使用）
-    if 'url_to_summarize' in info:
+
+    # URL要約を試みる
+    url_to_summarize = info.get("url_to_summarize")
+    if url_to_summarize:
         try:
             web_scraper = WebScraper()
-            content = web_scraper.scrape(info['url_to_summarize'])
+            content = web_scraper.scrape(url_to_summarize)
             if content and len(content) > 100:
-                prompt = f"以下の大学公式サイトの内容を学生向けに要約してください：\n{content[:4000]}"
+                prompt = f"以下の大学公式サイトの内容を学生向けに分かりやすく要約してください：\n\n{content[:4000]}"
                 gemini_model = genai.GenerativeModel(model)
                 response = await safe_generate_content(gemini_model, prompt, stream=False)
-                return f"**▼ {category}に関する公式情報**\n{response.text}\n\n詳細は[こちら]({info['url_to_summarize']})をご確認ください。"
+                # response.text が None でないことを確認
+                if response and response.text:
+                    return f"**▼ {category}に関する公式情報**\n{response.text}\n\n詳細は[こちら]({url_to_summarize})をご確認ください。"
         except Exception as e:
-            logging.warning(f"URL要約エラー: {e}")
+            logging.warning(f"URL要約エラー ({url_to_summarize}): {e}")
     
+    # URL要約が失敗したか、URLが元々ない場合は、静的応答を返す
     return info.get("static_response", "情報が見つかりませんでした。")
+
 
 # --------------------------------------------------------------------------
 # 4. FastAPIアプリケーションのセットアップ
@@ -406,7 +402,7 @@ settings_manager: Optional[SettingsManager] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """アプリケーションのライフサイクル管理"""
-    global db_client, settings_manager
+    global db_client, settings_manager, g_category_fallbacks
     logging.info("--- アプリケーション起動処理開始 ---")
     
     # 設定マネージャー初期化
@@ -417,6 +413,20 @@ async def lifespan(app: FastAPI):
         try:
             db_client = SupabaseClientManager(url=SUPABASE_URL, key=SUPABASE_KEY)
             logging.info("Supabaseクライアントの初期化完了。")
+
+            # DBからフォールバック情報を読み込む
+            try:
+                response = db_client.client.table("category_fallbacks").select("*").execute()
+                if response.data:
+                    for item in response.data:
+                        g_category_fallbacks[item['category_name']] = {
+                            "url_to_summarize": item.get('url_to_summarize'),
+                            "static_response": item.get('static_response')
+                        }
+                    logging.info(f"{len(g_category_fallbacks)}件のカテゴリ別フォールバック情報をDBからロードしました。")
+            except Exception as e:
+                logging.error(f"DBからのフォールバック情報ロードに失敗: {e}")
+
         except Exception as e:
             logging.error(f"Supabase初期化エラー: {e}")
     else:
@@ -751,9 +761,9 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     yield f"data: {json.dumps({'content': chunk.text})}\n\n"
         
         else:
-            # データベースに情報がない場合、階層化応答
-            tiered_response = await create_tiered_response(category, chat_req.model)
-            full_response = tiered_response
+            # データベースに情報がない場合、フォールバック応答を生成
+            fallback_response = await create_fallback_response_from_db(category, chat_req.model)
+            full_response = fallback_response
             yield f"data: {json.dumps({'content': full_response})}\n\n"
 
         # URLをリンクに変換
@@ -846,3 +856,4 @@ async def websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
+
