@@ -96,13 +96,13 @@ def split_text(text: str, max_length: int = 1000, overlap: int = 100) -> List[st
 
 def format_urls_as_links(text: str) -> str:
     """URLをHTMLリンクに変換"""
-    # マークダウン形式のリンク [テキスト](URL) を HTML に変換
-    md_link_pattern = r'\[([^\]]+)\]\((https?://[^\s\)]+)\)'
-    text = re.sub(md_link_pattern, r'<a href="\2" target="_blank">\1</a>', text)
-    
-    # 単体のURLをリンクに変換（マークダウンリンクでないもの）
+    # 最初に単体のURLを変換
     url_pattern = r'(?<!\]\()(https?://[^\s\[\]()<>]+)(?!\))'
     text = re.sub(url_pattern, r'<a href="\1" target="_blank">\1</a>', text)
+    
+    # 次にマークダウン形式のリンク [テキスト](URL) を変換
+    md_link_pattern = r'\[([^\]]+)\]\((https?://[^\s\)]+)\)'
+    text = re.sub(md_link_pattern, r'<a href="\2" target="_blank">\1</a>', text)
     
     return text
 
