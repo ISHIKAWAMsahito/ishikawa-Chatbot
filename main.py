@@ -755,21 +755,23 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             model = genai.GenerativeModel(chat_req.model)
             stream = await safe_generate_content(model, prompt, stream=True)
             
+            # レスポンスを一旦すべて結合してからリンク変換
+            temp_full_response = ""
             async for chunk in stream:
                 if chunk.text:
-                    full_response += chunk.text
-                    yield f"data: {json.dumps({'content': chunk.text})}\n\n"
+                    temp_full_response += chunk.text
+            
+            full_response = format_urls_as_links(temp_full_response)
+            yield f"data: {json.dumps({'content': full_response})}\n\n"
         
         else:
             # データベースに情報がない場合、フォールバック応答を生成
             fallback_response = await create_fallback_response_from_db(category, chat_req.model)
-            full_response = fallback_response
+            # 送信する前にリンクを変換
+            full_response = format_urls_as_links(fallback_response)
             yield f"data: {json.dumps({'content': full_response})}\n\n"
-
-        # URLをリンクに変換
-        full_response = format_urls_as_links(full_response)
         
-        # ログ保存
+        # ログ保存 (full_responseはすでに変換済み)
         log_manager.save_log(log_id, user_input, full_response, context, category, has_specific_info)
 
     except Exception as e:
