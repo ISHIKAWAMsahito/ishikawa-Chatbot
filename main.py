@@ -578,7 +578,7 @@ else:
     logging.warning("Auth0の設定が不完全なため、認証機能は動作しません。")
 
 # --- グローバルインスタンス ---
-log_manager = LogManager()
+# log_manager = LogManager()
 document_processor = DocumentProcessor()
 web_scraper = WebScraper()
 
