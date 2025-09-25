@@ -309,69 +309,69 @@ class WebScraper:
             logging.error(f"スクレイピングエラー ({url}): {e}")
             return ""
 
-class LogManager:
-    """ログ管理クラス"""
-    def __init__(self):
-        self.logs_file = "chat_logs.csv"
-        self.feedback_file = "feedback.csv"
+# class LogManager:
+#     """ログ管理クラス"""
+#     def __init__(self):
+#         self.logs_file = "chat_logs.csv"
+#         self.feedback_file = "feedback.csv"
         
-    def generate_log_id(self) -> str: 
-        return str(uuid.uuid4())
+#     def generate_log_id(self) -> str: 
+#         return str(uuid.uuid4())
     
-    def save_log(self, log_id, query, response, context, category, has_specific_info=False):
-        """チャットログを保存"""
-        try:
-            file_exists = os.path.exists(self.logs_file)
-            with open(self.logs_file, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(['log_id', 'timestamp', 'query', 'response', 'context', 'category', 'has_specific_info'])
-                writer.writerow([log_id, datetime.now(JST).isoformat(), query, response, context, category, has_specific_info])
-        except Exception as e:
-            logging.error(f"ログ保存エラー: {e}")
+#     def save_log(self, log_id, query, response, context, category, has_specific_info=False):
+#         """チャットログを保存"""
+#         try:
+#             file_exists = os.path.exists(self.logs_file)
+#             with open(self.logs_file, 'a', newline='', encoding='utf-8') as f:
+#                 writer = csv.writer(f)
+#                 if not file_exists:
+#                     writer.writerow(['log_id', 'timestamp', 'query', 'response', 'context', 'category', 'has_specific_info'])
+#                 writer.writerow([log_id, datetime.now(JST).isoformat(), query, response, context, category, has_specific_info])
+#         except Exception as e:
+#             logging.error(f"ログ保存エラー: {e}")
         
-        logging.info(f"LOG [{log_id}]: Q='{query}' A='{response[:80].strip()}...' Cat='{category}'")
+#         logging.info(f"LOG [{log_id}]: Q='{query}' A='{response[:80].strip()}...' Cat='{category}'")
 
-    def save_feedback(self, log_id: str, rating: str):
-        """フィードバックを保存"""
-        try:
-            file_exists = os.path.exists(self.feedback_file)
-            with open(self.feedback_file, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(['log_id', 'timestamp', 'rating'])
-                writer.writerow([log_id, datetime.now(JST).isoformat(), rating])
-        except Exception as e:
-            logging.error(f"フィードバック保存エラー: {e}")
+#     def save_feedback(self, log_id: str, rating: str):
+#         """フィードバックを保存"""
+#         try:
+#             file_exists = os.path.exists(self.feedback_file)
+#             with open(self.feedback_file, 'a', newline='', encoding='utf-8') as f:
+#                 writer = csv.writer(f)
+#                 if not file_exists:
+#                     writer.writerow(['log_id', 'timestamp', 'rating'])
+#                 writer.writerow([log_id, datetime.now(JST).isoformat(), rating])
+#         except Exception as e:
+#             logging.error(f"フィードバック保存エラー: {e}")
 
-    def get_logs_with_feedback(self) -> List[dict]:
-        """ログとフィードバックを結合して返す"""
-        logs = []
-        feedback_dict = {}
+#     def get_logs_with_feedback(self) -> List[dict]:
+#         """ログとフィードバックを結合して返す"""
+#         logs = []
+#         feedback_dict = {}
         
-        # フィードバックを読み込み
-        if os.path.exists(self.feedback_file):
-            try:
-                with open(self.feedback_file, 'r', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        feedback_dict[row['log_id']] = row['rating']
-            except Exception as e:
-                logging.error(f"フィードバック読み込みエラー: {e}")
+#         # フィードバックを読み込み
+#         if os.path.exists(self.feedback_file):
+#             try:
+#                 with open(self.feedback_file, 'r', encoding='utf-8') as f:
+#                     reader = csv.DictReader(f)
+#                     for row in reader:
+#                         feedback_dict[row['log_id']] = row['rating']
+#             except Exception as e:
+#                 logging.error(f"フィードバック読み込みエラー: {e}")
         
-        # ログを読み込み
-        if os.path.exists(self.logs_file):
-            try:
-                with open(self.logs_file, 'r', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        log_entry = dict(row)
-                        log_entry['rating'] = feedback_dict.get(row['log_id'])
-                        logs.append(log_entry)
-            except Exception as e:
-                logging.error(f"ログ読み込みエラー: {e}")
+#         # ログを読み込み
+#         if os.path.exists(self.logs_file):
+#             try:
+#                 with open(self.logs_file, 'r', encoding='utf-8') as f:
+#                     reader = csv.DictReader(f)
+#                     for row in reader:
+#                         log_entry = dict(row)
+#                         log_entry['rating'] = feedback_dict.get(row['log_id'])
+#                         logs.append(log_entry)
+#             except Exception as e:
+#                 logging.error(f"ログ読み込みエラー: {e}")
         
-        return logs
+#         return logs
 
 class SupabaseClientManager:
     """Supabaseクライアント管理クラス"""
