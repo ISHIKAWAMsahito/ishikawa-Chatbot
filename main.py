@@ -564,11 +564,19 @@ manager = ConnectionManager()
 
 # --- 認証関数 (Auth0用) ---
 def require_auth(request: Request):
-    """管理者用認証（変更なし）"""
+    """管理者用認証"""
     user = request.session.get('user')
-    if not user and all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
+    if not user:
         raise HTTPException(status_code=307, headers={'Location': '/login'})
-    return user
+    
+    user_email = user.get('email', '')
+    allowed_domain_staff = '@sgu.ac.jp'
+
+    if (user_email.endswith(allowed_domain_staff) or
+            user_email == 'ishikawamasahito3150@gmail.com'):
+        return user
+    else:
+        raise HTTPException(status_code=403, detail="管理者ページへのアクセス権がありません。")
 
 def require_auth_client(request: Request):
     """クライアント用認証"""
@@ -591,6 +599,7 @@ def require_auth_client(request: Request):
     else:
         # ダメなら「アクセス禁止(403)」を突きつける
         raise HTTPException(status_code=403, detail="このサービスへのアクセスは許可されていません。")
+
 # --- 認証とHTML提供 (Auth0用) ---
 @app.get('/login')
 async def login_auth0(request: Request):
@@ -605,7 +614,20 @@ async def auth(request: Request):
     token = await oauth.auth0.authorize_access_token(request)
     if userinfo := token.get('userinfo'):
         request.session['user'] = dict(userinfo)
-    return RedirectResponse(url='/admin')
+        user_email = userinfo.get('email', '')
+        allowed_domain_staff = '@sgu.ac.jp'
+        allowed_domain_student = '@e.sgu.ac.jp'
+
+        if (user_email.endswith(allowed_domain_staff) or
+                user_email == 'ishikawamasahito3150@gmail.com'):
+            return RedirectResponse(url='/admin')
+        elif user_email.endswith(allowed_domain_student):
+            return RedirectResponse(url='/')
+        else:
+            # 許可されていないユーザーはログアウトさせる
+            return RedirectResponse(url='/logout')
+            
+    return RedirectResponse(url='/login') # Fallback if userinfo is not available
 
 @app.get('/logout')
 async def logout(request: Request):
@@ -893,3 +915,4 @@ async def websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
+
