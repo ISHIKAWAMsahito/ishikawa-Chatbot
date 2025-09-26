@@ -452,8 +452,7 @@ async def create_fallback_response_from_db(category: str, model: str) -> str:
 # --------------------------------------------------------------------------
 db_client: Optional[SupabaseClientManager] = None
 settings_manager: Optional[SettingsManager] = None
-# 4. グローバル変数宣言
-auth_manager: Optional[SGUAuthManager] = None
+
 
 # 8. lifespan関数を更新
 @asynccontextmanager
