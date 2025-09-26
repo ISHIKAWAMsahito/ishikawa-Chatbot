@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, FileResponse, Response
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 from supabase import create_client, Client
 import requests
@@ -32,16 +32,6 @@ from docx import Document as DocxDocument
 
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
-
-# 1. インポートセクションに追加（既存のインポート文の後に追加）
-import hashlib
-import hmac
-import jwt
-from datetime import datetime, timedelta
-import secrets
-from typing import Optional
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import bcrypt
 
 
 # --- 初期設定 ---
@@ -189,7 +179,6 @@ KEYWORD_MAP = {
 
 # データベースから読み込むフォールバック情報を格納するグローバル変数
 g_category_fallbacks: Dict[str, Dict[str, Any]] = {}
-auth_manager: Optional[SGUAuthManager] = None
 # --------------------------------------------------------------------------
 # 3. 内部コンポーネントの定義
 # --------------------------------------------------------------------------
@@ -433,157 +422,6 @@ class SettingsManager:
         for conn in disconnected:
             self.remove_websocket(conn)
 
-# 3. 既存のクラス定義セクション（class SettingsManager の後）に追加
-class SGUAuthManager:
-    """札幌学院大学認証システム管理クラス"""
-
-    def __init__(self, supabase_client: Client):
-        self.supabase = supabase_client
-        self.jwt_secret = os.getenv("JWT_SECRET", "your-super-secret-jwt-key-change-this-in-production")
-        self.token_expiry_hours = 24  # トークンの有効期限（時間）
-
-    def validate_sgu_email(self, email: str) -> bool:
-        """SGUのメールアドレスかどうかを検証"""
-        return email.endswith('@sgu.ac.jp') or email.endswith('@e.sgu.ac.jp')
-
-    def validate_password_strength(self, password: str) -> bool:
-        """パスワード強度を検証"""
-        if len(password) < 8:
-            return False
-        if not any(c.isdigit() for c in password):
-            return False
-        if not any(c.isalpha() for c in password):
-            return False
-        return True
-
-    def hash_password(self, password: str) -> str:
-        """パスワードをハッシュ化"""
-        salt = bcrypt.gensalt()
-        return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
-
-    def verify_password(self, password: str, hashed: str) -> bool:
-        """パスワードを検証"""
-        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
-
-    def generate_initial_password(self) -> str:
-        """初期パスワードを生成"""
-        return secrets.token_urlsafe(12)
-
-    def generate_jwt_token(self, email: str) -> str:
-        """JWTトークンを生成"""
-        payload = {
-            'email': email,
-            'exp': datetime.utcnow() + timedelta(hours=self.token_expiry_hours),
-            'iat': datetime.utcnow()
-        }
-        return jwt.encode(payload, self.jwt_secret, algorithm='HS256')
-
-    def verify_jwt_token(self, token: str) -> Optional[str]:
-        """JWTトークンを検証し、メールアドレスを返す"""
-        try:
-            payload = jwt.decode(token, self.jwt_secret, algorithms=['HS256'])
-            return payload.get('email')
-        except jwt.ExpiredSignatureError:
-            return None
-        except jwt.InvalidTokenError:
-            return None
-
-    async def create_user(self, email: str, initial_password: str) -> bool:
-        """新しいユーザーを作成（管理者用）"""
-        if not self.validate_sgu_email(email):
-            raise HTTPException(status_code=400, detail="Invalid email domain")
-
-        existing_user = self.supabase.table('sgu_users').select('email').eq('email', email).execute()
-        if existing_user.data:
-            raise HTTPException(status_code=400, detail="User already exists")
-
-        hashed_password = self.hash_password(initial_password)
-
-        try:
-            self.supabase.table('sgu_users').insert({
-                'email': email,
-                'password_hash': hashed_password,
-                'is_initial_password': True,
-                'created_at': datetime.utcnow().isoformat(),
-                'last_login': None,
-                'login_attempts': 0,
-                'is_locked': False
-            }).execute()
-            return True
-        except Exception as e:
-            logging.error(f"User creation failed: {e}")
-            raise HTTPException(status_code=500, detail="User creation failed")
-
-    async def authenticate_user(self, email: str, password: str) -> Optional[dict]:
-        """ユーザー認証"""
-        if not self.validate_sgu_email(email):
-            raise HTTPException(status_code=400, detail="Invalid email domain")
-
-        user_result = self.supabase.table('sgu_users').select('*').eq('email', email).execute()
-
-        if not user_result.data:
-            bcrypt.checkpw(b"dummy", b"$2b$12$dummy.hash.to.prevent.timing.attacks")
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-
-        user = user_result.data[0]
-
-        if user.get('is_locked', False):
-            raise HTTPException(status_code=423, detail="Account is locked")
-
-        if not self.verify_password(password, user['password_hash']):
-            attempts = user.get('login_attempts', 0) + 1
-            update_data = {'login_attempts': attempts}
-
-            if attempts >= 5:
-                update_data['is_locked'] = True
-
-            self.supabase.table('sgu_users').update(update_data).eq('email', email).execute()
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-
-        self.supabase.table('sgu_users').update({
-            'last_login': datetime.utcnow().isoformat(),
-            'login_attempts': 0
-        }).eq('email', email).execute()
-
-        return user
-
-    async def first_time_setup(self, email: str, initial_password: str, new_password: str) -> str:
-        """初回セットアップ"""
-        if not self.validate_password_strength(new_password):
-            raise HTTPException(status_code=400, detail="Password does not meet requirements")
-
-        user = await self.authenticate_user(email, initial_password)
-
-        if not user.get('is_initial_password', False):
-            raise HTTPException(status_code=400, detail="Account already set up")
-
-        new_hash = self.hash_password(new_password)
-
-        self.supabase.table('sgu_users').update({
-            'password_hash': new_hash,
-            'is_initial_password': False,
-            'updated_at': datetime.utcnow().isoformat()
-        }).eq('email', email).execute()
-
-        token = self.generate_jwt_token(email)
-        return token
-
-    async def change_password(self, email: str, current_password: str, new_password: str) -> bool:
-        """パスワード変更"""
-        if not self.validate_password_strength(new_password):
-            raise HTTPException(status_code=400, detail="Password does not meet requirements")
-
-        await self.authenticate_user(email, current_password)
-
-        new_hash = self.hash_password(new_password)
-
-        self.supabase.table('sgu_users').update({
-            'password_hash': new_hash,
-            'updated_at': datetime.utcnow().isoformat()
-        }).eq('email', email).execute()
-
-        return True
-
 
 async def create_fallback_response_from_db(category: str, model: str) -> str:
     """
@@ -621,7 +459,7 @@ auth_manager: Optional[SGUAuthManager] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """認証システムを含むアプリケーションのライフサイクル管理"""
-    global db_client, settings_manager, g_category_fallbacks, auth_manager
+    global db_client, settings_manager, g_category_fallbacks
     logging.info("--- アプリケーション起動処理開始（認証システム対応） ---")
 
     settings_manager = SettingsManager()
@@ -630,10 +468,6 @@ async def lifespan(app: FastAPI):
         try:
             db_client = SupabaseClientManager(url=SUPABASE_URL, key=SUPABASE_KEY)
             logging.info("Supabaseクライアントの初期化完了。")
-
-            # 認証マネージャー初期化
-            auth_manager = SGUAuthManager(db_client.client)
-            logging.info("認証システム初期化完了。")
 
             # DBからフォールバック情報を読み込む
             try:
@@ -707,25 +541,6 @@ class Settings(BaseModel):
     embedding_model: Optional[str] = None
     top_k: Optional[int] = None
 
-# 2. 既存のデータモデル定義セクションに追加
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-class FirstTimeSetupRequest(BaseModel):
-    email: EmailStr
-    initial_password: str
-    new_password: str
-
-class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
-
-class AuthResponse(BaseModel):
-    token: str
-    email: str
-    expires_at: datetime
-
 # WebSocket接続管理
 class ConnectionManager:
     def __init__(self):
@@ -747,118 +562,6 @@ manager = ConnectionManager()
 # --------------------------------------------------------------------------
 # 5. APIエンドポイント定義
 # --------------------------------------------------------------------------
-
-# 5. 認証用ミドルウェア
-security = HTTPBearer()
-
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    """現在のユーザーを取得"""
-    if not auth_manager:
-        raise HTTPException(status_code=500, detail="Authentication not initialized")
-
-    email = auth_manager.verify_jwt_token(credentials.credentials)
-    if not email:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    return email
-
-async def optional_auth(authorization: Optional[str] = None) -> Optional[str]:
-    """オプショナルな認証（トークンがあれば検証、なければNone）"""
-    if not authorization or not auth_manager:
-        return None
-    try:
-        token = authorization.replace("Bearer ", "")
-        return auth_manager.verify_jwt_token(token)
-    except:
-        return None
-
-# 6. 認証APIエンドポイント
-@app.post("/api/auth/login", response_model=AuthResponse)
-async def login(request: LoginRequest):
-    """ログイン"""
-    if not auth_manager:
-        raise HTTPException(status_code=500, detail="Authentication not initialized")
-    try:
-        user = await auth_manager.authenticate_user(request.email, request.password)
-        token = auth_manager.generate_jwt_token(request.email)
-        return AuthResponse(
-            token=token,
-            email=request.email,
-            expires_at=datetime.utcnow() + timedelta(hours=auth_manager.token_expiry_hours)
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Login error: {e}")
-        raise HTTPException(status_code=500, detail="Login failed")
-
-@app.post("/api/auth/first-time-setup", response_model=AuthResponse)
-async def first_time_setup(request: FirstTimeSetupRequest):
-    """初回セットアップ"""
-    if not auth_manager:
-        raise HTTPException(status_code=500, detail="Authentication not initialized")
-    try:
-        token = await auth_manager.first_time_setup(
-            request.email,
-            request.initial_password,
-            request.new_password
-        )
-        return AuthResponse(
-            token=token,
-            email=request.email,
-            expires_at=datetime.utcnow() + timedelta(hours=auth_manager.token_expiry_hours)
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"First-time setup error: {e}")
-        raise HTTPException(status_code=500, detail="Setup failed")
-
-@app.post("/api/auth/change-password")
-async def change_password(request: ChangePasswordRequest, current_user: str = Depends(get_current_user)):
-    """パスワード変更"""
-    if not auth_manager:
-        raise HTTPException(status_code=500, detail="Authentication not initialized")
-    try:
-        await auth_manager.change_password(
-            current_user,
-            request.current_password,
-            request.new_password
-        )
-        return {"message": "Password changed successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Password change error: {e}")
-        raise HTTPException(status_code=500, detail="Password change failed")
-
-@app.get("/api/auth/validate")
-async def validate_token(current_user: str = Depends(get_current_user)):
-    """トークン検証"""
-    return {"valid": True, "email": current_user}
-
-@app.post("/api/auth/create-user")  # 管理者用
-async def create_user_endpoint(email: EmailStr, initial_password: Optional[str] = None, current_user: str = Depends(get_current_user)):
-    """新しいユーザーを作成（管理者用）"""
-    if not auth_manager:
-        raise HTTPException(status_code=500, detail="Authentication not initialized")
-
-    admin_emails = os.getenv("ADMIN_EMAILS", "").split(",")
-    if current_user not in admin_emails:
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    if not initial_password:
-        initial_password = auth_manager.generate_initial_password()
-
-    try:
-        await auth_manager.create_user(email, initial_password)
-        return {"message": "User created successfully", "initial_password": initial_password}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"User creation error: {e}")
-        raise HTTPException(status_code=500, detail="User creation failed")
-
 
 # --- 認証関数 (Auth0用) ---
 def require_auth(request: Request):
@@ -910,22 +613,15 @@ async def logout(request: Request):
     return RedirectResponse(f"https://{AUTH0_DOMAIN}/v2/logout?returnTo={request.url_for('serve_client')}&client_id={AUTH0_CLIENT_ID}")
 
 @app.get("/", response_class=FileResponse)
-async def serve_client(request: Request): 
-    # 認証設定がある場合は認証をチェック
-    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
-        require_auth_client(request)
+async def serve_client(request: Request, user: dict = Depends(require_auth_client)):
     return FileResponse(os.path.join(BASE_DIR, "client.html"))
 
 @app.get("/admin", response_class=FileResponse)
-async def serve_admin(request: Request):
-    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
-        require_auth(request)
+async def serve_admin(request: Request, user: dict = Depends(require_auth)):
     return FileResponse(os.path.join(BASE_DIR, "admin.html"))
 
 @app.get("/feedback-stats", response_class=FileResponse)
-async def serve_feedback_stats(request: Request):
-    if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
-        require_auth(request)
+async def serve_feedback_stats(request: Request, user: dict = Depends(require_auth)):
     return FileResponse(os.path.join(BASE_DIR, "feedback_stats.html"))
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -1128,12 +824,12 @@ async def chat_endpoint(request: Request, query: ChatQuery):
 
 # 7. 既存のチャットエンドポイントを認証必須に変更
 @app.post("/chat_for_client")
-async def chat_for_client_auth(request: Request, query: ClientChatQuery, current_user: str = Depends(get_current_user)):
+async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: dict = Depends(require_auth_client)):
     """認証されたクライアント用チャットエンドポイント"""
     if not settings_manager:
         raise HTTPException(503, "Settings manager not initialized")
 
-    logging.info(f"Chat request from user: {current_user}")
+    logging.info(f"Chat request from user: {user.get('email', 'N/A')}")
 
     chat_query = ChatQuery(
         query=query.query,
