@@ -169,13 +169,6 @@ KEYWORD_MAP = {
         "124単位", "卒業要件", "45時間", "事前学修", "事後学修", "履修登録単位数",
         "上限", "42単位", "48単位", "面接授業", "遠隔授業", "英語IA", "英語IB",
         "スポーツA", "スポーツB", "バドミントン", "バレーボール", "バスケットボール",
-        "卓球", "教養科目", "専門"],
-    # 履修関連
-    "履修": [
-        "履修", "科目", "単位", "必修", "履修登録", "セメスター制度", "前期", "後期",
-        "124単位", "卒業要件", "45時間", "事前学修", "事後学修", "履修登録単位数",
-        "上限", "42単位", "48単位", "面接授業", "遠隔授業", "英語IA", "英語IB",
-        "スポーツA", "スポーツB", "バドミントン", "バレーボール", "バスケットボール",
         "卓球", "教養科目", "専門科目", "Moodle", "履修登録取消制度", "抽選科目",
         "他大学", "既修得単位",
         # 俗語・略語
@@ -309,28 +302,61 @@ class WebScraper:
             logging.error(f"スクレイピングエラー ({url}): {e}")
             return ""
 
-class LogManager:
-    """ログ管理クラス（空実装版：ログを残さない）"""
+class FeedbackManager:
+    """フィードバック管理クラス（簡素化版）"""
     def __init__(self):
-        # ファイル名は定義しておくが使わない
-        self.logs_file = None
-        self.feedback_file = None
+        self.feedback_file = os.path.join(BASE_DIR, "feedback.json")
 
-    def generate_log_id(self) -> str:
-        # 一応IDは返す（呼び出し側が依存している可能性があるため）
-        return str(uuid.uuid4())
+    def save_feedback(self, feedback_id: str, rating: str, comment: str = ""):
+        """フィードバックを保存"""
+        try:
+            # 既存のフィードバックを読み込み
+            feedback_data = []
+            if os.path.exists(self.feedback_file):
+                with open(self.feedback_file, 'r', encoding='utf-8') as f:
+                    feedback_data = json.load(f)
+            
+            # 新しいフィードバックを追加
+            feedback_entry = {
+                "id": feedback_id,
+                "rating": rating,
+                "comment": comment,
+                "timestamp": datetime.now(JST).isoformat()
+            }
+            feedback_data.append(feedback_entry)
+            
+            # ファイルに保存
+            with open(self.feedback_file, 'w', encoding='utf-8') as f:
+                json.dump(feedback_data, f, ensure_ascii=False, indent=2)
+                
+            logging.info(f"フィードバック保存完了: {feedback_id} - {rating}")
+        except Exception as e:
+            logging.error(f"フィードバック保存エラー: {e}")
+            raise
 
-    def save_log(self, *args, **kwargs):
-        # 何も保存しない
-        pass
-
-    def save_feedback(self, *args, **kwargs):
-        # 何も保存しない
-        pass
-
-    def get_logs_with_feedback(self) -> list[dict]:
-        # 常に空リストを返す
-        return []
+    def get_feedback_stats(self) -> Dict[str, Any]:
+        """フィードバック統計を取得"""
+        try:
+            if not os.path.exists(self.feedback_file):
+                return {"total": 0, "resolved": 0, "not_resolved": 0, "rate": 0}
+            
+            with open(self.feedback_file, 'r', encoding='utf-8') as f:
+                feedback_data = json.load(f)
+            
+            total = len(feedback_data)
+            resolved = sum(1 for fb in feedback_data if fb['rating'] == 'resolved')
+            not_resolved = total - resolved
+            rate = (resolved / total * 100) if total > 0 else 0
+            
+            return {
+                "total": total,
+                "resolved": resolved,
+                "not_resolved": not_resolved,
+                "rate": round(rate, 1)
+            }
+        except Exception as e:
+            logging.error(f"フィードバック統計取得エラー: {e}")
+            return {"total": 0, "resolved": 0, "not_resolved": 0, "rate": 0}
 
 class SupabaseClientManager:
     """Supabaseクライアント管理クラス"""
@@ -516,11 +542,7 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=APP_SECRET_KEY)
 from prometheus_fastapi_instrumentator import Instrumentator
 
-# ... (FastAPIの他の設定) ...
-
 # FastAPIアプリケーションのインスタンス化の後
-# 例: app = FastAPI(lifespan=lifespan) の後
-
 Instrumentator().instrument(app).expose(app)
 
 # OAuth設定
@@ -537,7 +559,7 @@ else:
     logging.warning("Auth0の設定が不完全なため、認証機能は動作しません。")
 
 # --- グローバルインスタンス ---
-log_manager = LogManager()
+feedback_manager = FeedbackManager()
 document_processor = DocumentProcessor()
 web_scraper = WebScraper()
 
@@ -559,8 +581,9 @@ class ScrapeRequest(BaseModel):
     collection_name: str = ACTIVE_COLLECTION_NAME
 
 class FeedbackRequest(BaseModel):
-    log_id: str
-    rating: str
+    feedback_id: str
+    rating: str  # "resolved" または "not_resolved"
+    comment: str = ""
 
 class Settings(BaseModel):
     model: Optional[str] = None
@@ -636,12 +659,13 @@ async def serve_admin(request: Request):
         require_auth(request)
     return FileResponse(os.path.join(BASE_DIR, "admin.html"))
 
-@app.get("/log", response_class=FileResponse)
-async def serve_log(request: Request):
+@app.get("/feedback-stats", response_class=FileResponse)
+async def serve_feedback_stats(request: Request):
+    """フィードバック統計ページ"""
     # 認証設定がある場合は認証をチェック
     if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
         require_auth(request)
-    return FileResponse(os.path.join(BASE_DIR, "log.html"))
+    return FileResponse(os.path.join(BASE_DIR, "feedback_stats.html"))
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon(): 
@@ -666,7 +690,7 @@ async def gemini_status():
         return {"connected": False, "detail": str(e)}
     
 @app.get("/healthz")
-def health_check():
+def health_check_k8s():
     return {"status": "ok"}
 
 # --- コレクション管理API ---
@@ -780,15 +804,15 @@ async def scrape_website(req: ScrapeRequest):
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     """統合チャットロジック（RAG対応）"""
     user_input = chat_req.query.strip()
-    log_id = log_manager.generate_log_id()
     
-    yield f"data: {json.dumps({'log_id': log_id})}\n\n"
+    # フィードバック用の一意なIDを生成
+    feedback_id = str(uuid.uuid4())
+    yield f"data: {json.dumps({'feedback_id': feedback_id})}\n\n"
 
     try:
         # --- 通常の学内情報FAQ処理 ---
         if not all([db_client, GEMINI_API_KEY]):
             error_msg = "システムが利用できません。管理者にお問い合わせください。"
-            log_manager.save_log(log_id, user_input, error_msg, "", "エラー", False)
             yield f"data: {json.dumps({'content': error_msg})}\n\n"
             return
 
@@ -870,13 +894,12 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             full_response = format_urls_as_links(fallback_response)
             yield f"data: {json.dumps({'content': full_response})}\n\n"
         
-        # ログ保存 (full_responseはすでに変換済み)
-        log_manager.save_log(log_id, user_input, full_response, context, category, has_specific_info)
+        # フィードバック要求を最後に送信
+        yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
 
     except Exception as e:
         error_message = f"エラーが発生しました: {str(e)}"
         logging.error(f"チャットロジックエラー: {e}\n{traceback.format_exc()}")
-        log_manager.save_log(log_id, user_input, error_message, "", "エラー", False)
         yield f"data: {json.dumps({'content': error_message})}\n\n"
 
 @app.post("/chat")
@@ -904,21 +927,20 @@ async def chat_for_client(request: Request, query: ClientChatQuery):
 async def save_feedback(feedback: FeedbackRequest):
     """フィードバック保存"""
     try:
-        log_manager.save_feedback(feedback.log_id, feedback.rating)
+        feedback_manager.save_feedback(feedback.feedback_id, feedback.rating, feedback.comment)
         return {"message": "フィードバックを保存しました"}
     except Exception as e:
         logging.error(f"フィードバック保存エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- ログ取得API ---
-@app.get("/logs")
-async def get_logs():
-    """チャットログ取得"""
+@app.get("/feedback/stats")
+async def get_feedback_stats():
+    """フィードバック統計取得"""
     try:
-        logs = log_manager.get_logs_with_feedback()
-        return logs
+        stats = feedback_manager.get_feedback_stats()
+        return stats
     except Exception as e:
-        logging.error(f"ログ取得エラー: {e}")
+        logging.error(f"フィードバック統計取得エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- 設定管理API ---
@@ -957,4 +979,3 @@ async def websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
-
