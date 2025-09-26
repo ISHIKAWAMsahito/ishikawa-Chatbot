@@ -40,6 +40,6 @@ ProgPythongit
 ProgPython/
 grafana_data/
 migrate.py
-prometheus-3.6.0-rc.1.windows-amd64/
+# 日本語フォルダを無視
 日本語フォルダ1/
 日本語フォルダ2/
