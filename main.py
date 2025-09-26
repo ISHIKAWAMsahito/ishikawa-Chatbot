@@ -573,20 +573,23 @@ def require_auth(request: Request):
 def require_auth_client(request: Request):
     """クライアント用認証"""
     user = request.session.get('user')
-    if not user and all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
-        # 未認証の場合はログインページへリダイレクト
+    if not user:
+        # (ルール1: ログインしていないなら、ログインページへ行かせる)
         raise HTTPException(status_code=307, headers={'Location': '/login'})
     
     # 認証済みユーザーのメールアドレスを検証
     user_email = user.get('email', '')
-    allowed_domain = '@sgu.ac.jp'
-    allowed_admin_email = 'admin@e.sgu.ac.jp'
+    allowed_domain_staff = '@sgu.ac.jp'      # staffドメイン
+    allowed_domain_student = '@e.sgu.ac.jp'  # studentドメイン
     
-    # メールドメインまたは特定のメールアドレスで許可
-    if user_email.endswith(allowed_domain) or user_email == allowed_admin_email:
+    # (ルール2: ログインしていても、許可されたメールアドレスかチェックする)
+    if (user_email.endswith(allowed_domain_staff) or
+            user_email.endswith(allowed_domain_student) or
+            user_email == 'ishikawamasahito3150@gmail.com'):
+        # OKなら通す
         return user
     else:
-        # 許可されない場合はアクセス拒否
+        # ダメなら「アクセス禁止(403)」を突きつける
         raise HTTPException(status_code=403, detail="このサービスへのアクセスは許可されていません。")
 # --- 認証とHTML提供 (Auth0用) ---
 @app.get('/login')
