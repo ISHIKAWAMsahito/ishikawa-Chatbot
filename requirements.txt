@@ -16,3 +16,7 @@ requests
 pandas
 python-multipart
 prometheus-fastapi-instrumentator
+bcrypt
+PyJWT
+python-multipart
+email-validator
