@@ -515,7 +515,7 @@ web_scraper = WebScraper()
 # --- データモデル定義 ---
 class ChatQuery(BaseModel):
     query: str
-    model: str = "gemini-1.5-flash-latest"
+    model: str = "gemini-2.5-flash"
     embedding_model: str = "text-embedding-004"
     top_k: int = 5
     collection: str = ACTIVE_COLLECTION_NAME
