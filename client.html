@@ -4,17 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>学生支援チャットボット</title>
- <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <script>
         // ▼▼▼▼▼ ここにあなたのSupabaseプロジェクトの実際の値を設定してください ▼▼▼▼▼
-        const SUPABASE_URL = 'https://fosaksdawnbnmykdlqmq.supabase.co';      // Supabaseダッシュボードの 'Project URL' を設定
-        const SUPABASE_ANON_KEY = 'your-public-anon-key'; // Supabaseダッシュボードの 'anon public' キーを設定
+        const SUPABASE_URL = 'https://fosaksdawnbnmykdlqmq.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable__ZeHWSheYJ-OaHeXFPO1Eg_Y5hYyeq0'; // Supabaseダッシュボードの 'anon public' キーを設定
         // ▲▲▲▲▲ ここまで ▲▲▲▲▲
 
         // Supabaseクライアントを作成
-        // この 'supabase' という変数を、他のスクリプトでデータベース操作に利用できます。
-        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const { createClient } = supabase;
+        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     </script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -54,7 +54,7 @@
         .settings-update-notification.show { transform: translateX(0); }
         .settings-update-notification .close-btn { background: none; border: none; color: white; font-size: 18px; margin-left: 10px; cursor: pointer; }
         
-        /* ▼▼▼ コメント機能用のCSSを追加 ▼▼▼ */
+        /* コメント機能用のCSS */
         .comment-btn { position: absolute; top: 15px; left: 15px; background: rgba(255, 255, 255, 0.15); color: white; border: none; border-radius: 15px; padding: 8px 12px; cursor: pointer; font-size: 0.85rem; transition: background 0.2s ease; }
         .comment-btn:hover { background: rgba(255, 255, 255, 0.3); }
         .modal { display: none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); animation: fadeIn 0.3s; }
@@ -67,7 +67,9 @@
         .modal textarea { width: 100%; height: 120px; padding: 10px; border: 1px solid #ccc; border-radius: 8px; margin-top: 10px; margin-bottom: 20px; resize: vertical; font-size: 1rem; }
         .modal button { width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; }
         .modal button:hover { opacity: 0.9; }
-        /* ▲▲▲ コメント機能用のCSSを追加 ▲▲▲ */
+        .modal button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .success-message { color: #28a745; font-weight: 600; margin-top: 10px; display: none; }
+        .error-message { color: #dc3545; font-weight: 600; margin-top: 10px; display: none; }
 
         @media (max-width: 480px) {
             body { padding: 5px; }
@@ -80,7 +82,7 @@
             .chat-input-box { flex-direction: column; align-items: stretch; }
             .send-btn { justify-content: center; padding: 12px; }
             .settings-update-notification { position: fixed; top: auto; bottom: 20px; right: 20px; left: 20px; }
-            .comment-btn { position: static; margin-top: 15px; } /* スマホ表示用に調整 */
+            .comment-btn { position: static; margin-top: 15px; }
         }
     </style>
 </head>
@@ -132,9 +134,11 @@
         <div class="modal-content">
             <span class="modal-close-btn">&times;</span>
             <h2>AIチャットへのご意見・ご感想</h2>
-            <p>今後の改善のため、お気づきの点などをお聞かせください。</p>
+            <p>今後の改善のため、お気づきの点などをお聞かせください。（匿名で送信されます）</p>
             <textarea id="commentTextarea" placeholder="ここにコメントを入力してください..."></textarea>
-            <button id="sendCommentBtn">メールで送信</button>
+            <button id="sendCommentBtn">送信</button>
+            <div class="success-message" id="successMessage">✓ コメントを送信しました。ありがとうございます！</div>
+            <div class="error-message" id="errorMessage">エラーが発生しました。もう一度お試しください。</div>
         </div>
     </div>
     <script>
@@ -145,41 +149,71 @@
         const sendBtn = document.getElementById('sendBtn');
         let settingsSocket = null;
 
-        // ▼▼▼ コメント機能用の要素を取得 ▼▼▼
+        // コメント機能用の要素を取得
         const openCommentModalBtn = document.getElementById('openCommentModalBtn');
         const commentModal = document.getElementById('commentModal');
         const closeBtn = document.querySelector('.modal-close-btn');
         const sendCommentBtn = document.getElementById('sendCommentBtn');
         const commentTextarea = document.getElementById('commentTextarea');
-        // ▲▲▲ コメント機能用の要素を取得 ▲▲▲
+        const successMessage = document.getElementById('successMessage');
+        const errorMessage = document.getElementById('errorMessage');
 
-        // ▼▼▼ コメントモーダルの表示・非表示イベントを設定 ▼▼▼
-        openCommentModalBtn.onclick = () => { commentModal.style.display = 'block'; }
+        // コメントモーダルの表示・非表示イベントを設定
+        openCommentModalBtn.onclick = () => { 
+            commentModal.style.display = 'block';
+            successMessage.style.display = 'none';
+            errorMessage.style.display = 'none';
+        }
         closeBtn.onclick = () => { commentModal.style.display = 'none'; }
         window.onclick = (event) => {
             if (event.target == commentModal) {
                 commentModal.style.display = 'none';
             }
         }
-        // ▲▲▲ コメントモーダルの表示・非表示イベントを設定 ▲▲▲
         
-        // ▼▼▼ コメント送信ボタンのイベントを設定 ▼▼▼
-        sendCommentBtn.onclick = () => {
+        // コメント送信ボタンのイベントを設定
+        sendCommentBtn.onclick = async () => {
             const comment = commentTextarea.value.trim();
             if (comment === '') {
                 alert('コメントを入力してください。');
                 return;
             }
-            const recipient = 'ishikawamasahito3150gmail.com';
-            const subject = '学生支援チャットボットへのフィードバック';
-            // mailtoリンクを作成して、ユーザーのメールクライアントを起動
-            window.location.href = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(comment)}`;
-            
-            // 送信後にテキストエリアを空にしてモーダルを閉じる
-            commentTextarea.value = '';
-            commentModal.style.display = 'none';
+
+            // ボタンを無効化
+            sendCommentBtn.disabled = true;
+            successMessage.style.display = 'none';
+            errorMessage.style.display = 'none';
+
+            try {
+                // Supabaseにコメントを保存
+                const { data, error } = await supabaseClient
+                    .from('anonymous_comments')
+                    .insert([
+                        {
+                            comment: comment,
+                            created_at: new Date().toISOString()
+                        }
+                    ]);
+
+                if (error) throw error;
+
+                // 成功メッセージを表示
+                successMessage.style.display = 'block';
+                commentTextarea.value = '';
+
+                // 2秒後にモーダルを閉じる
+                setTimeout(() => {
+                    commentModal.style.display = 'none';
+                    successMessage.style.display = 'none';
+                }, 2000);
+
+            } catch (error) {
+                console.error('コメント送信エラー:', error);
+                errorMessage.style.display = 'block';
+            } finally {
+                sendCommentBtn.disabled = false;
+            }
         };
-        // ▲▲▲ コメント送信ボタンのイベントを設定 ▲▲▲
 
         function connectSettingsWebSocket() {
             try {
