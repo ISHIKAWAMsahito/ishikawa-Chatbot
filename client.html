@@ -83,13 +83,42 @@
             .send-btn { justify-content: center; padding: 12px; }
             .settings-update-notification { position: fixed; top: auto; bottom: 20px; right: 20px; left: 20px; }
             .comment-btn { position: static; margin-top: 15px; }
+            /* 既存のCSSルールセットの下に追加 */
+
+.rating-container {
+    margin-bottom: 15px;
+    text-align: center;
+}
+.rating-container p {
+    margin-bottom: 10px;
+    font-size: 0.9rem;
+    color: #555;
+}
+.rating-btn {
+    background-color: #f0f0f0;
+    border: 1px solid #ccc;
+    border-radius: 20px;
+    padding: 8px 15px;
+    margin: 0 5px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.rating-btn:hover {
+    background-color: #e0e0e0;
+}
+.rating-btn.selected {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-color: #667eea;
+    font-weight: bold;
+}
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <button id="openCommentModalBtn" class="comment-btn">✉️ ご意見・ご感想</button>
+            <button id="openCommentModalBtn" class="comment-btn">✉️ 回答への意見・要望</button>
             <div class="settings-indicator" id="settingsIndicator">
                 <div class="sync-dot disconnected" id="syncDot"></div>
                 <span id="syncText">設定同期準備中...</span>
@@ -131,89 +160,131 @@
     </div>
 
     <div id="commentModal" class="modal">
-        <div class="modal-content">
-            <span class="modal-close-btn">&times;</span>
-            <h2>AIチャットへのご意見・ご感想</h2>
-            <p>今後の改善のため、お気づきの点などをお聞かせください。（匿名で送信されます）</p>
-            <textarea id="commentTextarea" placeholder="ここにコメントを入力してください..."></textarea>
-            <button id="sendCommentBtn">送信</button>
-            <div class="success-message" id="successMessage">✓ コメントを送信しました。ありがとうございます！</div>
-            <div class="error-message" id="errorMessage">エラーが発生しました。もう一度お試しください。</div>
-        </div>
+      <div class="modal-content">
+    <span class="modal-close-btn">&times;</span>
+    <h2>AIチャットへの意見・要望</h2>
+    <p>今後の改善のため、お気づきの点などをお聞かせください。（匿名で送信されます）</p>
+    
+    <div class="rating-container">
+        <p>このチャットボットの全体的な評価を教えてください：</p>
+        <button class="rating-btn" data-rating="good">👍 良い</button>
+        <button class="rating-btn" data-rating="bad">👎 悪い</button>
+    </div>
+    <textarea id="commentTextarea" placeholder="ここにコメントを入力してください..."></textarea>
+    <button id="sendCommentBtn">送信</button>
+    <div class="success-message" id="successMessage">✓ コメントを送信しました。ありがとうございます！</div>
+    <div class="error-message" id="errorMessage">エラーが発生しました。もう一度お試しください。</div>
+</div>
     </div>
     <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const BACKEND_API_BASE_URL = window.location.origin;
-        const chatMessages = document.getElementById('chatMessages');
-        const chatInput = document.getElementById('chatInput');
-        const sendBtn = document.getElementById('sendBtn');
-        let settingsSocket = null;
+document.addEventListener('DOMContentLoaded', function() {
+    const BACKEND_API_BASE_URL = window.location.origin;
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInput = document.getElementById('chatInput');
+    const sendBtn = document.getElementById('sendBtn');
+    let settingsSocket = null;
 
-        // コメント機能用の要素を取得
-        const openCommentModalBtn = document.getElementById('openCommentModalBtn');
-        const commentModal = document.getElementById('commentModal');
-        const closeBtn = document.querySelector('.modal-close-btn');
-        const sendCommentBtn = document.getElementById('sendCommentBtn');
-        const commentTextarea = document.getElementById('commentTextarea');
-        const successMessage = document.getElementById('successMessage');
-        const errorMessage = document.getElementById('errorMessage');
+    // コメント機能用の要素を取得
+    const openCommentModalBtn = document.getElementById('openCommentModalBtn');
+    const commentModal = document.getElementById('commentModal');
+    const closeBtn = document.querySelector('.modal-close-btn');
+    const sendCommentBtn = document.getElementById('sendCommentBtn');
+    const commentTextarea = document.getElementById('commentTextarea');
+    const successMessage = document.getElementById('successMessage');
+    const errorMessage = document.getElementById('errorMessage');
+    
+    // ▼▼▼ ここから追加 ▼▼▼
+    // 評価ボタンの要素を取得
+    const ratingBtns = document.querySelectorAll('.rating-btn');
+    // 選択された評価を保持する変数
+    let selectedRating = null; 
+    // ▲▲▲ ここまで追加 ▲▲▲
 
-        // コメントモーダルの表示・非表示イベントを設定
-        openCommentModalBtn.onclick = () => { 
-            commentModal.style.display = 'block';
-            successMessage.style.display = 'none';
-            errorMessage.style.display = 'none';
-        }
-        closeBtn.onclick = () => { commentModal.style.display = 'none'; }
-        window.onclick = (event) => {
-            if (event.target == commentModal) {
-                commentModal.style.display = 'none';
-            }
-        }
+    // ▼▼▼ ここから修正 ▼▼▼
+    // 評価ボタンのクリックイベントを追加
+    ratingBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            // 他のボタンの選択状態を解除
+            ratingBtns.forEach(b => b.classList.remove('selected'));
+            // クリックしたボタンを選択状態にする
+            btn.classList.add('selected');
+            // 評価データを変数に保存 ('good' or 'bad')
+            selectedRating = btn.dataset.rating;
+        });
+    });
+
+    // コメントモーダルを開くときの処理を修正
+    openCommentModalBtn.onclick = () => { 
+        commentModal.style.display = 'block';
         
-        // コメント送信ボタンのイベントを設定
-        sendCommentBtn.onclick = async () => {
-            const comment = commentTextarea.value.trim();
-            if (comment === '') {
-                alert('コメントを入力してください。');
-                return;
-            }
+        // 以前の入力内容をすべてリセット
+        commentTextarea.value = '';
+        ratingBtns.forEach(b => b.classList.remove('selected'));
+        selectedRating = null;
+        
+        successMessage.style.display = 'none';
+        errorMessage.style.display = 'none';
+    }
+    // ▲▲▲ ここまで修正 ▲▲▲
 
-            // ボタンを無効化
-            sendCommentBtn.disabled = true;
-            successMessage.style.display = 'none';
-            errorMessage.style.display = 'none';
+    closeBtn.onclick = () => { commentModal.style.display = 'none'; }
+    window.onclick = (event) => {
+        if (event.target == commentModal) {
+            commentModal.style.display = 'none';
+        }
+    }
+    
+    // ▼▼▼ ここから修正 ▼▼▼
+    // コメント送信ボタンのイベントを修正
+    sendCommentBtn.onclick = async () => {
+        const comment = commentTextarea.value.trim();
+        
+        // コメントも評価もない場合はアラート
+        if (comment === '' && !selectedRating) {
+            alert('コメントまたは評価のどちらかを入力してください。');
+            return;
+        }
 
-            try {
-                // Supabaseにコメントを保存
-                const { data, error } = await supabaseClient
-                    .from('anonymous_comments')
-                    .insert([
-                        {
-                            comment: comment,
-                            created_at: new Date().toISOString()
-                        }
-                    ]);
+        // ボタンを無効化
+        sendCommentBtn.disabled = true;
+        successMessage.style.display = 'none';
+        errorMessage.style.display = 'none';
 
-                if (error) throw error;
+        try {
+            // Supabaseにコメントと評価を保存
+            const { data, error } = await supabaseClient
+                .from('anonymous_comments')
+                .insert([
+                    {
+                        comment: comment,       // コメントテキスト
+                        rating: selectedRating, // 'good', 'bad', または null
+                        created_at: new Date().toISOString()
+                    }
+                ]);
 
-                // 成功メッセージを表示
-                successMessage.style.display = 'block';
-                commentTextarea.value = '';
+            if (error) throw error;
 
-                // 2秒後にモーダルを閉じる
-                setTimeout(() => {
-                    commentModal.style.display = 'none';
-                    successMessage.style.display = 'none';
-                }, 2000);
+            // 成功メッセージを表示
+            successMessage.style.display = 'block';
+            commentTextarea.value = ''; // テキストエリアをクリア
+            
+            // 評価の選択状態もクリア
+            ratingBtns.forEach(b => b.classList.remove('selected'));
+            selectedRating = null;
 
-            } catch (error) {
-                console.error('コメント送信エラー:', error);
-                errorMessage.style.display = 'block';
-            } finally {
-                sendCommentBtn.disabled = false;
-            }
-        };
+            // 2秒後にモーダルを閉じる
+            setTimeout(() => {
+                commentModal.style.display = 'none';
+                successMessage.style.display = 'none';
+            }, 2000);
+
+        } catch (error) {
+            console.error('コメント送信エラー:', error);
+            errorMessage.style.display = 'block';
+        } finally {
+            sendCommentBtn.disabled = false;
+        }
+    };
 
         function connectSettingsWebSocket() {
             try {
