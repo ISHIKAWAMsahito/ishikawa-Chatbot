@@ -354,8 +354,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
         async function sendAiResponseFeedbackToSupabase(element, rating) {
     const messageWrapper = element.closest('.message');
-    // AIの回答テキストを取得
     const aiResponseText = messageWrapper.querySelector('.message-content').innerText;
+    const userQuestion = messageWrapper.dataset.userQuestion || '';
     
     // ボタンを無効化して二重送信を防ぐ
     const buttons = messageWrapper.querySelectorAll('.feedback-btn');
@@ -367,8 +367,10 @@ document.addEventListener('DOMContentLoaded', function() {
             .from('anonymous_comments')
             .insert([
                 {
-                    comment: aiResponseText, // AIの回答をcommentとして保存
-                    rating: rating,          // 'good' or 'bad'
+                    user_question: userQuestion,     // ユーザーの質問
+                    ai_response: aiResponseText,     // AIの回答
+                    rating: rating,                  // 'good' or 'bad'
+                    comment: null,                   // フィードバックコメント（この時点ではnull）
                     created_at: new Date().toISOString()
                 }
             ]);
