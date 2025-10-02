@@ -575,7 +575,17 @@ manager = ConnectionManager()
 # --------------------------------------------------------------------------
 # 5. APIエンドポイント定義
 # --------------------------------------------------------------------------
-
+@app.post("/feedback/ai-response")
+async def save_ai_response_feedback(feedback: AIResponseFeedbackRequest):
+    try:
+        # Supabaseなどに保存する処理をここに追加（例: feedback_manager.save_feedback など）
+        # 必要に応じて匿名コメントテーブルに保存
+        # 例:
+        # db_client.client.table("anonymous_comments").insert({...}).execute()
+        return {"message": "AI回答へのフィードバックを保存しました"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 # --- 認証関数 (Auth0用) ---
 def require_auth(request: Request):
     """管理者用認証"""
@@ -783,8 +793,8 @@ async def scrape_website(req: ScrapeRequest):
     except Exception as e:
         logging.error(f"Scrape error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-# --- チャットAPI（RAG対応） ---
+    
+ # --- チャットAPI（RAG対応） ---
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     user_input = chat_req.query.strip()
     feedback_id = str(uuid.uuid4())
