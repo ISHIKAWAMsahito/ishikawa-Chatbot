@@ -578,10 +578,13 @@ manager = ConnectionManager()
 @app.post("/feedback/ai-response")
 async def save_ai_response_feedback(feedback: AIResponseFeedbackRequest):
     try:
-        # Supabaseなどに保存する処理をここに追加（例: feedback_manager.save_feedback など）
-        # 必要に応じて匿名コメントテーブルに保存
-        # 例:
-        # db_client.client.table("anonymous_comments").insert({...}).execute()
+        # Supabaseに保存
+        db_client.client.table("anonymous_comments").insert({
+            "question": feedback.user_question,
+            "ai_response": feedback.ai_response,
+            "rating": feedback.rating,
+            "created_at": datetime.now(JST).isoformat()
+        }).execute()
         return {"message": "AI回答へのフィードバックを保存しました"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
