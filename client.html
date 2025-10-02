@@ -352,7 +352,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        async function sendAiResponseFeedbackToSupabase(element, rating) {
+        
+async function sendAiResponseFeedbackToSupabase(element, rating) {
     const messageWrapper = element.closest('.message');
     const aiResponseText = messageWrapper.querySelector('.message-content').innerText;
     const userQuestion = messageWrapper.dataset.userQuestion || '';
@@ -362,26 +363,28 @@ document.addEventListener('DOMContentLoaded', function() {
     buttons.forEach(btn => btn.disabled = true);
 
     try {
-        // Supabaseのanonymous_commentsテーブルに送信
-        const { data, error } = await supabaseClient
-            .from('anonymous_comments')
-            .insert([
-                {
-                    user_question: userQuestion,     // ユーザーの質問
-                    ai_response: aiResponseText,     // AIの回答
-                    rating: rating,                  // 'good' or 'bad'
-                    comment: null,                   // フィードバックコメント（この時点ではnull）
-                    created_at: new Date().toISOString()
-                }
-            ]);
-        
-        if (error) throw error;
+        // バックエンド経由でSupabaseに保存
+        const response = await fetch(`${BACKEND_API_BASE_URL}/feedback/ai-response`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_question: userQuestion,
+                ai_response: aiResponseText,
+                rating: rating
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('フィードバック送信に失敗しました');
+        }
+
+        const result = await response.json();
         
         // 成功したら感謝メッセージを表示
         element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
 
     } catch (error) {
-        console.error("Supabaseへのフィードバック送信エラー:", error);
+        console.error("フィードバック送信エラー:", error);
         element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #dc3545;">エラーが発生しました。</span>';
     }
 }

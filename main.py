@@ -537,10 +537,16 @@ class ScrapeRequest(BaseModel):
     embedding_model: str = "text-embedding-004"
     collection_name: str = ACTIVE_COLLECTION_NAME
 
+
 class FeedbackRequest(BaseModel):
     feedback_id: str
     rating: str
     comment: str = ""
+
+class AIResponseFeedbackRequest(BaseModel):
+    user_question: str
+    ai_response: str
+    rating: str  # 'good' or 'bad'
 
 class Settings(BaseModel):
     model: Optional[str] = None
