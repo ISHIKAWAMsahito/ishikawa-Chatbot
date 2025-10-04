@@ -33,6 +33,9 @@ from docx import Document as DocxDocument
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 
+from fastapi import Request
+from fastapi.responses import FileResponse
+
 
 # --- 初期設定 ---
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
@@ -590,6 +593,22 @@ async def save_ai_response_feedback(feedback: AIResponseFeedbackRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+@app.get("/DB.html", response_class=FileResponse)
+async def serve_db_upper(request: Request):
+    """管理画面から直接開くために DB.html を配信します（大文字パス）"""
+    path = os.path.join(BASE_DIR, "DB.html")
+    if os.path.exists(path):
+        return FileResponse(path)
+    raise HTTPException(status_code=404, detail="DB.html not found on server")
+
+@app.get("/db.html", response_class=FileResponse)
+async def serve_db_lower(request: Request):
+    """小文字パスもサポート（環境によるパス差に備える）"""
+    path = os.path.join(BASE_DIR, "DB.html")
+    if os.path.exists(path):
+        return FileResponse(path)
+    raise HTTPException(status_code=404, detail="DB.html not found on server")
+    
 # --- 認証関数 (Auth0用) ---
 def require_auth(request: Request):
     """管理者用認証"""
@@ -671,6 +690,16 @@ async def serve_client(request: Request, user: dict = Depends(require_auth_clien
 @app.get("/admin", response_class=FileResponse)
 async def serve_admin(request: Request, user: dict = Depends(require_auth)):
     return FileResponse(os.path.join(BASE_DIR, "admin.html"))
+
+@app.get("/DB.html", response_class=FileResponse)
+async def serve_db_page(request: Request, user: dict = Depends(require_auth)):
+    """DB管理ページ(DB.html)を提供するためのエンドポイント"""
+    return FileResponse(os.path.join(BASE_DIR, "DB.html"))
+
+@app.get("/style.css", response_class=FileResponse)
+async def serve_css():
+    """統一されたCSSファイル(style.css)を提供するためのエンドポイント"""
+    return FileResponse(os.path.join(BASE_DIR, "style.css"))
 
 @app.get("/feedback-stats", response_class=FileResponse)
 async def serve_feedback_stats(request: Request, user: dict = Depends(require_auth)):
