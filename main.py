@@ -593,21 +593,9 @@ async def save_ai_response_feedback(feedback: AIResponseFeedbackRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.get("/DB.html", response_class=FileResponse)
-async def serve_db_upper(request: Request):
-    """管理画面から直接開くために DB.html を配信します（大文字パス）"""
-    path = os.path.join(BASE_DIR, "DB.html")
-    if os.path.exists(path):
-        return FileResponse(path)
-    raise HTTPException(status_code=404, detail="DB.html not found on server")
 
-@app.get("/db.html", response_class=FileResponse)
-async def serve_db_lower(request: Request):
-    """小文字パスもサポート（環境によるパス差に備える）"""
-    path = os.path.join(BASE_DIR, "DB.html")
-    if os.path.exists(path):
-        return FileResponse(path)
-    raise HTTPException(status_code=404, detail="DB.html not found on server")
+
+
     
 # --- 認証関数 (Auth0用) ---
 def require_auth(request: Request):
@@ -648,6 +636,10 @@ def require_auth_client(request: Request):
         raise HTTPException(status_code=403, detail="このサービスへのアクセスは許可されていません。")
 
 # --- 認証とHTML提供 (Auth0用) ---
+# main.pyの修正箇所（ルート定義部分のみ）
+# 既存の重複したルート定義を削除し、以下に置き換えてください
+
+# --- 認証とHTML提供 (Auth0用) ---
 @app.get('/login')
 async def login_auth0(request: Request):
     if 'auth0' not in oauth._clients:
@@ -671,10 +663,9 @@ async def auth(request: Request):
         elif user_email.endswith(allowed_domain_student):
             return RedirectResponse(url='/')
         else:
-            # 許可されていないユーザーはログアウトさせる
             return RedirectResponse(url='/logout')
             
-    return RedirectResponse(url='/login') # Fallback if userinfo is not available
+    return RedirectResponse(url='/login')
 
 @app.get('/logout')
 async def logout(request: Request):
@@ -683,28 +674,47 @@ async def logout(request: Request):
         return RedirectResponse(url='/')
     return RedirectResponse(f"https://{AUTH0_DOMAIN}/v2/logout?returnTo={request.url_for('serve_client')}&client_id={AUTH0_CLIENT_ID}")
 
+# クライアント用ページ（学生用）
 @app.get("/", response_class=FileResponse)
 async def serve_client(request: Request, user: dict = Depends(require_auth_client)):
     return FileResponse(os.path.join(BASE_DIR, "client.html"))
 
+# 管理者用メインページ
 @app.get("/admin", response_class=FileResponse)
 async def serve_admin(request: Request, user: dict = Depends(require_auth)):
     return FileResponse(os.path.join(BASE_DIR, "admin.html"))
 
+# ★★★ 重要: DB管理ページ（管理者のみアクセス可能）★★★
+# 重複を削除し、この1つだけ残します
 @app.get("/DB.html", response_class=FileResponse)
 async def serve_db_page(request: Request, user: dict = Depends(require_auth)):
     """DB管理ページ(DB.html)を提供するためのエンドポイント"""
-    return FileResponse(os.path.join(BASE_DIR, "DB.html"))
+    db_path = os.path.join(BASE_DIR, "DB.html")
+    if not os.path.exists(db_path):
+        raise HTTPException(status_code=404, detail="DB.html not found")
+    return FileResponse(db_path)
 
+# 小文字版も同じ動作にする（環境によるパス差異に備える）
+@app.get("/db.html", response_class=FileResponse)
+async def serve_db_page_lower(request: Request, user: dict = Depends(require_auth)):
+    """小文字パスもサポート（環境によるパス差異に備える）"""
+    db_path = os.path.join(BASE_DIR, "DB.html")
+    if not os.path.exists(db_path):
+        raise HTTPException(status_code=404, detail="DB.html not found")
+    return FileResponse(db_path)
+
+# CSS提供
 @app.get("/style.css", response_class=FileResponse)
 async def serve_css():
     """統一されたCSSファイル(style.css)を提供するためのエンドポイント"""
     return FileResponse(os.path.join(BASE_DIR, "style.css"))
 
+# フィードバック統計ページ
 @app.get("/feedback-stats", response_class=FileResponse)
 async def serve_feedback_stats(request: Request, user: dict = Depends(require_auth)):
     return FileResponse(os.path.join(BASE_DIR, "feedback_stats.html"))
 
+# Faviconエラー回避
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return Response(status_code=204)
