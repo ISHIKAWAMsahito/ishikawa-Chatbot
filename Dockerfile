@@ -9,6 +9,7 @@ COPY requirements.txt .
 COPY main.py .
 COPY admin.html .
 COPY client.html .
+COPY DB.html .
 
 # ステップ4: requirements.txtに記載されたライブラリをインストール
 RUN pip install --no-cache-dir -r requirements.txt
