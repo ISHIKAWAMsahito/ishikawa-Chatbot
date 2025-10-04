@@ -1,226 +1,128 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>レコード管理画面</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            min-height: 100vh; 
-            padding: 20px; 
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #222;
         }
-        .container { 
-            max-width: 1400px; 
-            margin: 0 auto; 
-            background: rgba(255, 255, 255, 0.98); 
-            border-radius: 25px; 
-            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15); 
-            overflow: hidden; 
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.98);
+            border-radius: 25px;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15);
+            overflow: hidden;
         }
-        .header { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            color: white; 
-            padding: 30px; 
-            text-align: center; 
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
         }
-        .header h1 { 
-            font-size: 2rem; 
-            margin-bottom: 10px; 
-        }
-        .controls { 
-            padding: 20px; 
-            background: #f8f9fa; 
-            display: flex; 
-            gap: 20px; 
-            flex-wrap: wrap; 
-            align-items: center; 
-        }
-        .search-box { 
-            flex: 1; 
-            min-width: 300px; 
-            padding: 10px; 
-            border: 2px solid #e9ecef; 
-            border-radius: 10px; 
-            font-size: 16px; 
-        }
-        .btn { 
-            padding: 10px 20px; 
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
-            color: white; 
-            border: none; 
-            border-radius: 10px; 
-            cursor: pointer; 
-            font-weight: 600; 
-            transition: all 0.3s ease; 
-        }
-        .btn:hover { 
-            transform: translateY(-2px); 
-            box-shadow: 0 5px 15px rgba(79, 172, 254, 0.3); 
-        }
-        .btn.danger { 
-            background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%); 
-        }
-        .btn.secondary { 
-            background: linear-gradient(135deg, #6c757d 0%, #495057 100%); 
-        }
-        .table-container { 
-            padding: 20px; 
-            overflow-x: auto; 
-        }
-        table { 
-            width: 100%; 
-            border-collapse: collapse; 
-            background: white; 
-        }
-        #documentsTable { 
-            /* 初期は非表示。JSで表示制御しています。 */
-            display: none;
-        }
-        th, td { 
-            padding: 12px; 
-            text-align: left; 
-            border-bottom: 1px solid #e9ecef; 
-        }
-        th { 
-            background: #f8f9fa; 
-            font-weight: 600; 
-            color: #495057; 
-            position: sticky; 
-            top: 0; 
-        }
-        tr:hover { 
-            background: #f1f3f5; 
-        }
-        .content-preview { 
-            max-width: 400px; 
-            max-height: 100px; 
-            overflow: hidden; 
-            text-overflow: ellipsis; 
-            font-size: 0.9rem; 
-        }
-        .metadata { 
-            font-size: 0.85rem; 
-            color: #6c757d; 
-        }
-        .action-buttons { 
-            display: flex; 
-            gap: 5px; 
-        }
-        .action-btn { 
-            padding: 5px 10px; 
-            border: none; 
-            border-radius: 5px; 
-            cursor: pointer; 
-            font-size: 0.85rem; 
-            transition: all 0.2s; 
-        }
-        .action-btn.edit { 
-            background: #28a745; 
-            color: white; 
-        }
-        .action-btn.delete { 
-            background: #dc3545; 
-            color: white; 
-        }
-        .action-btn:hover { 
-            opacity: 0.8; 
-        }
-        .modal { 
-            display: none; 
-            position: fixed; 
-            z-index: 1000; 
-            left: 0; 
-            top: 0; 
-            width: 100%; 
-            height: 100%; 
-            background: rgba(0,0,0,0.5); 
-        }
-        .modal.show { 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-        }
-        .modal-content { 
-            background: white; 
-            padding: 30px; 
-            border-radius: 15px; 
-            width: 90%; 
-            max-width: 800px; 
-            max-height: 80vh; 
-            overflow-y: auto; 
-        }
-        .modal-header { 
-            margin-bottom: 20px; 
-        }
-        .modal-header h2 { 
-            color: #333; 
-        }
-        .form-group { 
-            margin-bottom: 20px; 
-        }
-        .form-group label { 
-            display: block; 
-            margin-bottom: 5px; 
-            font-weight: 600; 
-        }
-        .form-group textarea, .form-group input { 
-            width: 100%; 
-            padding: 10px; 
-            border: 1px solid #dee2e6; 
-            border-radius: 8px; 
-            font-family: inherit; 
-        }
-        .form-group textarea { 
-            min-height: 200px; 
-            resize: vertical; 
-        }
-        .modal-footer { 
-            display: flex; 
-            gap: 10px; 
-            justify-content: flex-end; 
-            margin-top: 20px; 
-        }
-        .loading { 
-            text-align: center; 
-            padding: 40px; 
-            color: #6c757d; 
-        }
-        .stats { 
-            padding: 20px; 
-            background: #e3f2fd; 
-            border-radius: 10px; 
-            margin: 20px; 
-        }
-        .stats-grid { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
-            gap: 20px; 
-        }
-        .stat-card { 
-            background: white; 
-            padding: 15px; 
-            border-radius: 10px; 
-            text-align: center; 
-        }
-        .stat-number { 
-            font-size: 2rem; 
-            font-weight: bold; 
-            color: #4facfe; 
-        }
-        .stat-label { 
-            color: #6c757d; 
-            font-size: 0.9rem; 
-        }
-        .category-filter { 
-            padding: 8px; 
-            border: 2px solid #e9ecef; 
-            border-radius: 8px; 
-        }
+        .header h1 { font-size: 2rem; margin-bottom: 8px; }
+        .header p { opacity: 0.95; }
 
-        /* スクリーンリーダーのみ表示（視覚的に非表示にするユーティリティ）*/
+        .stats { padding: 20px; background: #e3f2fd; border-radius: 10px; margin: 20px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; }
+        .stat-card { background: white; padding: 15px; border-radius: 10px; text-align: center; }
+        .stat-number { font-size: 1.6rem; font-weight: 700; color: #4facfe; }
+        .stat-label { color: #6c757d; font-size: 0.9rem; }
+
+        .controls {
+            padding: 18px;
+            background: #f8f9fa;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+            border-top: 1px solid rgba(0,0,0,0.02);
+            border-bottom: 1px solid rgba(0,0,0,0.02);
+        }
+        .search-box {
+            flex: 1;
+            min-width: 250px;
+            padding: 10px 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 15px;
+            background: white;
+        }
+        .category-filter {
+            padding: 8px 10px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            background: white;
+            min-width: 180px;
+        }
+        .btn {
+            padding: 10px 18px;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform .18s ease, box-shadow .18s ease;
+        }
+        .btn.secondary {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        }
+        .btn:hover { transform: translateY(-3px); box-shadow: 0 8px 18px rgba(79,172,254,0.15); }
+        .btn.danger { background: linear-gradient(135deg,#f44336,#d32f2f); }
+
+        .table-container { padding: 20px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; background: white; }
+        #documentsTable { display: none; /* JSで制御 */ }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e9ecef; vertical-align: top; }
+        th { background: #f8f9fa; font-weight: 600; color: #495057; position: sticky; top: 0; z-index: 1; }
+        tr:hover { background: #f1f3f5; }
+
+        .content-preview {
+            max-width: 420px;
+            max-height: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.95rem;
+            color: #333;
+        }
+        .metadata { font-size: 0.85rem; color: #6c757d; }
+
+        .action-buttons { display:flex; gap:6px; }
+        .action-btn {
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-size: 0.86rem;
+        }
+        .action-btn.edit { background:#28a745; color:white; }
+        .action-btn.delete { background:#dc3545; color:white; }
+        .action-btn:hover { opacity:0.9; transform: translateY(-1px); }
+
+        /* モーダル */
+        .modal { display:none; position: fixed; z-index:1000; left:0; top:0; width:100%; height:100%; background: rgba(0,0,0,0.5); }
+        .modal.show { display:flex; align-items:center; justify-content:center; }
+        .modal-content {
+            background:white; padding:28px; border-radius:12px; width: 92%; max-width:760px; max-height:86vh; overflow:auto;
+        }
+        .form-group { margin-bottom:16px; }
+        .form-group label { display:block; margin-bottom:6px; font-weight:600; }
+        .form-group input, .form-group textarea { width:100%; padding:10px; border:1px solid #dee2e6; border-radius:8px; font-family:inherit; }
+        .form-group textarea { min-height:180px; resize:vertical; }
+
+        .loading { text-align:center; padding:40px; color:#6c757d; }
+
+        /* sr-only 用 */
         .sr-only {
             position: absolute !important;
             width: 1px !important;
@@ -231,6 +133,19 @@
             clip: rect(0 0 0 0) !important;
             white-space: nowrap !important;
             border: 0 !important;
+        }
+
+        /* レスポンシブ */
+        @media (max-width: 920px) {
+            .controls { gap:10px; padding:14px; }
+            .content-preview { max-width: 260px; }
+        }
+        @media (max-width: 520px) {
+            .controls { flex-direction: column; align-items: stretch; }
+            .category-filter { width: 100%; }
+            .search-box { width: 100%; }
+            .btn { width: 100%; }
+            th, td { font-size: 0.92rem; padding: 10px; }
         }
     </style>
 </head>
@@ -260,7 +175,6 @@
 
         <div class="controls">
             <input type="text" id="searchInput" class="search-box" placeholder="検索（コンテンツ、カテゴリー、ソース）">
-            <!-- アクセシビリティ対応: ラベルを追加（画面には表示しない sr-only）と aria-label を付与 -->
             <label for="categoryFilter" class="sr-only">カテゴリーで絞り込む</label>
             <select id="categoryFilter" class="category-filter" aria-label="カテゴリーで絞り込む">
                 <option value="">すべてのカテゴリー</option>
@@ -271,15 +185,15 @@
 
         <div class="table-container">
             <div id="loadingIndicator" class="loading">データを読み込み中...</div>
-            <table id="documentsTable">
+            <table id="documentsTable" aria-live="polite" role="table">
                 <thead>
                     <tr>
-                        <th>ID</th>
-                        <th>カテゴリー</th>
-                        <th>ソース</th>
-                        <th>コンテンツ</th>
-                        <th>作成日時</th>
-                        <th>操作</th>
+                        <th scope="col">ID</th>
+                        <th scope="col">カテゴリー</th>
+                        <th scope="col">ソース</th>
+                        <th scope="col">コンテンツ</th>
+                        <th scope="col">作成日時</th>
+                        <th scope="col">操作</th>
                     </tr>
                 </thead>
                 <tbody id="documentsBody"></tbody>
@@ -288,25 +202,25 @@
     </div>
 
     <!-- 編集モーダル -->
-    <div id="editModal" class="modal">
+    <div id="editModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>レコード編集</h2>
+                <h2 id="editModalTitle">レコード編集</h2>
             </div>
             <div class="form-group">
-                <label>ID:</label>
+                <label for="editId">ID:</label>
                 <input type="text" id="editId" readonly>
             </div>
             <div class="form-group">
-                <label>カテゴリー:</label>
+                <label for="editCategory">カテゴリー:</label>
                 <input type="text" id="editCategory">
             </div>
             <div class="form-group">
-                <label>ソース:</label>
+                <label for="editSource">ソース:</label>
                 <input type="text" id="editSource">
             </div>
             <div class="form-group">
-                <label>コンテンツ:</label>
+                <label for="editContent">コンテンツ:</label>
                 <textarea id="editContent"></textarea>
             </div>
             <div class="modal-footer">
@@ -323,10 +237,8 @@
         async function loadDocuments() {
             const loadingIndicator = document.getElementById('loadingIndicator');
             const table = document.getElementById('documentsTable');
-            
             loadingIndicator.style.display = 'block';
             table.style.display = 'none';
-
             try {
                 const response = await fetch('/api/documents/all');
                 if (!response.ok) {
@@ -334,11 +246,9 @@
                 }
                 const data = await response.json();
                 allDocuments = data.documents || [];
-                
                 updateCategories();
                 filterAndDisplayDocuments();
                 updateStats();
-                
                 loadingIndicator.style.display = 'none';
                 table.style.display = 'table';
             } catch (error) {
@@ -350,11 +260,8 @@
         function updateCategories() {
             const categories = new Set();
             allDocuments.forEach(doc => {
-                if (doc.metadata?.category) {
-                    categories.add(doc.metadata.category);
-                }
+                if (doc.metadata?.category) categories.add(doc.metadata.category);
             });
-
             const categoryFilter = document.getElementById('categoryFilter');
             categoryFilter.innerHTML = '<option value="">すべてのカテゴリー</option>';
             Array.from(categories).sort().forEach(category => {
@@ -368,19 +275,14 @@
         function filterAndDisplayDocuments() {
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
             const categoryFilter = document.getElementById('categoryFilter').value;
-
             filteredDocuments = allDocuments.filter(doc => {
-                const matchesSearch = !searchTerm || 
-                    doc.content.toLowerCase().includes(searchTerm) ||
-                    (doc.metadata?.category || '').toLowerCase().includes(searchTerm) ||
-                    (doc.metadata?.source || '').toLowerCase().includes(searchTerm);
-
-                const matchesCategory = !categoryFilter || 
-                    doc.metadata?.category === categoryFilter;
-
+                const content = (doc.content || '').toString().toLowerCase();
+                const cat = (doc.metadata?.category || '').toLowerCase();
+                const src = (doc.metadata?.source || '').toLowerCase();
+                const matchesSearch = !searchTerm || content.includes(searchTerm) || cat.includes(searchTerm) || src.includes(searchTerm);
+                const matchesCategory = !categoryFilter || doc.metadata?.category === categoryFilter;
                 return matchesSearch && matchesCategory;
             });
-
             displayDocuments(filteredDocuments);
             updateStats();
         }
@@ -388,21 +290,19 @@
         function displayDocuments(documents) {
             const tbody = document.getElementById('documentsBody');
             tbody.innerHTML = '';
-
             documents.slice(0, 100).forEach(doc => {
                 const tr = document.createElement('tr');
                 const created = doc.created_at ? new Date(doc.created_at).toLocaleString('ja-JP') : 'N/A';
-                
                 tr.innerHTML = `
                     <td>${doc.id}</td>
                     <td><span class="metadata">${doc.metadata?.category || 'その他'}</span></td>
                     <td><span class="metadata">${doc.metadata?.source || 'N/A'}</span></td>
-                    <td><div class="content-preview">${escapeHtml(doc.content)}</div></td>
+                    <td><div class="content-preview">${escapeHtml(doc.content || '')}</div></td>
                     <td><span class="metadata">${created}</span></td>
                     <td>
                         <div class="action-buttons">
-                            <button class="action-btn edit" onclick="editDocument(${doc.id})">編集</button>
-                            <button class="action-btn delete" onclick="deleteDocument(${doc.id})">削除</button>
+                            <button class="action-btn edit" onclick="editDocument(${doc.id})" aria-label="編集">編集</button>
+                            <button class="action-btn delete" onclick="deleteDocument(${doc.id})" aria-label="削除">削除</button>
                         </div>
                     </td>
                 `;
@@ -412,15 +312,9 @@
 
         function updateStats() {
             document.getElementById('totalCount').textContent = allDocuments.length;
-            
             const categories = new Set();
-            allDocuments.forEach(doc => {
-                if (doc.metadata?.category) {
-                    categories.add(doc.metadata.category);
-                }
-            });
+            allDocuments.forEach(doc => { if (doc.metadata?.category) categories.add(doc.metadata.category); });
             document.getElementById('categoryCount').textContent = categories.size;
-            
             document.getElementById('selectedCount').textContent = filteredDocuments.length;
         }
 
@@ -433,48 +327,29 @@
         async function editDocument(id) {
             const doc = allDocuments.find(d => d.id === id);
             if (!doc) return;
-
             document.getElementById('editId').value = doc.id;
             document.getElementById('editCategory').value = doc.metadata?.category || '';
             document.getElementById('editSource').value = doc.metadata?.source || '';
-            document.getElementById('editContent').value = doc.content;
-
+            document.getElementById('editContent').value = doc.content || '';
             document.getElementById('editModal').classList.add('show');
         }
 
-        function closeEditModal() {
-            document.getElementById('editModal').classList.remove('show');
-        }
+        function closeEditModal() { document.getElementById('editModal').classList.remove('show'); }
 
         async function saveDocument() {
             const id = document.getElementById('editId').value;
             const category = document.getElementById('editCategory').value;
             const source = document.getElementById('editSource').value;
             const content = document.getElementById('editContent').value;
-
             try {
                 const doc = allDocuments.find(d => d.id == id);
-                const updatedMetadata = {
-                    ...doc.metadata,
-                    category: category,
-                    source: source
-                };
-
+                const updatedMetadata = { ...doc.metadata, category: category, source: source };
                 const response = await fetch(`/api/documents/${id}`, {
                     method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        content: content,
-                        metadata: updatedMetadata
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: content, metadata: updatedMetadata })
                 });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 alert('ドキュメントを更新しました');
                 closeEditModal();
                 loadDocuments();
@@ -485,19 +360,10 @@
         }
 
         async function deleteDocument(id) {
-            if (!confirm(`ID ${id} のドキュメントを削除してもよろしいですか？`)) {
-                return;
-            }
-
+            if (!confirm(`ID ${id} のドキュメントを削除してもよろしいですか？`)) return;
             try {
-                const response = await fetch(`/api/documents/${id}`, {
-                    method: 'DELETE'
-                });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-
+                const response = await fetch(`/api/documents/${id}`, { method: 'DELETE' });
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 alert('ドキュメントを削除しました');
                 loadDocuments();
             } catch (error) {
@@ -509,13 +375,7 @@
         // イベントリスナー
         document.getElementById('searchInput').addEventListener('input', filterAndDisplayDocuments);
         document.getElementById('categoryFilter').addEventListener('change', filterAndDisplayDocuments);
-
-        // モーダル外クリックで閉じる
-        document.getElementById('editModal').addEventListener('click', function(e) {
-            if (e.target === this) {
-                closeEditModal();
-            }
-        });
+        document.getElementById('editModal').addEventListener('click', function(e){ if (e.target === this) closeEditModal(); });
 
         // 初期読み込み
         loadDocuments();
