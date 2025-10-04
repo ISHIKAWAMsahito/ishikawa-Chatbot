@@ -718,6 +718,7 @@ async def delete_collection(collection_name: str):
     return {"message": "コレクションが見つかりません"}
 
 # --- ナレッジ管理API ---
+# --- ナレッジ管理API ---
 @app.get("/collections/{collection_name}/documents")
 async def get_documents(collection_name: str):
     if not db_client:
@@ -726,6 +727,84 @@ async def get_documents(collection_name: str):
         "documents": db_client.get_documents_by_collection(collection_name),
         "count": db_client.count_chunks_in_collection(collection_name)
     }
+
+# --- ドキュメント管理API（新規追加） ---
+@app.get("/api/documents/all")
+async def get_all_documents(user: dict = Depends(require_auth)):
+    """全ドキュメントを取得（管理者のみ）"""
+    if not db_client:
+        raise HTTPException(503, "DB not initialized")
+    try:
+        result = db_client.client.table("documents").select("*").order("id", desc=True).limit(1000).execute()
+        return {"documents": result.data or []}
+    except Exception as e:
+        logging.error(f"ドキュメント一覧取得エラー: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/documents/{doc_id}")
+async def get_document_by_id(doc_id: int, user: dict = Depends(require_auth)):
+    """特定のドキュメントを取得（管理者のみ）"""
+    if not db_client:
+        raise HTTPException(503, "DB not initialized")
+    try:
+        result = db_client.client.table("documents").select("*").eq("id", doc_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
+        return result.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"ドキュメント取得エラー: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/documents/{doc_id}")
+async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Depends(require_auth)):
+    """ドキュメントを更新（管理者のみ）"""
+    if not db_client:
+        raise HTTPException(503, "DB not initialized")
+    try:
+        update_data = {}
+        if "content" in request:
+            update_data["content"] = request["content"]
+        if "metadata" in request:
+            update_data["metadata"] = request["metadata"]
+        if "embedding" in request:
+            update_data["embedding"] = request["embedding"]
+        
+        if not update_data:
+            raise HTTPException(status_code=400, detail="更新するデータがありません")
+        
+        result = db_client.client.table("documents").update(update_data).eq("id", doc_id).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
+        
+        logging.info(f"ドキュメント {doc_id} を更新しました（管理者: {user.get('email')}）")
+        return {"message": "ドキュメントを更新しました", "document": result.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"ドキュメント更新エラー: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/documents/{doc_id}")
+async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
+    """ドキュメントを削除（管理者のみ）"""
+    if not db_client:
+        raise HTTPException(503, "DB not initialized")
+    try:
+        result = db_client.client.table("documents").delete().eq("id", doc_id).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
+        
+        logging.info(f"ドキュメント {doc_id} を削除しました（管理者: {user.get('email')}）")
+        return {"message": "ドキュメントを削除しました"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"ドキュメント削除エラー: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload")
 async def upload_document(
