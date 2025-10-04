@@ -225,44 +225,31 @@
                     <h3 class="section-title">📊 ドキュメント管理</h3>
                     <button class="admin-tool-btn" onclick="openDocumentManager()">📝 レコード管理画面を開く</button>
                 </div>
-
-                <!-- 統一された見た目の文書管理/アップロードパネル -->
-                <div class="panel-section">
-                    <h3 class="section-title">📄 文書管理</h3>
-                    <div class="doc-panel-row">
-                        <div class="document-upload">
-                            <input type="file" id="fileInput" accept=".txt,.md,.pdf,.docx" multiple>
-                            <div class="upload-actions">
-                                <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📁 文書アップロード</button>
-                                <button class="upload-btn danger" onclick="/* 全ドキュメント削除など将来の実装 */">🗑️ 一括削除</button>
-                            </div>
-                            <p class="file-instructions">
-                                ※メタデータ登録のため、ファイル名は「<b>カテゴリ名</b>_ファイル名.txt」の形式にしてください。
-                            </p>
-                        </div>
-                        <div id="documentList" class="document-list" aria-live="polite"></div>
-                    </div>
-                </div>
-
-                <!-- 統一された見た目のウェブスクレイプパネル -->
-                <div class="panel-section">
-                    <h3 class="section-title">🌐 ウェブサイトから取得</h3>
-                    <div class="scrape-row">
-                        <input type="text" id="scrapeUrlInput" class="scrape-input" placeholder="https://...">
-                        <div class="scrape-actions">
-                            <button id="scrapeBtn" class="scrape-btn" onclick="scrapeWebsite()">このURLから情報を取得</button>
-                            <button class="small-btn primary" onclick="setScrapeUrl('https://www.example.com')">例をセット</button>
-                        </div>
-                        <div class="margin-top-10">
-                            <div class="website-example" onclick="setScrapeUrl('https://www.example.com')">https://www.example.com</div>
-                            <div class="website-example" onclick="setScrapeUrl('https://www.university.ac.jp')">https://www.university.ac.jp</div>
-                        </div>
-                    </div>
-                </div>
-
+                
             </div>
         </div>
     </div>
+                <div class="panel-section">
+                    <h3 class="section-title">📄 文書管理</h3>
+                    <div class="document-upload">
+                        <input type="file" id="fileInput" accept=".txt,.md,.pdf,.docx" multiple>
+                        <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📁 文書アップロード</button>
+                        <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">
+                            ※メタデータ登録のため、ファイル名は「<b>カテゴリ名</b>_ファイル名.txt」の形式にしてください。
+                        </p>
+                    </div>
+                    <div class="document-list" id="documentList"></div>
+                </div>
+
+                <div class="panel-section">
+                    <h3 class="section-title">🌐 ウェブサイトから取得</h3>
+                    <div>
+                        <input type="text" id="scrapeUrlInput" class="scrape-input" placeholder="https://...">
+                        <button id="scrapeBtn" class="scrape-btn" onclick="scrapeWebsite()">このURLから情報を取得</button>
+                    </div>
+                </div>
+
+  
 
     <div id="confirmModal" class="modal-overlay">
         <div class="modal-content">
@@ -291,6 +278,17 @@
         let currentCollection = '';
         let backendConnected = false;
         let settingsSocket = null;
+
+        function openDocumentManager() {
+            // 管理画面からレコード管理画面（DB.html）を開く関数
+            // 新しいタブで開くようにしています。必要であれば同一タブで開くよう変更してください。
+            const possiblePaths = ['/DB.html', '/db.html', '/records', '/documents'];
+            // 優先順で開く（存在確認せずに最初の候補を開きます）
+            const url = possiblePaths[0];
+            window.open(url, '_blank');
+        }
+        // グローバル参照を確実にする
+        window.openDocumentManager = openDocumentManager;
 
         function connectSettingsWebSocket() {
             try {
@@ -422,14 +420,14 @@
              // HTMLとして解釈されるようにinnerHTMLを使用
             messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
             // リンクが含まれる場合はHTMLとして処理、そうでなければエスケープ
-            if (text.includes('<a href=')) {
-                // リンクタグ以外のHTMLをエスケープ
-                let processedText = text.replace(/\n/g, '<br>');
-                messageContent.innerHTML = processedText;
-            } else {
-                // 通常のテキストはエスケープしてから改行を<br>に変換
-                messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
-            }
+if (text.includes('<a href=')) {
+    // リンクタグ以外のHTMLをエスケープ
+    let processedText = text.replace(/\n/g, '<br>');
+    messageContent.innerHTML = processedText;
+} else {
+    // 通常のテキストはエスケープしてから改行を<br>に変換
+    messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+}
             messageWrapper.appendChild(messageContent);
             const messageTime = document.createElement('div');
             messageTime.className = 'message-time';
@@ -592,18 +590,18 @@
                                     botMessageElement.dataset.logId = data.log_id;
                                 }
                                 if (data.content) {
-                                    fullResponse += data.content;
-                                    // ストリーミング中もリンクを適切に処理
-                                    if (fullResponse.includes('<a href=')) {
-                                        let processedText = fullResponse
-                                            .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
-                                            .replace(/\n/g, '<br>');
-                                        botMessageContent.innerHTML = processedText;
-                                    } else {
-                                        botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
-                                    }
-                                    chatMessages.scrollTop = chatMessages.scrollHeight;
-                                }
+    fullResponse += data.content;
+    // ストリーミング中もリンクを適切に処理
+    if (fullResponse.includes('<a href=')) {
+        let processedText = fullResponse
+            .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
+            .replace(/\n/g, '<br>');
+        botMessageContent.innerHTML = processedText;
+    } else {
+        botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
+    }
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
                             } catch (e) {
                                 console.error("Error parsing stream data:", e);
                             }
