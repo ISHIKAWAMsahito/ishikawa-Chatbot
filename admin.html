@@ -86,15 +86,6 @@
         .modal-btn.cancel { background: #e9ecef; color: #333; }
         .modal-btn.cancel:hover { background: #ced4da; }
 
-        /* New helper classes to remove inline styles and align visuals */
-        .warning-text { color: #c92a2a; font-weight: 700; }
-        .model-select-row { display:flex; gap:10px; align-items:center; }
-        .file-instructions { font-size: 0.8rem; color: #666; margin-top: 5px; }
-        .doc-panel-row { margin-top: 10px; }
-        .doc-panel-row .upload-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
-        .doc-panel-row .document-list { margin-top: 12px; max-height: 180px; }
-        .scrape-row { margin-top: 10px; display:flex; gap:8px; flex-direction:column; }
-        .scrape-row .scrape-actions { display:flex; gap:8px; margin-top:8px; }
         @media (max-width: 820px) {
             body { padding: 10px; }
             .container { border-radius: 15px; }
@@ -137,7 +128,7 @@
                             - 新しいサークルを作るには？<br>
                             - 休学・復学・退学の手続きをしたいときは？<br>
                             様々な質問にお答えします！
-                            <span class="warning-text">
+                            <span style="color:red; font-weight:bold;">
                             ※氏名・住所・学籍番号などの個人情報は入力しないでください。
                             </span>
                         </div>
@@ -179,13 +170,13 @@
                     <h3 class="section-title">🧠 AI設定 <span class="auto-sync-indicator" id="autoSyncIndicator" title="自動同期中"></span></h3>
                     <div class="setting-item" id="modelSetting">
                         <label for="modelSelect"><strong>使用モデル:</strong></label><br>
-                        <div class="model-select-row">
+                        <div style="display: flex; gap: 10px; align-items: center;">
                             <select id="topKSelect" class="topk-select" title="検索件数を選択">
                                 <option value="3">3</option>
                                 <option value="5" selected>5</option>
                                 <option value="10">10</option>
                             </select>
-                            <select id="modelSelect" class="model-select" style="flex:1;">
+                            <select id="modelSelect" class="model-select" style="flex: 1;">
                                 <!-- GeminiモデルリストはJSで動的に設定 -->
                             </select>
                         </div>
@@ -197,7 +188,7 @@
                     <h3 class="section-title" id="collectionTitle">🗃️ データコレクション</h3>
                     <div class="setting-item" id="collectionSetting">
                         <label for="collectionSelect"><strong>コレクション:</strong></label><br>
-                        <select id="collectionSelect" class="collection-select" aria-label="コレクション選択"></select>
+                        <select id="collectionSelect" class="collection-select"></select>
                         <div class="sync-status" id="collectionSyncStatus">設定同期待機中...</div>
                     </div>
                     <div>
@@ -279,15 +270,12 @@
         let backendConnected = false;
         let settingsSocket = null;
 
+        // openDocumentManager を定義（固定の公開 URL を直接開く）
         function openDocumentManager() {
-            // 管理画面からレコード管理画面（DB.html）を開く関数
-            // 新しいタブで開くようにしています。必要であれば同一タブで開くよう変更してください。
-            const possiblePaths = ['/DB.html', '/db.html', '/records', '/documents'];
-            // 優先順で開く（存在確認せずに最初の候補を開きます）
-            const url = possiblePaths[0];
+            const url = 'https://ishikawa-chatbot.onrender.com/DB.html';
             window.open(url, '_blank');
         }
-        // グローバル参照を確実にする
+        // onclick 属性から確実に参照できるようグローバルに割り当て
         window.openDocumentManager = openDocumentManager;
 
         function connectSettingsWebSocket() {
@@ -420,14 +408,14 @@
              // HTMLとして解釈されるようにinnerHTMLを使用
             messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
             // リンクが含まれる場合はHTMLとして処理、そうでなければエスケープ
-if (text.includes('<a href=')) {
-    // リンクタグ以外のHTMLをエスケープ
-    let processedText = text.replace(/\n/g, '<br>');
-    messageContent.innerHTML = processedText;
-} else {
-    // 通常のテキストはエスケープしてから改行を<br>に変換
-    messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
-}
+            if (text.includes('<a href=')) {
+                // リンクタグ以外のHTMLをエスケープ
+                let processedText = text.replace(/\n/g, '<br>');
+                messageContent.innerHTML = processedText;
+            } else {
+                // 通常のテキストはエスケープしてから改行を<br>に変換
+                messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+            }
             messageWrapper.appendChild(messageContent);
             const messageTime = document.createElement('div');
             messageTime.className = 'message-time';
@@ -590,18 +578,18 @@ if (text.includes('<a href=')) {
                                     botMessageElement.dataset.logId = data.log_id;
                                 }
                                 if (data.content) {
-    fullResponse += data.content;
-    // ストリーミング中もリンクを適切に処理
-    if (fullResponse.includes('<a href=')) {
-        let processedText = fullResponse
-            .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
-            .replace(/\n/g, '<br>');
-        botMessageContent.innerHTML = processedText;
-    } else {
-        botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
-    }
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
+                                    fullResponse += data.content;
+                                    // ストリーミング中もリンクを適切に処理
+                                    if (fullResponse.includes('<a href=')) {
+                                        let processedText = fullResponse
+                                            .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
+                                            .replace(/\n/g, '<br>');
+                                        botMessageContent.innerHTML = processedText;
+                                    } else {
+                                        botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
+                                    }
+                                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                                }
                             } catch (e) {
                                 console.error("Error parsing stream data:", e);
                             }
