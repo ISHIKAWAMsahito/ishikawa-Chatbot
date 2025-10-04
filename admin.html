@@ -8,6 +8,13 @@
 <style>
     /* --- 基本設定 --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* Fix: model-select-row for AI設定 select row */
+    .model-select-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
     body {
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -106,6 +113,12 @@
     .message-content a { color: #007bff; text-decoration: underline; }
     .message-content a:hover { color: #0056b3; }
     .message-time { font-size: 0.8rem; opacity: 0.7; margin-top: 8px; /* 統一 */ }
+    
+    /* ★修正点1のCSSを追加 */
+    .important-note {
+        color: red;
+        font-weight: bold;
+    }
 
     .chat-input-container { padding: 24px; /* 統一 */ background: #f8f9fa; border-top: 1px solid #e9ecef; }
     .chat-input-box { display: flex; gap: 8px; /* 統一 */ align-items: flex-end; }
@@ -160,31 +173,41 @@
 
     /* --- フォーム要素 --- */
     .model-info { background: #e3f2fd; padding: 16px; /* 統一 */ border-radius: 8px; /* 統一 */ margin-top: 8px; /* 統一 */ font-size: 0.9rem; }
-.scrape-input {
-    /* width: 100%; を指定しない */
-    padding: 8px;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    margin-top: 10px;
-}
+    .model-select, .collection-select, .embedding-model-select, .collection-input, .scrape-input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        margin-top: 10px;
+    }
+    /* ★修正点2のCSSを追加 */
+    .model-select {
+        flex: 1;
+    }
     .topk-select { width: 64px; /* 統一 */ padding: 4px; /* 統一 */ }
     .document-upload { margin-top: 15px; /* 統一 */ }
     #fileInput { display: none; }
-  .upload-btn {
-    background: #28a745;
-    color: white;
-    border: none;
-    padding: 10px 15px;
-    border-radius: 5px;
-    cursor: pointer;
-    margin-right: 10px;
-    margin-bottom: 10px;
-}
-.upload-btn:hover {
-    background: #218838;
-}
+    .upload-btn {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 5px;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 10px;
+    }
+    .upload-btn:hover {
+        background: #218838;
+    }
     .upload-btn.danger { background: #dc3545; }
     .upload-btn.danger:hover { background: #c82333; }
+    /* ★修正点3のCSSを追加 */
+    .upload-note {
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 5px;
+    }
    .document-list {
     max-height: 150px;
     overflow-y: auto;
@@ -200,6 +223,12 @@
     justify-content: space-between;
     align-items: center;
 }
+.total-chunks-info {
+    text-align: right;
+    font-size: 0.9rem;
+    margin-top: 10px;
+    color: #333;
+}
 .document-item:hover {
     background: #e9ecef;
 }
@@ -210,10 +239,14 @@
     .small-btn.danger { background: #dc3545; color: white; }
 
     /* --- その他 --- */
-  /* --- その他 --- */
     .feedback-container { margin-top: 12px; padding-top: 8px; /* 統一 */ border-top: 1px solid #ddd; }
     .feedback-btn { background: none; border: 1px solid #ccc; border-radius: 16px; /* 統一 */ padding: 4px 8px; /* 統一 */ margin-left: 8px; /* 統一 */ cursor: pointer; transition: all 0.2s ease; }
     .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
+    /* ★修正点4のCSSを追加 */
+    .feedback-thanks {
+        font-size: 0.8rem;
+        color: #28a745;
+    }
     
     /* --- 文書管理・ウェブサイト取得 --- */
     .scrape-btn {
@@ -319,7 +352,7 @@
                             - 新しいサークルを作るには？<br>
                             - 休学・復学・退学の手続きをしたいときは？<br>
                             様々な質問にお答えします！
-                            <span style="color:red; font-weight:bold;">
+                            <span class="important-note">
                             ※氏名・住所・学籍番号などの個人情報は入力しないでください。
                             </span>
                         </div>
@@ -339,7 +372,7 @@
 
             <div class="right-panel">
                 <div class="panel-section">
-                    <h3 class="section-title">🔗 接続状況</h3>
+                    <h3 class="section-title">🌐 接続状況</h3>
                     <div>
                         <span id="dbStatusIndicator" class="status-indicator status-disconnected"></span>
                         <span id="dbStatusText">データベース接続確認中...</span>
@@ -361,15 +394,13 @@
                     <h3 class="section-title">🧠 AI設定 <span class="auto-sync-indicator" id="autoSyncIndicator" title="自動同期中"></span></h3>
                     <div class="setting-item" id="modelSetting">
                         <label for="modelSelect"><strong>使用モデル:</strong></label><br>
-                        <div style="display: flex; gap: 10px; align-items: center;">
+                        <div class="model-select-row">
                             <select id="topKSelect" class="topk-select" title="検索件数を選択">
                                 <option value="3">3</option>
                                 <option value="5" selected>5</option>
                                 <option value="10">10</option>
                             </select>
-                            <select id="modelSelect" class="model-select" style="flex: 1;">
-                                <!-- GeminiモデルリストはJSで動的に設定 -->
-                            </select>
+                            <select id="modelSelect" class="model-select"></select>
                         </div>
                         <div class="sync-status" id="modelSyncStatus">設定同期待機中...</div>
                     </div>
@@ -393,7 +424,7 @@
                 </div>
 
                 <div class="panel-section">
-                    <h3 class="section-title">🔗 埋め込みモデル</h3>
+                    <h3 class="section-title">✨ 埋め込みモデル</h3>
                     <div class="setting-item" id="embeddingSetting">
                         <label for="embeddingModelSelect"><strong>埋め込みモデル:</strong></label><br>
                         <select id="embeddingModelSelect" class="embedding-model-select" aria-label="埋め込みモデル選択">
@@ -407,16 +438,13 @@
                     <h3 class="section-title">📊 ドキュメント管理</h3>
                     <button class="admin-tool-btn" onclick="openDocumentManager()">📝 レコード管理画面を開く</button>
                 </div>
-                
-            </div>
-        </div>
-    </div>
+
                 <div class="panel-section">
                     <h3 class="section-title">📄 文書管理</h3>
                     <div class="document-upload">
                         <input type="file" id="fileInput" accept=".txt,.md,.pdf,.docx" multiple>
                         <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📁 文書アップロード</button>
-                        <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">
+                        <p class="upload-note">
                             ※メタデータ登録のため、ファイル名は「<b>カテゴリ名</b>_ファイル名.txt」の形式にしてください。
                         </p>
                     </div>
@@ -430,8 +458,8 @@
                         <button id="scrapeBtn" class="scrape-btn" onclick="scrapeWebsite()">このURLから情報を取得</button>
                     </div>
                 </div>
-
-  
+            </div> </div>
+    </div>
 
     <div id="confirmModal" class="modal-overlay">
         <div class="modal-content">
@@ -443,7 +471,7 @@
         </div>
     </div>
 
-<script>
+    <script>
     document.addEventListener('DOMContentLoaded', () => {
         const chatMessages = document.getElementById('chatMessages');
         const chatInput = document.getElementById('chatInput');
@@ -639,7 +667,8 @@
                     throw new Error(errorData.detail || "Failed to send feedback.");
                 }
                 const feedbackContainer = element.parentElement;
-                feedbackContainer.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
+                // ★修正点4: style属性を使わず、class属性を使用するように変更
+                feedbackContainer.innerHTML = '<span class="feedback-thanks">フィードバックありがとうございます！</span>';
             } catch(error) {
                 console.error("Error sending feedback:", error);
                 addMessage(`フィードバックの送信中にエラーが発生しました: ${error.message}`, 'bot');
@@ -899,13 +928,10 @@
                         item.textContent = doc.id;
                         documentList.appendChild(item);
                     });
-                     const totalItem = document.createElement('div');
-                     totalItem.style.textAlign = 'right';
-                     totalItem.style.fontSize = '0.9rem';
-                     totalItem.style.marginTop = '10px';
-                     totalItem.style.color = '#333';
-                     totalItem.innerHTML = `<strong>合計: ${data.count} チャンク</strong>`;
-                     documentList.appendChild(totalItem);
+                   const totalItem = document.createElement('div');
+totalItem.className = 'total-chunks-info'; // この一行でスタイルを適用します
+totalItem.innerHTML = `<strong>合計: ${data.count} チャンク</strong>`;
+documentList.appendChild(totalItem);
 
                 } else {
                     documentList.innerHTML = '<span>ドキュメントはありません</span>';
