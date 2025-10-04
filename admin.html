@@ -210,28 +210,50 @@
     .small-btn.danger { background: #dc3545; color: white; }
 
     /* --- その他 --- */
+  /* --- その他 --- */
     .feedback-container { margin-top: 12px; padding-top: 8px; /* 統一 */ border-top: 1px solid #ddd; }
     .feedback-btn { background: none; border: 1px solid #ccc; border-radius: 16px; /* 統一 */ padding: 4px 8px; /* 統一 */ margin-left: 8px; /* 統一 */ cursor: pointer; transition: all 0.2s ease; }
     .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
-   .scrape-btn {
-    margin-top: 10px;
-    padding: 8px 15px;
-    background: #007bff;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: background-color 0.3s;
-}
-.scrape-btn:hover {
-    background: #0056b3;
-}
-.scrape-btn:disabled {
-    background-color: #6c757d;
-    cursor: not-allowed;
-}
-    .website-example { padding: 8px 12px; /* 統一 */ background: #f0f8ff; border-radius: 4px; /* 統一 */ margin-bottom: 8px; /* 統一 */ cursor: pointer; transition: background 0.2s; font-size: 0.85rem; border-left: 3px solid #007bff; }
-    .website-example:hover { background: #e0f0ff; }
+    
+    /* --- 文書管理・ウェブサイト取得 --- */
+    .scrape-btn {
+        margin-top: 16px; /* 統一 */
+        padding: 10px 15px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 8px; /* 統一 */
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-weight: 600;
+    }
+    .scrape-btn:hover {
+        background: #0056b3;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+    }
+    .scrape-btn:disabled {
+        background-color: #6c757d;
+        cursor: not-allowed;
+        transform: none;
+        opacity: 0.6;
+    }
+    .website-example { 
+        padding: 12px 16px; /* 統一 */ 
+        background: #f0f8ff; 
+        border-radius: 8px; /* 統一 */ 
+        margin-bottom: 8px; /* 統一 */ 
+        cursor: pointer; 
+        transition: all 0.2s ease; 
+        font-size: 0.9rem; 
+        border-left: 4px solid #007bff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+    }
+    .website-example:hover { 
+        background: #e0f0ff; 
+        transform: translateX(4px);
+        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.15);
+    }
     .admin-tool-btn { display: block; width: 100%; padding: 12px; background: linear-gradient(135deg, #6c757d 0%, #343a40 100%); color: white; border: none; border-radius: 8px; /* 統一 */ cursor: pointer; font-weight: 700; }
     .admin-tool-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2); }
     .sync-status { font-size: 0.85rem; color: #28a745; margin-top: 4px; /* 統一 */ font-style: italic; }
