@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+    
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>学生支援チャットボット</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="style.css">
 
     <script>
         // ▼▼▼▼▼ ここにあなたのSupabaseプロジェクトの実際の値を設定してください ▼▼▼▼▼
@@ -16,104 +18,7 @@
         const { createClient } = supabase;
         const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     </script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; overflow-x: hidden; }
-        .container { max-width: 800px; margin: 0 auto; background: rgba(255, 255, 255, 0.98); border-radius: 25px; box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15); overflow: hidden; display: flex; flex-direction: column; height: calc(100vh - 40px); }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; position: relative; }
-        .header h1 { font-size: 2rem; margin-bottom: 10px; text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3); }
-        .header .subtitle { font-size: 1rem; opacity: 0.9; }
-        .settings-indicator { position: absolute; top: 15px; right: 15px; display: flex; align-items: center; gap: 10px; font-size: 0.85rem; background: rgba(255,255,255,0.15); padding: 8px 12px; border-radius: 15px; }
-        .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #28a745; animation: pulse-dot 2s infinite; }
-        .sync-dot.disconnected { background: #dc3545; animation: none; }
-        @keyframes pulse-dot { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
-        .chat-container { display: flex; flex-direction: column; flex-grow: 1; background: white; overflow: hidden; position: relative; }
-        .chat-header { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 15px; text-align: center; font-weight: 600; font-size: 1.1rem; }
-        .chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
-        .message { max-width: 80%; padding: 15px 20px; border-radius: 20px; position: relative; animation: slideIn 0.3s ease-out; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
-        @keyframes slideIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        .message.user { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; align-self: flex-end; margin-left: auto; }
-        .message.bot { background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); color: #333; align-self: flex-start; border-left: 4px solid #4facfe; }
-        .message-content { line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; }
-        .message-content a { color: #007bff; text-decoration: underline; }
-        .message-content a:hover { color: #0056b3; }
-        .message-time { font-size: 0.8rem; opacity: 0.7; margin-top: 8px; }
-        .chat-input-container { padding: 20px; background: #f8f9fa; border-top: 1px solid #e9ecef; }
-        .chat-input-box { display: flex; gap: 10px; align-items: flex-end; }
-        .chat-input { flex: 1; padding: 15px; border: 2px solid #e9ecef; border-radius: 25px; font-size: 16px; outline: none; transition: all 0.3s ease; resize: none; min-height: 50px; max-height: 120px; }
-        .chat-input:focus { border-color: #4facfe; box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1); }
-        .send-btn { padding: 15px 25px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; border: none; border-radius: 25px; cursor: pointer; font-weight: 600; transition: all 0.3s ease; display: flex; align-items: center; gap: 8px; }
-        .send-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(79, 172, 254, 0.3); }
-        .send-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-        .feedback-container { margin-top: 12px; padding-top: 8px; border-top: 1px solid #ddd; }
-        .feedback-btn { background: none; border: 1px solid #ccc; border-radius: 15px; padding: 3px 8px; margin-left: 8px; cursor: pointer; transition: all 0.2s ease; }
-        .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
-        .loading-indicator { display: inline-block; width: 20px; height: 20px; border: 2px solid #f3f3f3; border-top: 2px solid #4facfe; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 10px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .settings-update-notification { position: fixed; top: 20px; right: 20px; background: #28a745; color: white; padding: 15px 20px; border-radius: 10px; box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3); z-index: 1000; transform: translateX(350px); transition: transform 0.3s ease; }
-        .settings-update-notification.show { transform: translateX(0); }
-        .settings-update-notification .close-btn { background: none; border: none; color: white; font-size: 18px; margin-left: 10px; cursor: pointer; }
-        
-        /* コメント機能用のCSS */
-        .comment-btn { position: absolute; top: 15px; left: 15px; background: rgba(255, 255, 255, 0.15); color: white; border: none; border-radius: 15px; padding: 8px 12px; cursor: pointer; font-size: 0.85rem; transition: background 0.2s ease; }
-        .comment-btn:hover { background: rgba(255, 255, 255, 0.3); }
-        .modal { display: none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); animation: fadeIn 0.3s; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        .modal-content { background-color: #fefefe; margin: 15% auto; padding: 25px; border: 1px solid #888; width: 90%; max-width: 500px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); position: relative; animation: slideDown 0.3s; }
-        @keyframes slideDown { from { transform: translateY(-50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        .modal-close-btn { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
-        .modal-close-btn:hover, .modal-close-btn:focus { color: black; text-decoration: none; }
-        .modal h2 { margin-bottom: 15px; color: #333; }
-        .modal textarea { width: 100%; height: 120px; padding: 10px; border: 1px solid #ccc; border-radius: 8px; margin-top: 10px; margin-bottom: 20px; resize: vertical; font-size: 1rem; }
-        .modal button { width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; }
-        .modal button:hover { opacity: 0.9; }
-        .modal button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .success-message { color: #28a745; font-weight: 600; margin-top: 10px; display: none; }
-        .error-message { color: #dc3545; font-weight: 600; margin-top: 10px; display: none; }
 
-        @media (max-width: 480px) {
-            body { padding: 5px; }
-            .container { height: calc(100vh - 10px); }
-            .header { padding: 20px; }
-            .header h1 { font-size: 1.6rem; }
-            .header .subtitle { font-size: 0.9rem; }
-            .settings-indicator { position: static; margin-top: 10px; justify-content: center; }
-            .chat-input-container { padding: 15px; }
-            .chat-input-box { flex-direction: column; align-items: stretch; }
-            .send-btn { justify-content: center; padding: 12px; }
-            .settings-update-notification { position: fixed; top: auto; bottom: 20px; right: 20px; left: 20px; }
-            .comment-btn { position: static; margin-top: 15px; }
-            /* 既存のCSSルールセットの下に追加 */
-
-.rating-container {
-    margin-bottom: 15px;
-    text-align: center;
-}
-.rating-container p {
-    margin-bottom: 10px;
-    font-size: 0.9rem;
-    color: #555;
-}
-.rating-btn {
-    background-color: #f0f0f0;
-    border: 1px solid #ccc;
-    border-radius: 20px;
-    padding: 8px 15px;
-    margin: 0 5px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-.rating-btn:hover {
-    background-color: #e0e0e0;
-}
-.rating-btn.selected {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border-color: #667eea;
-    font-weight: bold;
-}
-        }
-    </style>
 </head>
 <body>
     <div class="container">
