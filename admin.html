@@ -27,7 +27,7 @@
         .chat-input-box { display: flex; gap: 10px; align-items: flex-end; }
         .chat-input { flex: 1; padding: 15px; border: 2px solid #e9ecef; border-radius: 25px; font-size: 16px; outline: none; transition: all 0.3s ease; resize: none; min-height: 50px; max-height: 120px; }
         .chat-input:focus { border-color: #4facfe; box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1); }
-        .send-btn { padding: 15px 25px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; border: none; border-radius: 25px; cursor: pointer; font-weight: 600; transition: all 0.3s ease; display: flex; align-items: center; gap: 8px; }
+        .send-btn { padding: 15px 25px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; border: none; border-radius: 25px; cursor: pointer; font-weight: 600; transition: all 0.2s ease; display:flex; gap:8px; align-items:center; }
         .send-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(79, 172, 254, 0.3); }
         .send-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
         .right-panel { display: flex; flex-direction: column; gap: 20px; }
@@ -66,7 +66,7 @@
         .scrape-btn:disabled { background-color: #6c757d; cursor: not-allowed; }
         .website-example { padding: 8px 12px; background: #f0f8ff; border-radius: 5px; margin-bottom: 8px; cursor: pointer; transition: background 0.2s; font-size: 0.85rem; border-left: 3px solid #007bff; }
         .website-example:hover { background: #e0f0ff; }
-        .admin-tool-btn { display: block; width: 100%; padding: 12px; background: linear-gradient(135deg, #6c757d 0%, #343a40 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; text-align: center; text-decoration: none; transition: all 0.3s ease; }
+        .admin-tool-btn { display: block; width: 100%; padding: 12px; background: linear-gradient(135deg, #6c757d 0%, #343a40 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 700; }
         .admin-tool-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0, 0, 0, 0.2); }
         .sync-status { font-size: 0.85rem; color: #28a745; margin-top: 5px; font-style: italic; }
         .sync-status.error { color: #dc3545; }
@@ -74,9 +74,9 @@
         .setting-item.active { border-color: #28a745; background: #e8f5e8; }
         .auto-sync-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #28a745; margin-left: 10px; animation: blink 1s infinite; }
         @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
-        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 1000; opacity: 0; visibility: hidden; transition: opacity 0.3s, visibility 0.3s; }
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.2s; }
         .modal-overlay.visible { opacity: 1; visibility: visible; }
-        .modal-content { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); text-align: center; max-width: 400px; transform: scale(0.9); transition: transform 0.3s; }
+        .modal-content { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); text-align: center; max-width: 400px; transform: scale(0.9); transition: transform 0.2s; }
         .modal-overlay.visible .modal-content { transform: scale(1); }
         .modal-message { font-size: 1.1rem; margin-bottom: 25px; color: #333; }
         .modal-buttons { display: flex; gap: 15px; justify-content: center; }
@@ -86,6 +86,15 @@
         .modal-btn.cancel { background: #e9ecef; color: #333; }
         .modal-btn.cancel:hover { background: #ced4da; }
 
+        /* New helper classes to remove inline styles and align visuals */
+        .warning-text { color: #c92a2a; font-weight: 700; }
+        .model-select-row { display:flex; gap:10px; align-items:center; }
+        .file-instructions { font-size: 0.8rem; color: #666; margin-top: 5px; }
+        .doc-panel-row { margin-top: 10px; }
+        .doc-panel-row .upload-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+        .doc-panel-row .document-list { margin-top: 12px; max-height: 180px; }
+        .scrape-row { margin-top: 10px; display:flex; gap:8px; flex-direction:column; }
+        .scrape-row .scrape-actions { display:flex; gap:8px; margin-top:8px; }
         @media (max-width: 820px) {
             body { padding: 10px; }
             .container { border-radius: 15px; }
@@ -128,7 +137,7 @@
                             - 新しいサークルを作るには？<br>
                             - 休学・復学・退学の手続きをしたいときは？<br>
                             様々な質問にお答えします！
-                            <span style="color:red; font-weight:bold;">
+                            <span class="warning-text">
                             ※氏名・住所・学籍番号などの個人情報は入力しないでください。
                             </span>
                         </div>
@@ -170,13 +179,13 @@
                     <h3 class="section-title">🧠 AI設定 <span class="auto-sync-indicator" id="autoSyncIndicator" title="自動同期中"></span></h3>
                     <div class="setting-item" id="modelSetting">
                         <label for="modelSelect"><strong>使用モデル:</strong></label><br>
-                        <div style="display: flex; gap: 10px; align-items: center;">
+                        <div class="model-select-row">
                             <select id="topKSelect" class="topk-select" title="検索件数を選択">
                                 <option value="3">3</option>
                                 <option value="5" selected>5</option>
                                 <option value="10">10</option>
                             </select>
-                            <select id="modelSelect" class="model-select" style="flex: 1;">
+                            <select id="modelSelect" class="model-select" style="flex:1;">
                                 <!-- GeminiモデルリストはJSで動的に設定 -->
                             </select>
                         </div>
@@ -188,7 +197,7 @@
                     <h3 class="section-title" id="collectionTitle">🗃️ データコレクション</h3>
                     <div class="setting-item" id="collectionSetting">
                         <label for="collectionSelect"><strong>コレクション:</strong></label><br>
-                        <select id="collectionSelect" class="collection-select"></select>
+                        <select id="collectionSelect" class="collection-select" aria-label="コレクション選択"></select>
                         <div class="sync-status" id="collectionSyncStatus">設定同期待機中...</div>
                     </div>
                     <div>
@@ -205,44 +214,55 @@
                     <h3 class="section-title">🔗 埋め込みモデル</h3>
                     <div class="setting-item" id="embeddingSetting">
                         <label for="embeddingModelSelect"><strong>埋め込みモデル:</strong></label><br>
-                        <select id="embeddingModelSelect" class="embedding-model-select">
+                        <select id="embeddingModelSelect" class="embedding-model-select" aria-label="埋め込みモデル選択">
                            <option value="text-embedding-004" selected>text-embedding-004 (Gemini)</option>
                         </select>
                         <div class="sync-status" id="embeddingSyncStatus">設定同期待機中...</div>
                     </div>
                 </div>
 
-              
-
                 <div class="panel-section">
                     <h3 class="section-title">📊 ドキュメント管理</h3>
                     <button class="admin-tool-btn" onclick="openDocumentManager()">📝 レコード管理画面を開く</button>
                 </div>
-                
+
+                <!-- 統一された見た目の文書管理/アップロードパネル -->
+                <div class="panel-section">
+                    <h3 class="section-title">📄 文書管理</h3>
+                    <div class="doc-panel-row">
+                        <div class="document-upload">
+                            <input type="file" id="fileInput" accept=".txt,.md,.pdf,.docx" multiple>
+                            <div class="upload-actions">
+                                <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📁 文書アップロード</button>
+                                <button class="upload-btn danger" onclick="/* 全ドキュメント削除など将来の実装 */">🗑️ 一括削除</button>
+                            </div>
+                            <p class="file-instructions">
+                                ※メタデータ登録のため、ファイル名は「<b>カテゴリ名</b>_ファイル名.txt」の形式にしてください。
+                            </p>
+                        </div>
+                        <div id="documentList" class="document-list" aria-live="polite"></div>
+                    </div>
+                </div>
+
+                <!-- 統一された見た目のウェブスクレイプパネル -->
+                <div class="panel-section">
+                    <h3 class="section-title">🌐 ウェブサイトから取得</h3>
+                    <div class="scrape-row">
+                        <input type="text" id="scrapeUrlInput" class="scrape-input" placeholder="https://...">
+                        <div class="scrape-actions">
+                            <button id="scrapeBtn" class="scrape-btn" onclick="scrapeWebsite()">このURLから情報を取得</button>
+                            <button class="small-btn primary" onclick="setScrapeUrl('https://www.example.com')">例をセット</button>
+                        </div>
+                        <div class="margin-top-10">
+                            <div class="website-example" onclick="setScrapeUrl('https://www.example.com')">https://www.example.com</div>
+                            <div class="website-example" onclick="setScrapeUrl('https://www.university.ac.jp')">https://www.university.ac.jp</div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
-                <div class="panel-section">
-                    <h3 class="section-title">📄 文書管理</h3>
-                    <div class="document-upload">
-                        <input type="file" id="fileInput" accept=".txt,.md,.pdf,.docx" multiple>
-                        <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📁 文書アップロード</button>
-                        <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">
-                            ※メタデータ登録のため、ファイル名は「<b>カテゴリ名</b>_ファイル名.txt」の形式にしてください。
-                        </p>
-                    </div>
-                    <div class="document-list" id="documentList"></div>
-                </div>
-
-                <div class="panel-section">
-                    <h3 class="section-title">🌐 ウェブサイトから取得</h3>
-                    <div>
-                        <input type="text" id="scrapeUrlInput" class="scrape-input" placeholder="https://...">
-                        <button id="scrapeBtn" class="scrape-btn" onclick="scrapeWebsite()">このURLから情報を取得</button>
-                    </div>
-                </div>
-
-  
 
     <div id="confirmModal" class="modal-overlay">
         <div class="modal-content">
@@ -402,14 +422,14 @@
              // HTMLとして解釈されるようにinnerHTMLを使用
             messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
             // リンクが含まれる場合はHTMLとして処理、そうでなければエスケープ
-if (text.includes('<a href=')) {
-    // リンクタグ以外のHTMLをエスケープ
-    let processedText = text.replace(/\n/g, '<br>');
-    messageContent.innerHTML = processedText;
-} else {
-    // 通常のテキストはエスケープしてから改行を<br>に変換
-    messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
-}
+            if (text.includes('<a href=')) {
+                // リンクタグ以外のHTMLをエスケープ
+                let processedText = text.replace(/\n/g, '<br>');
+                messageContent.innerHTML = processedText;
+            } else {
+                // 通常のテキストはエスケープしてから改行を<br>に変換
+                messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+            }
             messageWrapper.appendChild(messageContent);
             const messageTime = document.createElement('div');
             messageTime.className = 'message-time';
@@ -572,18 +592,18 @@ if (text.includes('<a href=')) {
                                     botMessageElement.dataset.logId = data.log_id;
                                 }
                                 if (data.content) {
-    fullResponse += data.content;
-    // ストリーミング中もリンクを適切に処理
-    if (fullResponse.includes('<a href=')) {
-        let processedText = fullResponse
-            .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
-            .replace(/\n/g, '<br>');
-        botMessageContent.innerHTML = processedText;
-    } else {
-        botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
-    }
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
+                                    fullResponse += data.content;
+                                    // ストリーミング中もリンクを適切に処理
+                                    if (fullResponse.includes('<a href=')) {
+                                        let processedText = fullResponse
+                                            .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
+                                            .replace(/\n/g, '<br>');
+                                        botMessageContent.innerHTML = processedText;
+                                    } else {
+                                        botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
+                                    }
+                                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                                }
                             } catch (e) {
                                 console.error("Error parsing stream data:", e);
                             }
