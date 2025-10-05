@@ -145,16 +145,16 @@ KEYWORD_MAP = {
     "施設": [
         "図書館", "購買", "場所", "どこ", "Wi-Fi", "PC", "パソコン", "教室", "体育館",
         "グラウンド", "駐車場", "スポーツ施設", "江別第2キャンパス", "メインアリーナ",
-        "サブアリーナ", "上靴", "江別キャンパス", "新札幌キャンパス", "C館","施設","故障","破損","器物","F館","学生館","体育センター"
+        "サブアリーナ", "上靴", "江別キャンパス", "新札幌キャンパス", "C館","施設","故障","破損","器物","F館","学生館","体育センター","SGUホール","50年記念館","用具","体育センター","陸上競技場","テニスコート","バスケットコート","バレーコート","フットサルコート","多目的グランド","野 球 場","室内練習場","多目的グランド","ランニングロード","弓 道 場","洋 弓 場"
         # 俗語・略語
         "図書", "ラーニングコモンズ", "自習室", "食堂", "カフェ", "購買部", "ジム"
     ],
     # 生協関連
     "生協": [
         "生協", "コープ", "教科書", "共済", "組合員", "購買", "食堂", "書籍", "パソコン",
-        "カフェテリア", "学内ショップ", "メニュー","自動車学校"
+        "カフェテリア", "学内ショップ", "メニュー","自動車学校","教習所"
         # 俗語・略語
-        "学食", "学食メニュー", "生協食堂", "生協カード", "生協ポイント"
+        "学食", "学食メニュー", "生協食堂", "生協カード", "生協ポイント","自学"
     ],
     # 履修関連
     "履修": [
@@ -689,15 +689,6 @@ async def serve_admin(request: Request, user: dict = Depends(require_auth)):
 @app.get("/DB.html", response_class=FileResponse)
 async def serve_db_page(request: Request, user: dict = Depends(require_auth)):
     """DB管理ページ(DB.html)を提供するためのエンドポイント"""
-    db_path = os.path.join(BASE_DIR, "DB.html")
-    if not os.path.exists(db_path):
-        raise HTTPException(status_code=404, detail="DB.html not found")
-    return FileResponse(db_path)
-
-# 小文字版も同じ動作にする（環境によるパス差異に備える）
-@app.get("/db.html", response_class=FileResponse)
-async def serve_db_page_lower(request: Request, user: dict = Depends(require_auth)):
-    """小文字パスもサポート（環境によるパス差異に備える）"""
     db_path = os.path.join(BASE_DIR, "DB.html")
     if not os.path.exists(db_path):
         raise HTTPException(status_code=404, detail="DB.html not found")
