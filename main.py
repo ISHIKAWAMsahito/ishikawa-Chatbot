@@ -36,6 +36,8 @@ from authlib.integrations.starlette_client import OAuth
 from fastapi import Request
 from fastapi.responses import FileResponse
 
+from collections import defaultdict
+from typing import Dict, List
 
 # --- 初期設定 ---
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
@@ -190,6 +192,8 @@ KEYWORD_MAP = {
 
 # データベースから読み込むフォールバック情報を格納するグローバル変数
 g_category_fallbacks: Dict[str, Dict[str, Any]] = {}
+chat_histories: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+MAX_HISTORY_LENGTH = 20 
 # --------------------------------------------------------------------------
 # 3. 内部コンポーネントの定義
 # --------------------------------------------------------------------------
@@ -467,10 +471,11 @@ settings_manager: Optional[SettingsManager] = None
 
 # 8. lifespan関数を更新
 @asynccontextmanager
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     """認証システムを含むアプリケーションのライフサイクル管理"""
     global db_client, settings_manager, g_category_fallbacks
-    logging.info("--- アプリケーション起動処理開始（認証システム対応） ---")
+    logging.info("--- アプリケーション起動処理開始(認証システム対応) ---")
 
     settings_manager = SettingsManager()
 
@@ -498,7 +503,8 @@ async def lifespan(app: FastAPI):
         logging.warning("Supabaseの環境変数が設定されていません。")
 
     yield
-    logging.info("--- アプリケーション終了処理（認証システム対応） ---")
+
+    logging.info("--- アプリケーション終了処理(認証システム対応) ---")
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=APP_SECRET_KEY)
@@ -908,10 +914,46 @@ async def scrape_website(req: ScrapeRequest):
         raise HTTPException(status_code=500, detail=str(e))
     
  # --- チャットAPI（RAG対応） ---
+
+# 686行目から734行目までの不完全なenhanced_chat_logic関数を削除
+
+# その後、738行目付近に以下の関数を追加(グローバルスコープ)
+def get_or_create_session_id(request: Request) -> str:
+    """セッションIDを取得または新規作成"""
+    session_id = request.session.get('chat_session_id')
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        request.session['chat_session_id'] = session_id
+    return session_id
+
+def add_to_history(session_id: str, role: str, content: str):
+    """チャット履歴に追加"""
+    chat_histories[session_id].append({
+        "role": role,
+        "content": content
+    })
+    if len(chat_histories[session_id]) > MAX_HISTORY_LENGTH:
+        chat_histories[session_id] = chat_histories[session_id][-MAX_HISTORY_LENGTH:]
+
+def get_history(session_id: str) -> List[Dict[str, str]]:
+    """チャット履歴を取得"""
+    return chat_histories.get(session_id, [])
+
+def clear_history(session_id: str):
+    """チャット履歴をクリア"""
+    if session_id in chat_histories:
+        del chat_histories[session_id]
+
+# 次に、enhanced_chat_logic関数を正しく定義
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     user_input = chat_req.query.strip()
     feedback_id = str(uuid.uuid4())
+    
+    # セッションIDを取得
+    session_id = get_or_create_session_id(request)
+    
     yield f"data: {json.dumps({'feedback_id': feedback_id})}\n\n"
+    
     try:
         if not all([db_client, GEMINI_API_KEY]):
             error_msg = "システムが利用できません。管理者にお問い合わせください。"
@@ -937,25 +979,35 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         except Exception as e:
             logging.error(f"データベース検索エラー: {e}")
 
+        # 履歴を取得してコンテキストに追加
+        history = get_history(session_id)
+        history_context = ""
+        if history:
+            history_context = "\n\n過去の会話履歴:\n"
+            for msg in history[-6:]:
+                role_label = "学生" if msg["role"] == "user" else "AI"
+                history_context += f"{role_label}: {msg['content']}\n"
+
         if has_specific_info:
             prompt = f"""あなたは、札幌学院大学の学生を親切にサポートする、優秀なAIアシスタントです。
 
-制約条件
-以下の「参考情報」に記載されている内容だけを元に、学生からの「質問」に回答してください。質問が日本語の場合は日本語で、英語の場合は英語で回答してください。
-「参考情報」に書かれていない事柄については、「ご質問の件について、参考情報の中には該当する情報が見つかりませんでした。」と正直に回答してください。あなた自身の知識で情報を補ったり、推測で回答したりすることは絶対に避けてください。
-回答は、学生にとって分かりやすく、丁寧な言葉遣いを心がけてください。
+【重要な制約】
+1. 以下の「参考情報」と「過去の会話履歴」に記載されている内容のみを使って回答してください。
+2. あなた自身の一般知識や推測で情報を補ったり、他大学の事例を参考にすることは絶対に禁止です。
+3. 情報が不足している場合は、「ご質問の件について、データベースには該当する情報が見つかりませんでした。詳細は教務課・学生支援課にお問い合わせください。」と正直に回答してください。
+4. 質問が日本語の場合は日本語で、英語の場合は英語で回答してください。
+5. 回答は、学生にとって分かりやすく、丁寧な言葉遣いを心がけてください。
 
-出力形式
-回答の冒頭には、質問の言語に応じて、以下のいずれかの一文を必ず入れてください。
-日本語の場合: 「データベースの情報に基づき、ご質問にお答えします。」
-英語の場合: "Based on the information provided, here is the answer to your question."
-質問に対する答えを、要点をまとめて記述してください。
-関連するURLが「参考情報」に含まれている場合は、質問の言語に応じて、以下のいずれかの見出しをつけ、箇条書きで分かりやすく記載してください。
-日本語の場合: 「参考URL:」
-英語の場合: "Reference URL(s):"
+過去の会話履歴:
+{history_context}
 
 参考情報:
 {context}
+
+出力形式
+- 回答の冒頭には「データベースの情報に基づき、ご質問にお答えします。」(英語の場合: "Based on the information provided, here is the answer to your question.")
+- 質問に対する答えを、要点をまとめて記述してください。
+- 関連するURLがある場合は「参考URL:」として箇条書きで記載してください。
 
 質問: {user_input}
 
@@ -967,10 +1019,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 if chunk.text:
                     temp_full_response += chunk.text
             full_response = format_urls_as_links(temp_full_response)
+            
+            # 履歴に追加
+            add_to_history(session_id, "user", user_input)
+            add_to_history(session_id, "assistant", temp_full_response)
+            
             yield f"data: {json.dumps({'content': full_response})}\n\n"
         else:
             fallback_response = await create_fallback_response_from_db(category, chat_req.model)
             full_response = format_urls_as_links(fallback_response)
+            
+            # 履歴に追加
+            add_to_history(session_id, "user", user_input)
+            add_to_history(session_id, "assistant", fallback_response)
+            
             yield f"data: {json.dumps({'content': full_response})}\n\n"
 
         yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
@@ -978,6 +1040,21 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         error_message = f"エラーが発生しました: {str(e)}"
         logging.error(f"チャットロジックエラー: {e}\n{traceback.format_exc()}")
         yield f"data: {json.dumps({'content': error_message})}\n\n"
+
+# 履歴管理用エンドポイント
+@app.get("/chat/history")
+async def get_chat_history(request: Request, user: dict = Depends(require_auth_client)):
+    """現在のセッションのチャット履歴を取得"""
+    session_id = get_or_create_session_id(request)
+    history = get_history(session_id)
+    return {"history": history}
+
+@app.delete("/chat/history")
+async def delete_chat_history(request: Request, user: dict = Depends(require_auth_client)):
+    """現在のセッションのチャット履歴を削除"""
+    session_id = get_or_create_session_id(request)
+    clear_history(session_id)
+    return {"message": "履歴をクリアしました"}
 
 @app.post("/chat")
 async def chat_endpoint(request: Request, query: ChatQuery):
