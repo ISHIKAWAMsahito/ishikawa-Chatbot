@@ -471,7 +471,6 @@ settings_manager: Optional[SettingsManager] = None
 
 # 8. lifespan関数を更新
 @asynccontextmanager
-@asynccontextmanager
 async def lifespan(app: FastAPI):
     """認証システムを含むアプリケーションのライフサイクル管理"""
     global db_client, settings_manager, g_category_fallbacks
