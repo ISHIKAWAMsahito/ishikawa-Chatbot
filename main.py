@@ -1013,10 +1013,21 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 回答:"""
             model = genai.GenerativeModel(chat_req.model)
             stream = await safe_generate_content(model, prompt, stream=True)
+            
             temp_full_response = ""
-            async for chunk in stream:
-                if chunk.text:
-                    temp_full_response += chunk.text
+            try:
+                async for chunk in stream:
+                    if chunk.text:
+                        temp_full_response += chunk.text
+            except StopAsyncIteration:
+                # ストリームが空だった場合の処理
+                logging.warning("APIから空のストリームが返されました。セーフティ設定によるブロックの可能性があります。")
+                temp_full_response = "申し訳ありませんが、そのご質問にはお答えできません。質問の内容を変えて、もう一度お試しください。"
+
+            # 回答が万が一空だった場合の最終防衛ライン
+            if not temp_full_response.strip():
+                 temp_full_response = "回答を生成できませんでした。もう一度お試しください。"
+
             full_response = format_urls_as_links(temp_full_response)
             
             # 履歴に追加
