@@ -67,6 +67,11 @@ ACTIVE_COLLECTION_NAME = "student-knowledge-base"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 JST = timezone(timedelta(hours=+9), 'JST')
 
+SUPER_ADMIN_EMAILS_STR = os.getenv("SUPER_ADMIN_EMAILS", "")
+SUPER_ADMIN_EMAILS = [email.strip() for email in SUPER_ADMIN_EMAILS_STR.split(',') if email.strip()]
+
+ALLOWED_CLIENT_EMAILS_STR = os.getenv("ALLOWED_CLIENT_EMAILS", "")
+ALLOWED_CLIENT_EMAILS = [email.strip() for email in ALLOWED_CLIENT_EMAILS_STR.split(',') if email.strip()]
 # キーワードマッピング
 KEYWORD_MAP = {
     # 授業関連
@@ -616,8 +621,9 @@ def require_auth(request: Request):
     user_email = user.get('email', '')
     allowed_domain_staff = '@sgu.ac.jp'
 
+    # 教職員ドメイン、または、スーパー管理者リストに含まれているかチェック
     if (user_email.endswith(allowed_domain_staff) or
-            user_email == 'ishikawamasahito3150@gmail.com'):
+            user_email in SUPER_ADMIN_EMAILS): # ← ★★★ こちらに変更 ★★★
         return user
     else:
         raise HTTPException(status_code=403, detail="管理者ページへのアクセス権がありません。")
@@ -626,22 +632,18 @@ def require_auth_client(request: Request):
     """クライアント用認証"""
     user = request.session.get('user')
     if not user:
-        # (ルール1: ログインしていないなら、ログインページへ行かせる)
         raise HTTPException(status_code=307, headers={'Location': '/login'})
     
-    # 認証済みユーザーのメールアドレスを検証
     user_email = user.get('email', '')
-    allowed_domain_staff = '@sgu.ac.jp'      # staffドメイン
-    allowed_domain_student = '@e.sgu.ac.jp'  # studentドメイン
+    allowed_domain_staff = '@sgu.ac.jp'
+    allowed_domain_student = '@e.sgu.ac.jp'
     
-    # (ルール2: ログインしていても、許可されたメールアドレスかチェックする)
+    # 正規のドメイン、または、許可されたクライアントリストに含まれているかチェック
     if (user_email.endswith(allowed_domain_staff) or
             user_email.endswith(allowed_domain_student) or
-            user_email == 'ishikawamasahito3150@gmail.com'):
-        # OKなら通す
+            user_email in ALLOWED_CLIENT_EMAILS): # ← ★★★ こちらに変更 ★★★
         return user
     else:
-        # ダメなら「アクセス禁止(403)」を突きつける
         raise HTTPException(status_code=403, detail="このサービスへのアクセスは許可されていません。")
 
 # --- 認証とHTML提供 (Auth0用) ---
@@ -657,23 +659,46 @@ async def login_auth0(request: Request):
 
 @app.get('/auth')
 async def auth(request: Request):
+    """
+    Auth0からのコールバックを処理し、ユーザー情報に基づいて
+    適切なページ（/admin または /）にリダイレクトする。
+    """
     if 'auth0' not in oauth._clients:
         raise HTTPException(status_code=500, detail="Auth0 is not configured.")
-    token = await oauth.auth0.authorize_access_token(request)
+    
+    try:
+        token = await oauth.auth0.authorize_access_token(request)
+    except Exception as e:
+        logging.error(f"Auth0 access token error: {e}")
+        return RedirectResponse(url='/login')
+
     if userinfo := token.get('userinfo'):
+        # ユーザー情報をセッションに保存
         request.session['user'] = dict(userinfo)
         user_email = userinfo.get('email', '')
+        
+        # 定数を定義
         allowed_domain_staff = '@sgu.ac.jp'
         allowed_domain_student = '@e.sgu.ac.jp'
 
+        # --- 権限に基づくリダイレクト判定 ---
+        # 1. 管理者権限を持つか？ (教職員ドメイン または SUPER_ADMIN_EMAILSリスト)
         if (user_email.endswith(allowed_domain_staff) or
-                user_email == 'ishikawamasahito3150@gmail.com'):
+                user_email in SUPER_ADMIN_EMAILS):
             return RedirectResponse(url='/admin')
-        elif user_email.endswith(allowed_domain_student):
+
+        # 2. クライアント（学生など）権限を持つか？ (学生ドメイン または ALLOWED_CLIENT_EMAILSリスト)
+        elif (user_email.endswith(allowed_domain_student) or
+                user_email in ALLOWED_CLIENT_EMAILS):
             return RedirectResponse(url='/')
+        
+        # 3. 上記のいずれにも該当しない場合は、許可されていないユーザー
         else:
+            logging.warning(f"Unauthorized login attempt by: {user_email}")
             return RedirectResponse(url='/logout')
             
+    # Auth0からuserinfoが取得できなかった場合
+    logging.error("Failed to get userinfo from Auth0.")
     return RedirectResponse(url='/login')
 
 @app.get('/logout')
@@ -847,6 +872,7 @@ async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
 
 @app.post("/upload")
 async def upload_document(
+     user: dict = Depends(require_auth),
     file: UploadFile = File(...),
     embedding_model: str = Form("text-embedding-004"),
     collection_name: str = Form(ACTIVE_COLLECTION_NAME)
