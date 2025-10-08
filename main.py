@@ -354,6 +354,16 @@ class FeedbackManager:
 
 class SupabaseClientManager:
     """Supabaseクライアント管理クラス"""
+    def search_documents_by_vector(self, collection_name: str, embedding: List[float], match_count: int) -> List[dict]:
+        """カテゴリで絞り込まずにベクトル検索を行う"""
+        params = {
+            "p_collection_name": collection_name,
+            "p_query_embedding": embedding,
+            "p_match_count": match_count
+        }
+        # 作成した新しいRPC関数 'match_documents_by_vector' を呼び出す
+        result = self.client.rpc("match_documents_by_vector", params).execute()
+        return result.data or []
     def __init__(self, url: str, key: str):
         self.client: Client = create_client(url, key)
 
@@ -973,6 +983,8 @@ def clear_history(session_id: str):
         del chat_histories[session_id]
 
 # 次に、enhanced_chat_logic関数を正しく定義
+# main.py の916行目あたりから
+
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     user_input = chat_req.query.strip()
     feedback_id = str(uuid.uuid4())
@@ -988,22 +1000,30 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             yield f"data: {json.dumps({'content': error_msg})}\n\n"
             return
 
-        category = next((cat for cat, keys in KEYWORD_MAP.items() if any(key in user_input for key in keys)), "その他")
         context = ""
         has_specific_info = False
+        MIN_SIMILARITY_THRESHOLD = 0.75 # 類似度のしきい値
 
+        # --- メインの検索ロジック：ベクトル検索を優先 ---
         try:
             query_embedding_response = genai.embed_content(model=chat_req.embedding_model, content=user_input)
             query_embedding = query_embedding_response["embedding"]
-            search_results = db_client.search_documents(
+            
+            # ▼▼ インデントを修正した箇所 ▼▼
+            # カテゴリで絞らない専用のベクトル検索メソッドを呼び出す
+            search_results = db_client.search_documents_by_vector(
                 collection_name=chat_req.collection,
-                category=category,
                 embedding=query_embedding,
                 match_count=chat_req.top_k
             )
-            if search_results:
-                context = "\n".join([doc['content'] for doc in search_results])
+
+            # 類似度がしきい値以上の結果のみをコンテキストに追加
+            if search_results and search_results[0]['similarity'] >= MIN_SIMILARITY_THRESHOLD:
+                # contentが存在する結果のみをフィルタリングして結合
+                filtered_content = [doc['content'] for doc in search_results if doc.get('content')]
+                context = "\n".join(filtered_content)
                 has_specific_info = True
+
         except Exception as e:
             logging.error(f"データベース検索エラー: {e}")
 
@@ -1017,6 +1037,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 history_context += f"{role_label}: {msg['content']}\n"
 
         if has_specific_info:
+            # プロンプトはご自身のものを使用してください
             prompt = f"""あなたは、札幌学院大学の学生を親切にサポートする、優秀なAIアシスタントです。
 
 【重要な制約】
@@ -1049,26 +1070,26 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     if chunk.text:
                         temp_full_response += chunk.text
             except StopAsyncIteration:
-                # ストリームが空だった場合の処理
                 logging.warning("APIから空のストリームが返されました。セーフティ設定によるブロックの可能性があります。")
                 temp_full_response = "申し訳ありませんが、そのご質問にはお答えできません。質問の内容を変えて、もう一度お試しください。"
 
-            # 回答が万が一空だった場合の最終防衛ライン
             if not temp_full_response.strip():
                  temp_full_response = "回答を生成できませんでした。もう一度お試しください。"
 
             full_response = format_urls_as_links(temp_full_response)
             
-            # 履歴に追加
             add_to_history(session_id, "user", user_input)
             add_to_history(session_id, "assistant", temp_full_response)
             
             yield f"data: {json.dumps({'content': full_response})}\n\n"
         else:
+            # --- フォールバック処理：ベクトル検索で情報が見つからなかった場合 ---
+            # ここではじめて KEYWORD_MAP を使い、カテゴリを判定する
+            category = next((cat for cat, keys in KEYWORD_MAP.items() if any(key in user_input for key in keys)), "その他")
+            
             fallback_response = await create_fallback_response_from_db(category, chat_req.model)
             full_response = format_urls_as_links(fallback_response)
             
-            # 履歴に追加
             add_to_history(session_id, "user", user_input)
             add_to_history(session_id, "assistant", fallback_response)
             
@@ -1079,6 +1100,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         error_message = f"エラーが発生しました: {str(e)}"
         logging.error(f"チャットロジックエラー: {e}\n{traceback.format_exc()}")
         yield f"data: {json.dumps({'content': error_message})}\n\n"
+
+# --- ここまでが enhanced_chat_logic 関数 ---
 
 # 履歴管理用エンドポイント
 @app.get("/chat/history")
