@@ -636,12 +636,11 @@ def require_auth_client(request: Request):
     
     user_email = user.get('email', '')
     allowed_domain_staff = '@sgu.ac.jp'
-    allowed_domain_student = '@e.sgu.ac.jp'
+    # allowed_domain_student は不要なので削除してもOK
     
-    # 正規のドメイン、または、許可されたクライアントリストに含まれているかチェック
+    # 条件を2つに絞り込む
     if (user_email.endswith(allowed_domain_staff) or
-            user_email.endswith(allowed_domain_student) or
-            user_email in ALLOWED_CLIENT_EMAILS): # ← ★★★ こちらに変更 ★★★
+            user_email in ALLOWED_CLIENT_EMAILS):
         return user
     else:
         raise HTTPException(status_code=403, detail="このサービスへのアクセスは許可されていません。")
