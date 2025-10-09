@@ -6,16 +6,48 @@
     <title>学生支援チャットボット</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-    <script>
-        // ▼▼▼▼▼ ここにあなたのSupabaseプロジェクトの実際の値を設定してください ▼▼▼▼▼
-        const SUPABASE_URL = 'https://fosaksdawnbnmykdlqmq.supabase.co';
-        const SUPABASE_ANON_KEY = 'sb_publishable__ZeHWSheYJ-OaHeXFPO1Eg_Y5hYyeq0'; // Supabaseダッシュボードの 'anon public' キーを設定
-        // ▲▲▲▲▲ ここまで ▲▲▲▲▲
+<script type="module"> // type="module" を推奨
+    // Supabaseライブラリをインポート
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
-        // Supabaseクライアントを作成
-        const { createClient } = supabase;
-        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    </script>
+    let supabaseClient;
+
+    // 非同期関数を定義して、APIから設定を読み込む
+    async function initializeSupabase() {
+        try {
+            // 1. サーバーに設定情報を問い合わせる
+            const response = await fetch('/config');
+            if (!response.ok) {
+                throw new Error('設定の読み込みに失敗しました。');
+            }
+            const config = await response.json();
+
+            // 2. 受け取ったキーでSupabaseクライアントを作成
+            const SUPABASE_URL = config.supabase_url;
+            const SUPABASE_ANON_KEY = config.supabase_anon_key;
+
+            if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+                console.error("SupabaseのURLまたはキーが取得できませんでした。");
+                return;
+            }
+
+            supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            
+            console.log('Supabaseクライアントの初期化が完了しました。');
+            
+            // --- ここから下に、Supabaseを使った他の処理を記述していく ---
+            // 例: await fetchSomeData();
+
+        } catch (error) {
+            console.error(error);
+            // エラー時の処理をここに書く
+        }
+    }
+
+    // 関数を実行して初期化を開始
+    initializeSupabase();
+
+</script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; overflow-x: hidden; }

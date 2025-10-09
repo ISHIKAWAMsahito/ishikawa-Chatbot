@@ -616,6 +616,18 @@ async def save_ai_response_feedback(feedback: AIResponseFeedbackRequest):
         return {"message": "AI回答へのフィードバックを保存しました"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# main.py のどこか（APIエンドポイントが定義されているエリア）に追加
+
+@app.get("/config")
+def get_config():
+    """
+    フロントエンドが必要とする公開可能な設定（環境変数）を返す
+    """
+    return {
+        "supabase_url": os.getenv("SUPABASE_URL"),
+        "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY")
+    }
     
 
 
