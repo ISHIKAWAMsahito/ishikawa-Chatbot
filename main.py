@@ -645,7 +645,7 @@ def require_auth_client(request: Request):
         raise HTTPException(status_code=307, headers={'Location': '/login'})
     
     user_email = user.get('email', '')
-    allowed_domain_student = '@e.sgu.ac.jp' # 学生のメールドメインを定義
+    allowed_domain_student = '@e.sgu.ac.jp' # 学生のメールドメインを定義**
     
     # 学生ドメインと許可リストのみをチェック
     if (user_email.endswith(allowed_domain_student) or
@@ -831,18 +831,47 @@ async def get_document_by_id(doc_id: int, user: dict = Depends(require_auth)):
 
 @app.put("/api/documents/{doc_id}")
 async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Depends(require_auth)):
-    """ドキュメントを更新（管理者のみ）"""
-    if not db_client:
-        raise HTTPException(503, "DB not initialized")
+    """ドキュメントを更新（管理者のみ）。content更新時にベクトルも再生成する。"""
+    if not db_client or not settings_manager:
+        raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
     try:
         update_data = {}
+
+        # 1. contentが更新される場合は、ベクトルも再生成する
         if "content" in request:
-            update_data["content"] = request["content"]
+            new_content = request["content"]
+            update_data["content"] = new_content
+            
+            # 設定マネージャーから現在のエンベディングモデルを取得
+            embedding_model = settings_manager.settings.get("embedding_model", "text-embedding-004")
+            
+            logging.info(f"ドキュメント {doc_id} のコンテンツが変更されたため、ベクトルを再生成します...")
+            try:
+                # 新しいコンテンツでベクトルを生成
+                embedding_response = genai.embed_content(
+                    model=embedding_model,
+                    content=new_content
+                )
+                update_data["embedding"] = embedding_response["embedding"]
+                logging.info(f"ドキュメント {doc_id} のベクトル再生成が完了しました。")
+            except Exception as e:
+                # APIのレート制限などを考慮
+                if "429" in str(e) or "quota" in str(e).lower():
+                    logging.warning("ベクトル再生成でAPI制限に達しました。30秒待機します。")
+                    await asyncio.sleep(30)
+                    embedding_response = genai.embed_content(
+                        model=embedding_model,
+                        content=new_content
+                    )
+                    update_data["embedding"] = embedding_response["embedding"]
+                else:
+                    logging.error(f"ベクトル再生成エラー: {e}")
+                    raise HTTPException(status_code=500, detail=f"ベクトル再生成中にエラーが発生しました: {e}")
+
+        # 2. メタデータは独立して更新可能
         if "metadata" in request:
             update_data["metadata"] = request["metadata"]
-        if "embedding" in request:
-            update_data["embedding"] = request["embedding"]
-        
+
         if not update_data:
             raise HTTPException(status_code=400, detail="更新するデータがありません")
         
