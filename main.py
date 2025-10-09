@@ -645,11 +645,10 @@ def require_auth_client(request: Request):
         raise HTTPException(status_code=307, headers={'Location': '/login'})
     
     user_email = user.get('email', '')
-    allowed_domain_staff = '@sgu.ac.jp'
-    # allowed_domain_student は不要なので削除してもOK
+    allowed_domain_student = '@e.sgu.ac.jp' # 学生のメールドメインを定義
     
-    # 条件を2つに絞り込む
-    if (user_email.endswith(allowed_domain_staff) or
+    # 学生ドメインと許可リストのみをチェック
+    if (user_email.endswith(allowed_domain_student) or
             user_email in ALLOWED_CLIENT_EMAILS):
         return user
     else:
