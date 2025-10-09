@@ -107,7 +107,38 @@
             color: red;
             font-weight: bold;
         }
+                .theme-selector {
+            margin-top: 20px;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.9rem;
+        }
+        .theme-selector p {
+            margin-bottom: 8px;
+        }
+        .theme-selector div {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+        }
+        .theme-btn {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 2px solid white;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        .theme-btn:hover {
+            transform: scale(1.15);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
 
+        /* 各ボタンの色を設定 */
+        .theme-btn[data-theme="default"] { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .theme-btn[data-theme="green"] { background: linear-gradient(135deg, #2AF598 0%, #009EFD 100%); }
+        .theme-btn[data-theme="orange"] { background: linear-gradient(135deg, #F6D365 0%, #FDA085 100%); }
+        .theme-btn[data-theme="pink"] { background: linear-gradient(135deg, #F093FB 0%, #F5576C 100%); }
         @media (max-width: 480px) {
             body { padding: 5px; }
             .container { height: calc(100vh - 10px); }
@@ -153,8 +184,7 @@
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
+<div class="header">
             <button id="openCommentModalBtn" class="comment-btn">✉️ 回答への意見・要望</button>
             <div class="settings-indicator" id="settingsIndicator">
                 <div class="sync-dot disconnected" id="syncDot"></div>
@@ -162,7 +192,17 @@
             </div>
             <h1>🔍 学生支援チャットボット</h1>
             <p class="subtitle">学生生活に関する様々な質問にお答えします！</p>
-        </div>
+            
+            <div class="theme-selector">
+                <p>背景テーマを変更</p>
+                <div>
+                    <button class="theme-btn" data-theme="default" title="デフォルト"></button>
+                    <button class="theme-btn" data-theme="green" title="グリーン"></button>
+                    <button class="theme-btn" data-theme="orange" title="オレンジ"></button>
+                    <button class="theme-btn" data-theme="pink" title="ピンク"></button>
+                </div>
+            </div>
+            </div>
         <div class="chat-container">
             <div class="chat-header">💬 AIチャット</div>
             <div class="chat-messages" id="chatMessages">
@@ -211,6 +251,29 @@
     </div>
     <script>
 document.addEventListener('DOMContentLoaded', function() {
+        const themeButtons = document.querySelectorAll('.theme-btn');
+    const bodyElement = document.body;
+
+    // 各テーマに対応する背景のグラデーションを定義
+    const themes = {
+        default: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        green: 'linear-gradient(135deg, #2AF598 0%, #009EFD 100%)',
+        orange: 'linear-gradient(135deg, #F6D365 0%, #FDA085 100%)',
+        pink: 'linear-gradient(135deg, #F093FB 0%, #F5576C 100%)'
+    };
+
+    // 各ボタンにクリックイベントを追加
+    themeButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            // ボタンのdata-theme属性からテーマ名を取得
+            const themeName = button.dataset.theme;
+            
+            // 対応するテーマが存在すれば背景スタイルを更新
+            if (themes[themeName]) {
+                bodyElement.style.background = themes[themeName];
+            }
+        });
+    });
     const BACKEND_API_BASE_URL = window.location.origin;
     const chatMessages = document.getElementById('chatMessages');
     const chatInput = document.getElementById('chatInput');
