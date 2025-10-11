@@ -408,7 +408,7 @@ class SettingsManager:
     """設定管理クラス"""
     def __init__(self):
         self.settings = {
-            "model": "gemini-1.5-flash-latest",
+            "model": "gemini-2.5-flash",
             "collection": ACTIVE_COLLECTION_NAME,
             "embedding_model": "text-embedding-004",
             "top_k": 5
@@ -1173,7 +1173,7 @@ async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: d
 
     chat_query = ChatQuery(
         query=query.query,
-        model=settings_manager.settings.get("model", "gemini-1.5-flash-latest"),
+        model=settings_manager.settings.get("model", "gemini-2.5-flash"),
         embedding_model=settings_manager.settings.get("embedding_model", "text-embedding-004"),
         top_k=settings_manager.settings.get("top_k", 5),
         collection=settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
