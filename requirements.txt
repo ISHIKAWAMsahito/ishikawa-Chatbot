@@ -26,7 +26,6 @@ chromadb==1.0.15
 click==8.2.0
 colorama==0.4.6
 coloredlogs==15.0.1
-comtypes==1.4.11
 cryptography==44.0.2
 dataclasses-json==0.6.7
 Deprecated==1.2.18
@@ -156,7 +155,6 @@ proto-plus==1.26.1
 protobuf==5.29.4
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
-PyAudio==0.2.14
 pybase64==1.4.1
 pycodestyle==2.14.0
 pycountry==24.6.1
@@ -171,9 +169,7 @@ pyparsing==3.2.3
 pypdf==5.9.0
 PyPDF2==3.0.1
 PyPika==0.48.9
-pypiwin32==223
 pyproject_hooks==1.2.0
-pyreadline3==3.5.4
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
 python-dotenv==1.1.0
@@ -181,7 +177,6 @@ python-jose==3.5.0
 python-multipart==0.0.20
 pyttsx3==2.98
 pytz==2025.2
-pywin32==310
 PyYAML==6.0.2
 realtime==2.19.0
 referencing==0.36.2
