@@ -168,7 +168,6 @@ pydantic_core==2.33.2
 pyflakes==3.4.0
 Pygments==2.19.1
 PyJWT==2.10.1
-pymol @ file:///C:/Users/81808/OneDrive/IT/testapp/pymol-3.1.0a0-cp313-cp313-win_amd64.whl#sha256=5413bf7f9520b17a5a45ec976b6e3f213450ac85e57d98087399cd70885bdaeb
 pyparsing==3.2.3
 pypdf==5.9.0
 PyPDF2==3.0.1
