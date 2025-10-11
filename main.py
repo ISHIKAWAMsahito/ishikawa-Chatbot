@@ -782,7 +782,7 @@ async def gemini_status():
     except Exception as e:
         return {"connected": False, "detail": str(e)}
 
-@app.get("/healthz")
+@app.api_route("/healthz", methods=["GET", "HEAD"])
 def health_check_k8s():
     return {"status": "ok"}
 
