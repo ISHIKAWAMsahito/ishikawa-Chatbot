@@ -654,18 +654,30 @@ def require_auth(request: Request):
 def require_auth_client(request: Request):
     """クライアント用認証"""
     user = request.session.get('user')
-    print("--- 認証チェック ---")
-    print(f"ログイン試行中のメアド: '[{user_email}]'")
-    print(f"許可リストの中身: {ALLOWED_CLIENT_EMAILS}")
-    print(f"リストに含まれているか？: {user_email in ALLOWED_CLIENT_EMAILS}")
-    print("--------------------")
+
+    # 1. 最初に、ログインしているかどうかを確認します。
+    #    ログインしていなければ、他の処理をせず、すぐにログインページへ送ります。
     if not user:
         raise HTTPException(status_code=307, headers={'Location': '/login'})
-    
-    user_email = user.get('email', '')
 
+    # 2. ユーザー情報があることが確定してから、メールアドレスを取得します。
+    #    大文字・小文字の違いで認証に失敗しないよう、必ず小文字に変換します。
+    user_email = user.get('email', '').lower()
+
+    # 3. 比較対象の許可リストも、同様にすべて小文字に変換しておきます。
+    allowed_emails_lower = [email.lower() for email in ALLOWED_CLIENT_EMAILS]
+
+    # --- デバッグ用のprint文（安全な場所に移動） ---
+    print("--- 認証チェック ---")
+    print(f"ログイン試行中のメアド (小文字化後): '[{user_email}]'")
+    print(f"許可リストの中身 (小文字化後): {allowed_emails_lower}")
+    print(f"リストに含まれているか？: {user_email in allowed_emails_lower}")
+    print("--------------------")
+    # -----------------------------------------------------------
+
+    # 4. 認証チェックを実行します。
     if (user_email.endswith('@sgu.ac.jp') or
-        user_email in ALLOWED_CLIENT_EMAILS):  # Gmailはここに登録
+        user_email in allowed_emails_lower):
         return user
     else:
         raise HTTPException(status_code=403, detail="このサービスへのアクセスは許可されていません。")
