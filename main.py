@@ -654,6 +654,11 @@ def require_auth(request: Request):
 def require_auth_client(request: Request):
     """クライアント用認証"""
     user = request.session.get('user')
+    print("--- 認証チェック ---")
+    print(f"ログイン試行中のメアド: '[{user_email}]'")
+    print(f"許可リストの中身: {ALLOWED_CLIENT_EMAILS}")
+    print(f"リストに含まれているか？: {user_email in ALLOWED_CLIENT_EMAILS}")
+    print("--------------------")
     if not user:
         raise HTTPException(status_code=307, headers={'Location': '/login'})
     
