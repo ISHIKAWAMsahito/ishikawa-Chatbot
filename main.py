@@ -72,6 +72,7 @@ SUPER_ADMIN_EMAILS = [email.strip() for email in SUPER_ADMIN_EMAILS_STR.split(',
 
 ALLOWED_CLIENT_EMAILS_STR = os.getenv("ALLOWED_CLIENT_EMAILS", "")
 ALLOWED_CLIENT_EMAILS = [email.strip() for email in ALLOWED_CLIENT_EMAILS_STR.split(',') if email.strip()]
+print("ALLOWED_CLIENT_EMAILS:", ALLOWED_CLIENT_EMAILS)
 # キーワードマッピング
 KEYWORD_MAP = {
     # 授業関連
