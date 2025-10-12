@@ -668,11 +668,11 @@ def require_auth_client(request: Request):
     allowed_emails_lower = [email.lower() for email in ALLOWED_CLIENT_EMAILS]
 
     # --- デバッグ用のprint文（安全な場所に移動） ---
-    print("--- 認証チェック ---")
-    print(f"ログイン試行中のメアド (小文字化後): '[{user_email}]'")
-    print(f"許可リストの中身 (小文字化後): {allowed_emails_lower}")
-    print(f"リストに含まれているか？: {user_email in allowed_emails_lower}")
-    print("--------------------")
+    # print("--- 認証チェック ---")
+    # print(f"ログイン試行中のメアド (小文字化後): '[{user_email}]'")
+    # print(f"許可リストの中身 (小文字化後): {allowed_emails_lower}")
+    # print(f"リストに含まれているか？: {user_email in allowed_emails_lower}")
+    # print("--------------------")
     # -----------------------------------------------------------
 
     # 4. 認証チェックを実行します。
