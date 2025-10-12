@@ -72,7 +72,6 @@ SUPER_ADMIN_EMAILS = [email.strip() for email in SUPER_ADMIN_EMAILS_STR.split(',
 
 ALLOWED_CLIENT_EMAILS_STR = os.getenv("ALLOWED_CLIENT_EMAILS", "")
 ALLOWED_CLIENT_EMAILS = [email.strip() for email in ALLOWED_CLIENT_EMAILS_STR.split(',') if email.strip()]
-print("ALLOWED_CLIENT_EMAILS:", ALLOWED_CLIENT_EMAILS)
 # キーワードマッピング
 KEYWORD_MAP = {
     # 授業関連
@@ -658,14 +657,16 @@ def require_auth_client(request: Request):
         raise HTTPException(status_code=307, headers={'Location': '/login'})
     
     user_email = user.get('email', '')
-    # 許可するメールドメインを @sgu.ac.jp に変更
-    allowed_domain_staff = '@sgu.ac.jp'
     
-    # 教職員ドメインと許可リストのユーザーのみをチェック
-    if (user_email.endswith(allowed_domain_staff) or
-            user_email in ALLOWED_CLIENT_EMAILS):
-        return user
+    # ▼▼▼ 認証ロジックを以下のように修正します ▼▼▼
+    
+    # 1. @sgu.ac.jp ドメインのユーザーか？ (→もしそうなら、全員許可)
+    # 2. または、許可リストにメールアドレスが含まれているか？ (→ドメインに関わらず、リストにいれば許可)
+    if (user_email.endswith('@sgu.ac.jp') or 
+        user_email in ALLOWED_CLIENT_EMAILS):
+        return user # 上のどちらかの条件を満たせばアクセスを許可
     else:
+        # どちらの条件も満たさない場合はアクセスを拒否
         raise HTTPException(status_code=403, detail="このサービスへのアクセスは許可されていません。")
 
 # --- 認証とHTML提供 (Auth0用) ---
