@@ -634,6 +634,7 @@ def get_config():
 
     
 # --- 認証関数 (Auth0用) ---
+# --- 管理者用認証 ---
 def require_auth(request: Request):
     """管理者用認証"""
     user = request.session.get('user')
@@ -641,15 +642,15 @@ def require_auth(request: Request):
         raise HTTPException(status_code=307, headers={'Location': '/login'})
     
     user_email = user.get('email', '')
-    allowed_domain_staff = '@sgu.ac.jp'
 
-    # 教職員ドメイン、または、スーパー管理者リストに含まれているかチェック
-    if (user_email.endswith(allowed_domain_staff) or
-            user_email in SUPER_ADMIN_EMAILS): # ← ★★★ こちらに変更 ★★★
+    if (user_email.endswith('@sgu.ac.jp') or
+        user_email in SUPER_ADMIN_EMAILS):  # Gmailはここに登録
         return user
     else:
         raise HTTPException(status_code=403, detail="管理者ページへのアクセス権がありません。")
 
+
+# --- 学生用認証 ---
 def require_auth_client(request: Request):
     """クライアント用認証"""
     user = request.session.get('user')
@@ -657,16 +658,11 @@ def require_auth_client(request: Request):
         raise HTTPException(status_code=307, headers={'Location': '/login'})
     
     user_email = user.get('email', '')
-    
-    # ▼▼▼ 認証ロジックを以下のように修正します ▼▼▼
-    
-    # 1. @sgu.ac.jp ドメインのユーザーか？ (→もしそうなら、全員許可)
-    # 2. または、許可リストにメールアドレスが含まれているか？ (→ドメインに関わらず、リストにいれば許可)
-    if (user_email.endswith('@sgu.ac.jp') or 
-        user_email in ALLOWED_CLIENT_EMAILS):
-        return user # 上のどちらかの条件を満たせばアクセスを許可
+
+    if (user_email.endswith('@sgu.ac.jp') or
+        user_email in ALLOWED_CLIENT_EMAILS):  # Gmailはここに登録
+        return user
     else:
-        # どちらの条件も満たさない場合はアクセスを拒否
         raise HTTPException(status_code=403, detail="このサービスへのアクセスは許可されていません。")
 
 # --- 認証とHTML提供 (Auth0用) ---
