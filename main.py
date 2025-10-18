@@ -152,7 +152,7 @@ KEYWORD_MAP = {
     "施設": [
         "図書館", "場所", "どこ", "Wi-Fi", "PC", "パソコン", "教室", "体育館",
         "グラウンド", "駐車場", "スポーツ施設", "江別第2キャンパス", "メインアリーナ",
-        "サブアリーナ", "上靴", "C館","施設","故障","破損","器物","F館","学生館","体育センター","SGUホール","50年記念館","用具","体育センター","陸上競技場","テニスコート","バスケットコート","バレーコート","フットサルコート","多目的グランド","野 球 場","室内練習場","多目的グランド","ランニングロード","弓 道 場","洋 弓 場","合宿","ラウンジ","下宿","指定施設","アパート","マンション","寮","男子寮","女子寮","トレーニングルーム","シャワーコーナー","保健室","保健センター","AED"
+        "サブアリーナ", "上靴", "C館","施設","故障","破損","器物","F館","学生館","体育センター","SGUホール","50年記念館","用具","体育センター","陸上競技場",
         # 俗語・略語
         "図書", "ラーニングコモンズ", "自習室", "食堂", "カフェ", "購買部", "ジム"
     ],
@@ -631,7 +631,6 @@ def get_config():
     
 
 
-
     
 # --- 認証関数 (Auth0用) ---
 # --- 管理者用認証 ---
@@ -648,7 +647,6 @@ def require_auth(request: Request):
         return user
     else:
         raise HTTPException(status_code=403, detail="管理者ページへのアクセス権がありません。")
-
 
 # --- 学生用認証 ---
 def require_auth_client(request: Request):
@@ -1022,12 +1020,18 @@ def get_or_create_session_id(request: Request) -> str:
 
 def add_to_history(session_id: str, role: str, content: str):
     """チャット履歴に追加"""
-    chat_histories[session_id].append({
-        "role": role,
-        "content": content
-    })
-    if len(chat_histories[session_id]) > MAX_HISTORY_LENGTH:
-        chat_histories[session_id] = chat_histories[session_id][-MAX_HISTORY_LENGTH:]
+    # ---------- ここを一時的に無効化しています ----------
+    # 会話の記録を完全に停止したい（コメントアウトで一時無効化）
+    # 元に戻す際は、下のコードをコメント解除してください。
+    #
+    # chat_histories[session_id].append({
+    #     "role": role,
+    #     "content": content
+    # })
+    # if len(chat_histories[session_id]) > MAX_HISTORY_LENGTH:
+    #     chat_histories[session_id] = chat_histories[session_id][-MAX_HISTORY_LENGTH:]
+    return
+# ------------------------------------------------------
 
 def get_history(session_id: str) -> List[Dict[str, str]]:
     """チャット履歴を取得"""
@@ -1115,8 +1119,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
 - 【ケースB: 情報が不十分、または部分的にしかない場合】
   - **正直に、どの部分の情報が見つからなかったかを伝えます。**
-  - その上で、**検索で見つかった関連情報（部分的でもOK）**を提示します。「直接のお答えはできませんが、関連する情報として…」のように前置きすると自然です。
-  - ユーザーが次にとるべき**具体的で役立つアクション**を提案します。（例：「詳細は学生便覧のP.XXをご確認いただくか、〇〇課の窓口でご相談ください。」）
+  - その上で、**検索で見つかった関連情報（部分的でもOK）**を提示します。「直接のお答えはできませんが、関連する情報として…」のように示してください。
+  - ユーザーが次にとるべき**具体的で役立つアクション**を提案します。（例：「詳細は学生便覧のP.XXをご確認いただくか、〇〇課の窓口でご相談ください」など）
   - 絶対に推測やあなた自身の一般知識で回答を補完しないでください。
 
 # 制約
@@ -1154,6 +1158,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
             full_response = format_urls_as_links(temp_full_response)
             
+            # add_to_history は一時無効化済み（no-op）なので呼び出しても記録されません
             add_to_history(session_id, "user", user_input)
             add_to_history(session_id, "assistant", temp_full_response)
             
@@ -1166,6 +1171,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             fallback_response = await create_fallback_response_from_db(category, chat_req.model)
             full_response = format_urls_as_links(fallback_response)
             
+            # add_to_history は no-op のため記録されません
             add_to_history(session_id, "user", user_input)
             add_to_history(session_id, "assistant", fallback_response)
             
