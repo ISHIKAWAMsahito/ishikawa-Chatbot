@@ -1088,15 +1088,15 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             logging.error(f"データベース検索エラー: {e}")
 
         # 履歴を取得してコンテキストに追加
-        history = get_history(session_id)
-        history_context = ""
-        if history:
-            history_context = "\n\n過去の会話履歴:\n"
-            for msg in history[-6:]:
-                role_label = "学生" if msg["role"] == "user" else "AI"
-                history_context += f"{role_label}: {msg['content']}\n"
+        # history = get_history(session_id)
+        # history_context = ""
+        # if history:
+        #     history_context = "\n\n過去の会話履歴:\n"
+        #     for msg in history[-6:]:
+        #         role_label = "学生" if msg["role"] == "user" else "AI"
+        #         history_context += f"{role_label}: {msg['content']}\n"
 
-        if has_specific_info:
+        # if has_specific_info:
             # プロンプトはご自身のものを使用してください
             prompt = f"""あなたは、札幌学院大学の学生を親切にサポートする、優秀なAIアシスタントです。
 
@@ -1124,13 +1124,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
   - 絶対に推測やあなた自身の一般知識で回答を補完しないでください。
 
 # 制約
-- 回答は「参考情報」と「過去の会話履歴」に記載されている内容に厳密に基づきます。
+- 回答は「参考情報」に記載されている内容に厳密に基づきます。
 - 日本語の質問には日本語で、英語の質問には英語で回答してください。
 - 関連するURLがある場合は「参考URL:」として箇条書きで記載してください。
 
 # コンテキスト
-過去の会話履歴:
-{history_context}
 
 参考情報:
 {context}
