@@ -6,6 +6,7 @@ import json
 import uvicorn
 import traceback
 import csv
+import certifi
 from datetime import datetime, timezone, timedelta
 import uuid
 import io
@@ -294,7 +295,7 @@ class WebScraper:
     """ウェブスクレイピングクラス"""
     def scrape(self, url: str) -> str:
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=10, verify=certifi.where())
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
             for element in soup(["script", "style", "header", "footer", "nav", "aside"]):
