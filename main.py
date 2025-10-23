@@ -1063,40 +1063,32 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         context = ""
         has_specific_info = False
         MIN_SIMILARITY_THRESHOLD = 0.65 # 類似度のしきい値
+        search_results = [] # ★★★ この行を追加 ★★★
 
         # --- メインの検索ロジック：ベクトル検索を優先 ---
         try:
             query_embedding_response = genai.embed_content(model=chat_req.embedding_model, content=user_input)
             query_embedding = query_embedding_response["embedding"]
             
-            # ▼▼ インデントを修正した箇所 ▼▼
-            # カテゴリで絞らない専用のベクトル検索メソッドを呼び出す
-            search_results = db_client.search_documents_by_vector(
-                collection_name=chat_req.collection,
-                embedding=query_embedding,
-                match_count=chat_req.top_k
-            )
+# 類似度がしきい値以上の結果「のみ」を抽出する
+            relevant_docs = [
+                doc for doc in search_results 
+                if doc.get('content') and doc.get('similarity', 0) >= MIN_SIMILARITY_THRESHOLD
+            ]
 
-            # 類似度がしきい値以上の結果のみをコンテキストに追加
-            if search_results and search_results[0]['similarity'] >= MIN_SIMILARITY_THRESHOLD:
-                # contentが存在する結果のみをフィルタリングして結合
-                filtered_content = [doc['content'] for doc in search_results if doc.get('content')]
-                context = "\n".join(filtered_content)
+            # 関連ドキュメントが1件以上存在する場合のみ、RAGを実行する
+            if relevant_docs:
+                context = "\n".join([doc['content'] for doc in relevant_docs])
                 has_specific_info = True
+            
+            # (元の 'if search_results ...' ブロックの 'else:' は不要)
 
         except Exception as e:
             logging.error(f"データベース検索エラー: {e}")
 
-        # 履歴を取得してコンテキストに追加
-        # history = get_history(session_id)
-        # history_context = ""
-        # if history:
-        #     history_context = "\n\n過去の会話履歴:\n"
-        #     for msg in history[-6:]:
-        #         role_label = "学生" if msg["role"] == "user" else "AI"
-        #         history_context += f"{role_label}: {msg['content']}\n"
+        # ... (この後の history_context の処理はコメントアウトされているのでそのまま) ...
 
-        # if has_specific_info:
+        if has_specific_info:
             # プロンプトはご自身のものを使用してください
             prompt = f"""あなたは、札幌学院大学の学生を親切にサポートする、優秀なAIアシスタントです。
 
