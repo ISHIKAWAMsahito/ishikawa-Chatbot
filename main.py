@@ -636,47 +636,51 @@ def get_config():
 # --- 認証関数 (Auth0用) ---
 # --- 管理者用認証 ---
 def require_auth(request: Request):
-    """管理者用認証"""
+    """管理者用認証 (SUPER_ADMIN_EMAILS のみ許可)"""
     user = request.session.get('user')
     if not user:
         raise HTTPException(status_code=307, headers={'Location': '/login'})
     
-    user_email = user.get('email', '')
+    # 念のため小文字に変換して比較
+    user_email = user.get('email', '').lower()
+    super_admin_emails_lower = [email.lower() for email in SUPER_ADMIN_EMAILS]
 
-    if (user_email.endswith('@sgu.ac.jp') or
-        user_email in SUPER_ADMIN_EMAILS):  # Gmailはここに登録
+    if user_email in super_admin_emails_lower:
         return user
     else:
+        # スーパー管理者リストに含まれていない場合は、管理者ページへのアクセスを拒否
         raise HTTPException(status_code=403, detail="管理者ページへのアクセス権がありません。")
 
 # --- 学生用認証 ---
 def require_auth_client(request: Request):
-    """クライアント用認証"""
+    """クライアント用認証 (ALLOWED_CLIENT_EMAILS または SUPER_ADMIN_EMAILS を許可)"""
     user = request.session.get('user')
 
     # 1. 最初に、ログインしているかどうかを確認します。
-    #    ログインしていなければ、他の処理をせず、すぐにログインページへ送ります。
     if not user:
         raise HTTPException(status_code=307, headers={'Location': '/login'})
 
     # 2. ユーザー情報があることが確定してから、メールアドレスを取得します。
-    #    大文字・小文字の違いで認証に失敗しないよう、必ず小文字に変換します。
     user_email = user.get('email', '').lower()
 
-    # 3. 比較対象の許可リストも、同様にすべて小文字に変換しておきます。
+    # 3. 比較対象の許可リストを両方とも小文字に変換しておきます。
     allowed_emails_lower = [email.lower() for email in ALLOWED_CLIENT_EMAILS]
+    super_admin_emails_lower = [email.lower() for email in SUPER_ADMIN_EMAILS]
 
     # --- デバッグ用のprint文（安全な場所に移動） ---
-    # print("--- 認証チェック ---")
+    # print("--- クライアント認証チェック ---")
     # print(f"ログイン試行中のメアド (小文字化後): '[{user_email}]'")
-    # print(f"許可リストの中身 (小文字化後): {allowed_emails_lower}")
-    # print(f"リストに含まれているか？: {user_email in allowed_emails_lower}")
+    # print(f"クライアント許可リスト: {allowed_emails_lower}")
+    # print(f"管理者許可リスト: {super_admin_emails_lower}")
+    # print(f"クライアントリストに含まれているか？: {user_email in allowed_emails_lower}")
+    # print(f"管理者リストに含まれているか？: {user_email in super_admin_emails_lower}")
     # print("--------------------")
     # -----------------------------------------------------------
 
     # 4. 認証チェックを実行します。
-    if (user_email.endswith('@sgu.ac.jp') or
-        user_email in allowed_emails_lower):
+    # (クライアント許可リスト、または管理者許可リストのどちらかに含まれていればOK)
+    if (user_email in allowed_emails_lower or
+        user_email in super_admin_emails_lower):
         return user
     else:
         raise HTTPException(status_code=403, detail="このサービスへのアクセスは許可されていません。")
@@ -710,24 +714,26 @@ async def auth(request: Request):
     if userinfo := token.get('userinfo'):
         # ユーザー情報をセッションに保存
         request.session['user'] = dict(userinfo)
-        user_email = userinfo.get('email', '')
+        user_email = userinfo.get('email', '').lower() # 小文字に変換
         
-        # 定数を定義
-        allowed_domain_staff = '@sgu.ac.jp'
-        allowed_domain_student = '@e.sgu.ac.jp'
+        # 許可リストを小文字に
+        super_admin_emails_lower = [email.lower() for email in SUPER_ADMIN_EMAILS]
+        allowed_emails_lower = [email.lower() for email in ALLOWED_CLIENT_EMAILS]
 
         # --- 権限に基づくリダイレクト判定 ---
-        # 1. 管理者権限を持つか？ (教職員ドメイン または SUPER_ADMIN_EMAILSリスト)
-        if (user_email.endswith(allowed_domain_staff) or
-                user_email in SUPER_ADMIN_EMAILS):
+        
+        # 1. まず、管理者(SUPER_ADMIN)か？ (最優先)
+        #    管理者は /admin にリダイレクト
+        if user_email in super_admin_emails_lower:
             return RedirectResponse(url='/admin')
 
-        # 2. クライアント（学生など）権限を持つか？ (学生ドメイン または ALLOWED_CLIENT_EMAILSリスト)
-        elif (user_email.endswith(allowed_domain_student) or
-                user_email in ALLOWED_CLIENT_EMAILS):
+        # 2. 次に、クライアント(学生など)か？
+        #    クライアントは / (学生用画面) にリダイレクト
+        elif user_email in allowed_emails_lower:
             return RedirectResponse(url='/')
         
         # 3. 上記のいずれにも該当しない場合は、許可されていないユーザー
+        #    ログアウトさせてアクセスを拒否
         else:
             logging.warning(f"Unauthorized login attempt by: {user_email}")
             return RedirectResponse(url='/logout')
