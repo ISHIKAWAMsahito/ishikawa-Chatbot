@@ -7,6 +7,7 @@ requests==2.32.5
 
 # --- 認証 & セキュリティ ---
 Authlib==1.6.3
+itsdangerous==2.2.0
 certifi==2025.10.5
 
 # --- Google Gemini ---
