@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>レコード管理画面</title>
+    <title>DB管理画面</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -30,6 +30,34 @@
         .header h1 { font-size: 2rem; margin-bottom: 8px; }
         .header p { opacity: 0.95; }
 
+        /* --- タブ --- */
+        .tabs {
+            display: flex;
+            background: #f1f3f5;
+            padding: 10px 20px 0 20px;
+        }
+        .tab-button {
+            padding: 12px 20px;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #868e96;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -1px;
+        }
+        .tab-button.active {
+            color: #4facfe;
+            border-bottom-color: #4facfe;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+
         .stats { padding: 20px; background: #e3f2fd; border-radius: 10px; margin: 20px; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; }
         .stat-card { background: white; padding: 15px; border-radius: 10px; text-align: center; }
@@ -37,14 +65,14 @@
         .stat-label { color: #6c757d; font-size: 0.9rem; }
 
         .controls {
-            padding: 18px;
+            padding: 18px 20px;
             background: #f8f9fa;
             display: flex;
             gap: 12px;
             flex-wrap: wrap;
             align-items: center;
-            border-top: 1px solid rgba(0,0,0,0.02);
-            border-bottom: 1px solid rgba(0,0,0,0.02);
+            border-top: 1px solid #e9ecef;
+            border-bottom: 1px solid #e9ecef;
         }
         .search-box {
             flex: 1;
@@ -72,15 +100,15 @@
             font-weight: 600;
             transition: transform .18s ease, box-shadow .18s ease;
         }
-        .btn.secondary {
-            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
-        }
+        .btn.secondary { background: linear-gradient(135deg, #6c757d 0%, #495057 100%); }
+        .btn.success { background: linear-gradient(135deg, #28a745 0%, #218838 100%); }
+        .btn.warning { background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%); color: #333; }
         .btn:hover { transform: translateY(-3px); box-shadow: 0 8px 18px rgba(79,172,254,0.15); }
-        .btn.danger { background: linear-gradient(135deg,#f44336,#d32f2f); }
+        .btn:disabled { background: #ced4da; cursor: not-allowed; transform: none; box-shadow: none; }
 
         .table-container { padding: 20px; overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; background: white; }
-        #documentsTable { display: none; /* JSで制御 */ }
+        #documentsTable, #qaTable { display: none; /* JSで制御 */ }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e9ecef; vertical-align: top; }
         th { background: #f8f9fa; font-weight: 600; color: #495057; position: sticky; top: 0; z-index: 1; }
         tr:hover { background: #f1f3f5; }
@@ -96,15 +124,12 @@
             color: #333;
         }
         .metadata { font-size: 0.85rem; color: #6c757d; }
+        .embedding-status { font-size: 0.85rem; padding: 3px 6px; border-radius: 4px; display: inline-block; }
+        .embedding-status.ok { background: #d4edda; color: #155724; }
+        .embedding-status.ng { background: #f8d7da; color: #721c24; }
 
         .action-buttons { display:flex; gap:6px; }
-        .action-btn {
-            padding: 6px 10px;
-            border-radius: 6px;
-            border: none;
-            cursor: pointer;
-            font-size: 0.86rem;
-        }
+        .action-btn { padding: 6px 10px; border-radius: 6px; border: none; cursor: pointer; font-size: 0.86rem; }
         .action-btn.edit { background:#28a745; color:white; }
         .action-btn.delete { background:#dc3545; color:white; }
         .action-btn:hover { opacity:0.9; transform: translateY(-1px); }
@@ -121,30 +146,15 @@
         .form-group textarea { min-height:180px; resize:vertical; }
 
         .loading { text-align:center; padding:40px; color:#6c757d; }
+        .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; white-space: nowrap !important; border: 0 !important; }
 
-        /* sr-only 用 */
-        .sr-only {
-            position: absolute !important;
-            width: 1px !important;
-            height: 1px !important;
-            padding: 0 !important;
-            margin: -1px !important;
-            overflow: hidden !important;
-            clip: rect(0 0 0 0) !important;
-            white-space: nowrap !important;
-            border: 0 !important;
-        }
-
-        /* レスポンシブ */
         @media (max-width: 920px) {
             .controls { gap:10px; padding:14px; }
             .content-preview { max-width: 260px; }
         }
         @media (max-width: 520px) {
             .controls { flex-direction: column; align-items: stretch; }
-            .category-filter { width: 100%; }
-            .search-box { width: 100%; }
-            .btn { width: 100%; }
+            .category-filter, .search-box, .btn { width: 100%; }
             th, td { font-size: 0.92rem; padding: 10px; }
         }
     </style>
@@ -152,61 +162,108 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📊 レコード管理画面</h1>
-            <p>データベース内のドキュメントを管理</p>
+            <h1>📊 DB管理画面</h1>
+            <p>データベース内のドキュメントとQ&Aを管理</p>
         </div>
 
-        <div class="stats">
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-number" id="totalCount">0</div>
-                    <div class="stat-label">総レコード数</div>
+        <div class="tabs">
+            <button class="tab-button active" onclick="showTab('documents')">知識ベース (Documents)</button>
+            <button class="tab-button" onclick="showTab('qa')">Q&A (Fallbacks)</button>
+        </div>
+
+        <div id="documents-view" class="tab-content active">
+            <div class="stats">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" id="totalCount">0</div>
+                        <div class="stat-label">総レコード数</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="categoryCount">0</div>
+                        <div class="stat-label">カテゴリー数</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="selectedCount">0</div>
+                        <div class="stat-label">選択中</div>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="categoryCount">0</div>
-                    <div class="stat-label">カテゴリー数</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="selectedCount">0</div>
-                    <div class="stat-label">選択中</div>
-                </div>
+            </div>
+
+            <div class="controls">
+                <input type="text" id="searchInput" class="search-box" placeholder="検索（コンテンツ、カテゴリー、ソース）">
+                <label for="categoryFilter" class="sr-only">カテゴリーで絞り込む</label>
+                <select id="categoryFilter" class="category-filter" aria-label="カテゴリーで絞り込む">
+                    <option value="">すべてのカテゴリー</option>
+                </select>
+                <button class="btn" onclick="loadDocuments()">🔄 更新</button>
+                <button class="btn secondary" onclick="window.location.href='/admin'">← 管理画面に戻る</button>
+            </div>
+
+            <div class="table-container">
+                <div id="loadingIndicator" class="loading">データを読み込み中...</div>
+                <table id="documentsTable" aria-live="polite">
+                    <thead>
+                        <tr>
+                            <th scope="col">ID</th>
+                            <th scope="col">カテゴリー</th>
+                            <th scope="col">ソース</th>
+                            <th scope="col">コンテンツ</th>
+                            <th scope="col">作成日時</th>
+                            <th scope="col">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="documentsBody"></tbody>
+                </table>
             </div>
         </div>
 
-        <div class="controls">
-            <input type="text" id="searchInput" class="search-box" placeholder="検索（コンテンツ、カテゴリー、ソース）">
-            <label for="categoryFilter" class="sr-only">カテゴリーで絞り込む</label>
-            <select id="categoryFilter" class="category-filter" aria-label="カテゴリーで絞り込む">
-                <option value="">すべてのカテゴリー</option>
-            </select>
-            <button class="btn" onclick="loadDocuments()">🔄 更新</button>
-            <button class="btn secondary" onclick="window.location.href='/admin'">← 管理画面に戻る</button>
-        </div>
+        <div id="qa-view" class="tab-content">
+            <div class="stats">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" id="qaTotalCount">0</div>
+                        <div class="stat-label">総Q&A数</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="qaVectorizedCount">0</div>
+                        <div class="stat-label">ベクトル化済み</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="qaMissingCount">0</div>
+                        <div class="stat-label">ベクトル未処理</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="controls">
+                <button class="btn success" onclick="openNewQAModal()">＋ 新規Q&Aを追加</button>
+                <button class="btn warning" id="vectorizeAllBtn" onclick="vectorizeAllMissing()">
+                    ⚡ ベクトル未処理をすべて実行
+                </button>
+                 <button class="btn secondary" onclick="window.location.href='/admin'">← 管理画面に戻る</button>
+            </div>
 
-        <div class="table-container">
-            <div id="loadingIndicator" class="loading">データを読み込み中...</div>
-            <table id="documentsTable" aria-live="polite" role="table">
-                <thead>
-                    <tr>
-                        <th scope="col">ID</th>
-                        <th scope="col">カテゴリー</th>
-                        <th scope="col">ソース</th>
-                        <th scope="col">コンテンツ</th>
-                        <th scope="col">作成日時</th>
-                        <th scope="col">操作</th>
-                    </tr>
-                </thead>
-                <tbody id="documentsBody"></tbody>
-            </table>
+             <div class="table-container">
+                <div id="qaLoadingIndicator" class="loading">Q&Aデータを読み込み中...</div>
+                <table id="qaTable" aria-live="polite">
+                    <thead>
+                        <tr>
+                            <th scope="col">ID</th>
+                            <th scope="col">Q&Aテキスト (static_response)</th>
+                            <th scope="col">ベクトル</th>
+                            <th scope="col">作成日時</th>
+                            <th scope="col">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="qaBody"></tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-    <!-- 編集モーダル -->
     <div id="editModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
         <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="editModalTitle">レコード編集</h2>
-            </div>
+            <h2 id="editModalTitle">レコード編集 (Document)</h2>
             <div class="form-group">
                 <label for="editId">ID:</label>
                 <input type="text" id="editId" readonly>
@@ -223,9 +280,25 @@
                 <label for="editContent">コンテンツ:</label>
                 <textarea id="editContent"></textarea>
             </div>
-            <div class="modal-footer">
+            <div class="action-buttons">
                 <button class="btn secondary" onclick="closeEditModal()">キャンセル</button>
                 <button class="btn" onclick="saveDocument()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="qaEditModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="qaEditModalTitle">
+        <div class="modal-content">
+            <h2 id="qaEditModalTitle">Q&A編集</h2>
+            <input type="hidden" id="qaEditId">
+            <div class="form-group">
+                <label for="qaEditContent">Q&Aテキスト (static_response):</label>
+                <textarea id="qaEditContent" placeholder="例： Q. 〇〇とは何ですか？ A. 〇〇は..."></textarea>
+                <small>※保存時に自動でベクトル化されます</small>
+            </div>
+            <div class="action-buttons">
+                <button class="btn secondary" onclick="closeQAModal()">キャンセル</button>
+                <button class="btn" onclick="saveQA()">保存</button>
             </div>
         </div>
     </div>
@@ -233,7 +306,27 @@
     <script>
         let allDocuments = [];
         let filteredDocuments = [];
+        let allQA = [];
 
+        // --- タブ切り替え ---
+        function showTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+            document.getElementById(`${tabName}-view`).classList.add('active');
+            document.querySelector(`.tab-button[onclick="showTab('${tabName}')"]`).classList.add('active');
+        }
+
+        // --- 共通 ---
+        function escapeHtml(text) {
+            if (typeof text !== 'string') return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // =============================================
+        // [1] 知識ベース (Documents) 関連の関数
+        // =============================================
         async function loadDocuments() {
             const loadingIndicator = document.getElementById('loadingIndicator');
             const table = document.getElementById('documentsTable');
@@ -241,14 +334,12 @@
             table.style.display = 'none';
             try {
                 const response = await fetch('/api/documents/all');
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 const data = await response.json();
                 allDocuments = data.documents || [];
                 updateCategories();
                 filterAndDisplayDocuments();
-                updateStats();
+                updateDocStats();
                 loadingIndicator.style.display = 'none';
                 table.style.display = 'table';
             } catch (error) {
@@ -284,7 +375,7 @@
                 return matchesSearch && matchesCategory;
             });
             displayDocuments(filteredDocuments);
-            updateStats();
+            updateDocStats();
         }
 
         function displayDocuments(documents) {
@@ -296,7 +387,7 @@
                 tr.innerHTML = `
                     <td>${doc.id}</td>
                     <td><span class="metadata">${doc.metadata?.category || 'その他'}</span></td>
-                    <td><span class="metadata">${doc.metadata?.source || 'N/A'}</span></td>
+                    <td><span class="metadata">${escapeHtml(doc.metadata?.source || 'N/A')}</span></td>
                     <td><div class="content-preview">${escapeHtml(doc.content || '')}</div></td>
                     <td><span class="metadata">${created}</span></td>
                     <td>
@@ -310,18 +401,11 @@
             });
         }
 
-        function updateStats() {
+        function updateDocStats() {
             document.getElementById('totalCount').textContent = allDocuments.length;
-            const categories = new Set();
-            allDocuments.forEach(doc => { if (doc.metadata?.category) categories.add(doc.metadata.category); });
+            const categories = new Set(allDocuments.map(doc => doc.metadata?.category).filter(Boolean));
             document.getElementById('categoryCount').textContent = categories.size;
             document.getElementById('selectedCount').textContent = filteredDocuments.length;
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
         }
 
         async function editDocument(id) {
@@ -350,7 +434,7 @@
                     body: JSON.stringify({ content: content, metadata: updatedMetadata })
                 });
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                alert('ドキュメントを更新しました');
+                alert('ドキュメントを更新しました (ベクトルも再生成されました)');
                 closeEditModal();
                 loadDocuments();
             } catch (error) {
@@ -372,13 +456,176 @@
             }
         }
 
-        // イベントリスナー
+        // =============================================
+        // [2] Q&A (Fallbacks) 関連の関数
+        // =============================================
+        async function loadQA() {
+            const loadingIndicator = document.getElementById('qaLoadingIndicator');
+            const table = document.getElementById('qaTable');
+            loadingIndicator.style.display = 'block';
+            table.style.display = 'none';
+            try {
+                const response = await fetch('/api/fallbacks');
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const data = await response.json();
+                allQA = data.fallbacks || [];
+                displayQA(allQA);
+                updateQAStats();
+                loadingIndicator.style.display = 'none';
+                table.style.display = 'table';
+            } catch (error) {
+                console.error('Error loading Q&A:', error);
+                loadingIndicator.innerHTML = 'Q&Aの読み込みに失敗しました。';
+            }
+        }
+
+        function displayQA(qaList) {
+            const tbody = document.getElementById('qaBody');
+            tbody.innerHTML = '';
+            qaList.forEach(qa => {
+                const tr = document.createElement('tr');
+                const created = qa.created_at ? new Date(qa.created_at).toLocaleString('ja-JP') : 'N/A';
+                
+                let embeddingStatus;
+                if (qa.embedding && qa.embedding.length > 0) {
+                    embeddingStatus = '<span class="embedding-status ok">OK</span>';
+                } else {
+                    embeddingStatus = '<span class="embedding-status ng">未処理</span>';
+                }
+
+                tr.innerHTML = `
+                    <td>${qa.id}</td>
+                    <td><div class="content-preview">${escapeHtml(qa.static_response || '')}</div></td>
+                    <td>${embeddingStatus}</td>
+                    <td><span class="metadata">${created}</span></td>
+                    <td>
+                        <div class="action-buttons">
+                            <button class="action-btn edit" onclick="editQA(${qa.id})" aria-label="編集">編集</button>
+                            <button class="action-btn delete" onclick="deleteQA(${qa.id})" aria-label="削除">削除</button>
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+        
+        function updateQAStats() {
+            const total = allQA.length;
+            const vectorized = allQA.filter(qa => qa.embedding && qa.embedding.length > 0).length;
+            const missing = total - vectorized;
+            
+            document.getElementById('qaTotalCount').textContent = total;
+            document.getElementById('qaVectorizedCount').textContent = vectorized;
+            document.getElementById('qaMissingCount').textContent = missing;
+            
+            // 未処理がなければベクトル化ボタンを無効化
+            const vectorizeBtn = document.getElementById('vectorizeAllBtn');
+            vectorizeBtn.disabled = (missing === 0);
+            if (missing === 0) {
+                vectorizeBtn.textContent = '⚡ すべてベクトル化済み';
+            } else {
+                vectorizeBtn.textContent = `⚡ ベクトル未処理 (${missing}件) をすべて実行`;
+            }
+        }
+
+        function openNewQAModal() {
+            document.getElementById('qaEditId').value = ''; // IDを空に
+            document.getElementById('qaEditModalTitle').textContent = '新規Q&Aを追加';
+            document.getElementById('qaEditContent').value = '';
+            document.getElementById('qaEditModal').classList.add('show');
+        }
+
+        function editQA(id) {
+            const qa = allQA.find(q => q.id === id);
+            if (!qa) return;
+            document.getElementById('qaEditId').value = qa.id;
+            document.getElementById('qaEditModalTitle').textContent = `Q&A編集 (ID: ${qa.id})`;
+            document.getElementById('qaEditContent').value = qa.static_response || '';
+            document.getElementById('qaEditModal').classList.add('show');
+        }
+
+        function closeQAModal() { document.getElementById('qaEditModal').classList.remove('show'); }
+
+        async function saveQA() {
+            const id = document.getElementById('qaEditId').value;
+            const content = document.getElementById('qaEditContent').value;
+            
+            const isNew = !id;
+            const url = isNew ? '/api/fallbacks' : `/api/fallbacks/${id}`;
+            const method = isNew ? 'POST' : 'PUT';
+
+            try {
+                const response = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ static_response: content })
+                });
+                
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || `HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                alert(result.message);
+                closeQAModal();
+                loadQA(); // Q&Aリストを再読み込み
+                
+            } catch (error) {
+                console.error('Error saving Q&A:', error);
+                alert('Q&Aの保存に失敗しました: ' + error.message);
+            }
+        }
+
+        async function deleteQA(id) {
+            if (!confirm(`ID ${id} のQ&Aを削除してもよろしいですか？`)) return;
+            try {
+                const response = await fetch(`/api/fallbacks/${id}`, { method: 'DELETE' });
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                alert('Q&Aを削除しました');
+                loadQA(); // Q&Aリストを再読み込み
+            } catch (error) {
+                console.error('Error deleting Q&A:', error);
+                alert('削除に失敗しました: ' + error.message);
+            }
+        }
+
+        async function vectorizeAllMissing() {
+            const btn = document.getElementById('vectorizeAllBtn');
+            const originalText = btn.textContent;
+            if (!confirm('ベクトルが未処理のQ&Aをすべて処理します。よろしいですか？ (件数により時間がかかります)')) return;
+
+            btn.disabled = true;
+            btn.textContent = '処理中...';
+            
+            try {
+                const response = await fetch('/api/fallbacks/vectorize-all', { method: 'POST' });
+                if (!response.ok) {
+                     const err = await response.json();
+                    throw new Error(err.detail || `HTTP error! status: ${response.status}`);
+                }
+                const result = await response.json();
+                alert(result.message);
+                loadQA(); // Q&Aリストを再読み込み
+            } catch (error) {
+                 console.error('Error vectorizing all:', error);
+                alert('ベクトル化処理に失敗しました: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        // =============================================
+        // [3] イベントリスナーと初期読み込み
+        // =============================================
         document.getElementById('searchInput').addEventListener('input', filterAndDisplayDocuments);
         document.getElementById('categoryFilter').addEventListener('change', filterAndDisplayDocuments);
         document.getElementById('editModal').addEventListener('click', function(e){ if (e.target === this) closeEditModal(); });
+        document.getElementById('qaEditModal').addEventListener('click', function(e){ if (e.target === this) closeQAModal(); });
 
         // 初期読み込み
-        loadDocuments();
+        loadDocuments(); // 最初のタブのデータを読み込む
+        loadQA(); // 2番目のタブのデータも裏で読み込む
     </script>
 </body>
 </html>

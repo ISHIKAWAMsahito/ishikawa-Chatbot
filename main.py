@@ -74,134 +74,8 @@ SUPER_ADMIN_EMAILS = [email.strip() for email in SUPER_ADMIN_EMAILS_STR.split(',
 ALLOWED_CLIENT_EMAILS_STR = os.getenv("ALLOWED_CLIENT_EMAILS", "")
 ALLOWED_CLIENT_EMAILS = [email.strip() for email in ALLOWED_CLIENT_EMAILS_STR.split(',') if email.strip()]
 # キーワードマッピング
-KEYWORD_MAP = {
-    # 授業関連
-    "授業": [
-        "学事暦", "シラバス", "授業計画", "年間スケジュール", "夏休み", "冬休み", "春休み",
-        "夏季休業", "冬季休業", "春季休業", "授業時間", "90分", "講時", "補講", "休講",
-        "情報ポータル", "授業", "カリキュラム"
-        # 俗語・略語
-        "コマ", "1限", "2限", "3限", "4限", "5限", "6限", "授サボ", "出サボ", "授サ",
-        "オンデマ", "オンデマンド", "対面", "リモート", "ズーム授業"
-    ],
-    # 欠席関連
-    "欠席手続き": [
-        "忌引き", "休む", "欠席", "休講", "病気", "インフルエンザ", "欠席届", "公認欠席",
-        "特別欠席", "感染症", "教育実習", "クラブ", "学校保健安全法","課外活動","大会","出場"
-        # 俗語・略語
-        "サボる", "サボ", "バックれる", "体調不良", "風邪", "熱", "寝坊", "遅刻", "遅延証明","講義休みたい"
-    ],
-    # 試験関連
-    "試験": [
-        "試験", "テスト", "追試", "再試", "成績", "レポート", "課題", "定期試験", "60分",
-        "成績評価", "秀", "優", "良", "可", "不可", "GPA", "Grade Point Average",
-        "成績確認", "不正行為", "カンニング", "受験許可証",
-        # 俗語・略語
-        "単位落ち", "単落ち", "単位取る", "単位落とす", "赤点", "追試代", "再試代", "テス勉",
-        "テスト勉強", "カンペ", "チート", "スマホ持ち込み", "時計代わり"
-    ],
-    # 証明書関連
-    "証明書": [
-        "証明書", "学割", "発行", "学生証", "休学", "復学", "退学", "再入学", "転学部",
-        "転学科", "卒業", "在学", "卒業見込", "在学年限", "8年", "除籍", "卒業延期",
-        "前期末卒業", "卒業見込証明書",
-        # 俗語・略語
-        "学割証", "学割切符", "卒見証", "在学証", "卒業証", "学籍証明"
-    ],
-    # 留学関連
-    "留学": [
-        "留学", "海外", "協定校", "IEC", "国際交流", "交換留学", "半期留学", "短期海外研修",
-        "韓国", "中国", "台湾", "タイ", "ベトナム", "アメリカ", "イギリス", "フランス",
-        "インドネシア", "マレーシア", "ルーマニア", "ホームステイ", "UC Davis",
-        "エセックス大学", "チェンマイ大学", "TOEIC", "単位認定", "60単位","在留"
-        # 俗語・略語
-        "トフル", "トーイック", "エルツ", "IELTS", "スコア足りない", "留学費用", "留学奨学金"
-    ],
-    # 学生支援
-    "学生支援": [
-        "サークル", "部活", "ボランティア", "障がい", "障害", "データサイエンス",
-        "AI教育プログラム", "札幌圏大学単位互換制度", "国内留学制度", "沖縄国際大学",
-        "関東学院大学", "コーディネーター", "修学支援", "情報保障", "PCテイク", "通学介助",
-        "別室受験", "サポートセンター", "学生支援課","窓口","事故","クラブ"
-        # 俗語・略語
-        "部活費", "サークル費", "ボラ活", "支援制度", "障サポ"
-    ],
-    # 経済支援
-    "経済支援": [
-        "奨学金", "授業料", "学費", "免除", "支援金", "学費支援", "家計急変", "被災学生",
-        "授業料減免",
-        # 俗語・略語
-        "奨学", "奨学金免除", "学費免除", "学費タダ", "授業料免除", "給付型", "貸与型"
-    ],
-    # 資格関連
-    "資格": [
-        "資格", "免許", "講座", "教員免許状", "学芸員", "Teaching License",
-        "Museum Curator", "中学", "高校", "小学校", "特別支援学校", "人文学部", "法学部",
-        "経済経営学部", "人間科学科", "英語英米文学科", "こども発達学科", "法律学科",
-        "経済学科", "経営学科", "社会", "英語", "地歴", "公民", "商業", "教育実習",
-        "教職実践演習", "日商簿記検定", "実用英語技能検定",
-        # 俗語・略語
-        "教免", "教採", "教職課程", "簿記2級", "英検2級", "英検準1", "TOEIC650"
-    ],
-    # 
-    "相談": [
-        "相談", "カウンセリング", "悩み", "メンタル", "ハラスメント", "トラブル",
-        # 俗語・略語
-        "メンヘラ", "メンタルやられた", "しんどい", "パワハラ", "セクハラ", "モラハラ"
-    ],
-    # 施設関連
-    "施設": [
-        "図書館", "場所", "どこ", "Wi-Fi", "PC", "パソコン", "教室", "体育館",
-        "グラウンド", "駐車場", "スポーツ施設", "江別第2キャンパス", "メインアリーナ",
-        "サブアリーナ", "上靴", "C館","施設","故障","破損","器物","F館","学生館","体育センター","SGUホール","50年記念館","用具","体育センター","陸上競技場",
-        # 俗語・略語
-        "図書", "ラーニングコモンズ", "自習室", "食堂", "カフェ", "購買部", "ジム"
-    ],
-    # 生協関連
-    "生協": [
-        "生協", "コープ", "教科書", "共済", "組合員", "購買", "食堂", "書籍", "パソコン",
-        "カフェテリア", "学内ショップ", "メニュー","自動車学校","教習所"
-        # 俗語・略語
-        "学食", "学食メニュー", "生協食堂", "生協カード", "生協ポイント","自学"
-    ],
-    # 履修関連
-    "履修": [
-        "履修", "科目", "単位", "必修", "履修登録", "セメスター制度", "前期", "後期",
-        "124単位", "卒業要件", "45時間", "事前学修", "事後学修", "履修登録単位数",
-        "上限", "42単位", "48単位", "面接授業", "遠隔授業", "英語IA", "英語IB",
-        "スポーツA", "スポーツB", "バドミントン", "バレーボール", "バスケットボール",
-        "卓球", "教養科目", "専門科目", "Moodle", "履修登録取消制度", "抽選科目",
-        "他大学", "既修得単位",
-        # 俗語・略語
-        "履サボ", "履修落ち", "履修漏れ", "履修ミス", "履修取消", "履修キャンセル",
-        "単位落ち", "単落ち", "単位足りない", "必修落ち", "必修サボ", "抽選落ち",
-        "履修登録システム", "履修登録エラー"
-    ],
-    # 連絡・提出関連
-    "連絡・提出": [
-        "情報ポータル", "掲示", "掲示板", "メールアドレス", "提出物", "提出時間", "期限",
-        "時刻", "レポート表紙", "学籍番号", "氏名", "時間割", "学科", "年", "ページ数",
-        "教育支援課",
-        # 俗語・略語
-        "ポータル", "ポタ", "掲示見ろ", "メール確認", "レポ提出", "レポ出す", "課題提出",
-        "締切", "デッドライン", "DL", "〆切", "遅延提出", "遅れ提出", "再提出"
-    ],
-
-"キャリア支援": [
-    "就職","キャリア","就活","面接"
-],
-"学則":[
-    "学則","規定","規則","条項","条例","定め","基準","決まりごと"
-],
-
-"大学の概要":[
-    "歴史","概要","沿革","開設","開学","募集停止","廃止",
-]
-
-}
 
 # データベースから読み込むフォールバック情報を格納するグローバル変数
-g_category_fallbacks: Dict[str, Dict[str, Any]] = {}
 chat_histories: Dict[str, List[Dict[str, str]]] = defaultdict(list)
 MAX_HISTORY_LENGTH = 20 
 # --------------------------------------------------------------------------
@@ -365,6 +239,15 @@ class SupabaseClientManager:
         # 作成した新しいRPC関数 'match_documents_by_vector' を呼び出す
         result = self.client.rpc("match_documents_by_vector", params).execute()
         return result.data or []
+    def search_fallback_qa(self, embedding: List[float], match_count: int) -> List[dict]:
+        """Q&Aフォールバックをベクトル検索する"""
+        params = {
+            "p_query_embedding": embedding,
+            "p_match_count": match_count
+        }
+        # ステップ1で作成した 'match_fallback_qa' を呼び出す
+        result = self.client.rpc("match_fallback_qa", params).execute()
+        return result.data or []
     def __init__(self, url: str, key: str):
         self.client: Client = create_client(url, key)
 
@@ -458,48 +341,6 @@ class SettingsManager:
             self.remove_websocket(conn)
 
 
-async def create_fallback_response_from_db(category: str, model: str) -> str:
-    """
-    DBに情報がない場合、カテゴリに応じたフォールバック応答をDBから取得して生成する。
-    URLがあれば要約を試み、失敗すれば静的応答を返す。
-    """
-    info = g_category_fallbacks.get(category)
-    if not info:
-        return "申し訳ありませんが、お尋ねの件について情報が見つかりませんでした。[大学公式サイト](https://www.sgu.ac.jp/)をご確認ください。"
-    
-    url_to_summarize = info.get("url_to_summarize")
-    if url_to_summarize:
-        try:
-            web_scraper = WebScraper()
-            content = web_scraper.scrape(url_to_summarize)
-            if content and len(content) > 100:
-                prompt = f"以下の大学公式サイトの内容を学生向けに分かりやすく要約してください：\n\n{content[:4000]}"
-                gemini_model = genai.GenerativeModel(model)
-                response = await safe_generate_content(gemini_model, prompt, stream=False)
-                
-                # --- 修正: .text の代わりに .parts でコンテンツの有無を確認 ---
-                if response and response.parts:
-                    # .parts が存在することを（安全に）確認できたので、.text にアクセスする
-                    return f"**▼ {category}に関する公式情報**\n{response.text}\n\n詳細は[こちら]({url_to_summarize})をご確認ください。"
-                else:
-                    # 応答が空だった場合（セーフティブロック or モデルが空の文字列を生成）
-                    logging.warning(f"URL要約エラー ({url_to_summarize}): 応答が空でした。")
-                    if response:
-                        try:
-                            # ブロックされた場合などの原因をログに残す
-                            logging.warning(f"Finish Reason: {response.candidates[0].finish_reason}")
-                            logging.warning(f"Prompt Feedback: {response.prompt_feedback}")
-                        except Exception:
-                            pass # 詳細が取得できない場合
-                # --- 修正ここまで ---
-
-        except Exception as e:
-            logging.warning(f"URL要約エラー ({url_to_summarize}): {e}")
-
-    # (要約に失敗した場合は、静的応答が返される)
-    return info.get("static_response", "情報が見つかりませんでした。")
-
-
 # --------------------------------------------------------------------------
 # 4. FastAPIアプリケーションのセットアップ
 # --------------------------------------------------------------------------
@@ -511,7 +352,8 @@ settings_manager: Optional[SettingsManager] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """認証システムを含むアプリケーションのライフサイクル管理"""
-    global db_client, settings_manager, g_category_fallbacks
+    # 'g_category_fallbacks' を global 宣言から削除
+    global db_client, settings_manager
     logging.info("--- アプリケーション起動処理開始(認証システム対応) ---")
 
     settings_manager = SettingsManager()
@@ -521,18 +363,7 @@ async def lifespan(app: FastAPI):
             db_client = SupabaseClientManager(url=SUPABASE_URL, key=SUPABASE_KEY)
             logging.info("Supabaseクライアントの初期化完了。")
 
-            # DBからフォールバック情報を読み込む
-            try:
-                response = db_client.client.table("category_fallbacks").select("*").execute()
-                if response.data:
-                    for item in response.data:
-                        g_category_fallbacks[item['category_name']] = {
-                            "url_to_summarize": item.get('url_to_summarize'),
-                            "static_response": item.get('static_response')
-                        }
-                    logging.info(f"{len(g_category_fallbacks)}件のカテゴリ別フォールバック情報をDBからロードしました。")
-            except Exception as e:
-                logging.error(f"DBからのフォールバック情報ロードに失敗: {e}")
+
 
         except Exception as e:
             logging.error(f"Supabase初期化エラー: {e}")
@@ -1195,6 +1026,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             if not temp_full_response.strip():
                  temp_full_response = "回答を生成できませんでした。もう一度お試しください。"
 
+# ↓↓↓ main.pyの 1060行目あたりから置き換える ↓↓↓
+
             full_response = format_urls_as_links(temp_full_response)
             
             # add_to_history は一時無効化済み（no-op）なので呼び出しても記録されません
@@ -1202,26 +1035,72 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             add_to_history(session_id, "assistant", temp_full_response)
             
             yield f"data: {json.dumps({'content': full_response})}\n\n"
+        
+        # --- ここからが「キーワードマップ廃止」の置き換え ---
         else:
-            # --- フォールバック処理：ベクトル検索で情報が見つからなかった場合 ---
-            # ここではじめて KEYWORD_MAP を使い、カテゴリを判定する
-            category = next((cat for cat, keys in KEYWORD_MAP.items() if any(key in user_input for key in keys)), "その他")
+            # --- フォールバック処理 (Stage 2: Q&Aベクトル検索) ---
+            # メインのRAG検索(Stage 1)で、類似度65%以上の情報が見つからなかった
+            logging.info(f"Stage 1 RAG 失敗。Stage 2 (Q&Aベクトル検索) を実行します。")
             
-            fallback_response = await create_fallback_response_from_db(category, chat_req.model)
-            full_response = format_urls_as_links(fallback_response)
+            try:
+                # Stage 1 で使用した query_embedding を再利用 (943行目で生成済み)
+                fallback_results = db_client.search_fallback_qa(
+                    embedding=query_embedding, 
+                    match_count=1  # 最も近いQ&Aを1つだけ取得
+                )
+                
+                if fallback_results:
+                    # Q&Aベクトル検索で最も近いものが見つかった
+                    best_match = fallback_results[0]
+                    
+                    # Q&Aに対する類似度の「足切りライン」
+                    # (メインRAGの65%よりは低く設定するのが一般的です)
+                    FALLBACK_SIMILARITY_THRESHOLD = 0.30 
+                    
+                    if best_match.get('similarity', 0) >= FALLBACK_SIMILARITY_THRESHOLD:
+                        logging.info(f"Stage 2 RAG 成功。類似Q&Aを回答します (Similarity: {best_match['similarity']:.2f})")
+                        
+                        # Q&Aが見つかった場合の定型文
+                        fallback_response = f"""データベースに直接の情報は見つかりませんでしたが、関連する「よくあるご質問」がありましたのでご案内します。
+
+---
+{best_match['content']}
+"""
+                        full_response = format_urls_as_links(fallback_response)
+                    else:
+                        # Q&A検索もしたが、類似度が低すぎた
+                        logging.info(f"Stage 2 RAG 失敗。類似するQ&Aが見つかりませんでした (Best Similarity: {best_match.get('similarity', 0):.2f})")
+                        fallback_response = "申し訳ありませんが、ご質問に関連する情報がデータベース（Q&Aを含む）に見つかりませんでした。大学公式サイトをご確認いただくか、学生支援課までお問い合わせください。"
+                        full_response = format_urls_as_links(fallback_response)
+
+                else:
+                    # Q&A検索で何もヒットしなかった（DBが空など）
+                    logging.info(f"Stage 2 RAG 失敗。Q&Aデータベースが空か、検索エラーです。")
+                    fallback_response = "申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、学生支援課までお問い合わせください。"
+                    full_response = format_urls_as_links(fallback_response)
+
+            except Exception as e_fallback:
+                logging.error(f"Stage 2 (Q&A検索) でエラーが発生: {e_fallback}")
+                fallback_response = "申し訳ありません。現在、関連情報の検索中にエラーが発生しました。時間をおいて再度お試しください。"
+                full_response = format_urls_as_links(fallback_response)
+
             
             # add_to_history は no-op のため記録されません
             add_to_history(session_id, "user", user_input)
-            add_to_history(session_id, "assistant", fallback_response)
+            add_to_history(session_id, "assistant", fallback_response) # 生のテキストを記録
             
             yield f"data: {json.dumps({'content': full_response})}\n\n"
+        # --- 置き換えはここまで ---
+
 
         yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+    
     except Exception as e:
         error_message = f"エラーが発生しました: {str(e)}"
         logging.error(f"チャットロジックエラー: {e}\n{traceback.format_exc()}")
         yield f"data: {json.dumps({'content': error_message})}\n\n"
 
+# --- 置き換えはここまで (enhanced_chat_logic 関数の末尾) ---
 # --- ここまでが enhanced_chat_logic 関数 ---
 
 # 履歴管理用エンドポイント
@@ -1270,6 +1149,174 @@ async def save_feedback(feedback: FeedbackRequest):
         return {"message": "フィードバックを保存しました"}
     except Exception as e:
         logging.error(f"フィードバック保存エラー: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Q&A (category_fallbacks) 管理API ---
+# main.py のAPIエンドポイント定義エリア (例: 1150行目あたり) に追加してください
+
+@app.get("/api/fallbacks")
+async def get_all_fallbacks(user: dict = Depends(require_auth)):
+    """Q&A(フォールバック)をすべて取得"""
+    if not db_client:
+        raise HTTPException(503, "DB not initialized")
+    try:
+        result = db_client.client.table("category_fallbacks").select("*").order("id", desc=True).execute()
+        return {"fallbacks": result.data or []}
+    except Exception as e:
+        logging.error(f"Q&A一覧取得エラー: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/fallbacks")
+async def create_fallback(request: Dict[str, Any], user: dict = Depends(require_auth)):
+    """新しいQ&Aを作成（この時点ではベクトル化しない）"""
+    if not db_client:
+        raise HTTPException(503, "DB not initialized")
+    try:
+        # category_name は古い設計の名残なので、ここでは使わない
+        new_qa_text = request.get("static_response", "")
+        if not new_qa_text:
+            raise HTTPException(status_code=400, detail="static_response (Q&Aテキスト) は必須です")
+
+        # embedding は NULL のまま挿入
+        insert_data = {
+            "static_response": new_qa_text,
+            "url_to_summarize": request.get("url_to_summarize") # (現在は使われないが、カラムが存在する場合)
+        }
+        
+        result = db_client.client.table("category_fallbacks").insert(insert_data).execute()
+        
+        logging.info(f"新規Q&A {result.data[0]['id']} を作成しました（管理者: {user.get('email')}）")
+        return {"message": "新しいQ&Aを作成しました。ベクトル化を行ってください。", "fallback": result.data[0]}
+    except Exception as e:
+        logging.error(f"Q&A作成エラー: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/fallbacks/{qa_id}")
+async def update_fallback(qa_id: int, request: Dict[str, Any], user: dict = Depends(require_auth)):
+    """Q&Aを更新（テキスト変更時に自動でベクトル化）"""
+    if not db_client or not settings_manager:
+        raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
+    try:
+        update_data = {}
+        
+        # 1. static_response (Q&Aテキスト) が更新されるかチェック
+        if "static_response" in request:
+            new_content = request["static_response"]
+            update_data["static_response"] = new_content
+            
+            # --- 自動ベクトル化 ---
+            embedding_model = settings_manager.settings.get("embedding_model", "text-embedding-004")
+            logging.info(f"Q&A {qa_id} のテキストが変更されたため、ベクトルを再生成します...")
+            try:
+                embedding_response = genai.embed_content(
+                    model=embedding_model,
+                    content=new_content
+                )
+                update_data["embedding"] = embedding_response["embedding"]
+                logging.info(f"Q&A {qa_id} のベクトル再生成が完了しました。")
+            except Exception as e:
+                logging.error(f"Q&Aベクトル再生成エラー: {e}")
+                # ユーザーにはエラーを返すが、テキストの更新は試みる (ベクトルはNULLになる)
+                update_data["embedding"] = None
+                logging.warning(f"Q&A {qa_id} のベクトル化に失敗しましたが、テキストは更新します。")
+
+        # 2. url_to_summarize も更新可能 (古いカラムが残っている場合)
+        if "url_to_summarize" in request:
+            update_data["url_to_summarize"] = request.get("url_to_summarize")
+
+        if not update_data:
+            raise HTTPException(status_code=400, detail="更新するデータがありません")
+        
+        result = db_client.client.table("category_fallbacks").update(update_data).eq("id", qa_id).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Q&Aが見つかりません")
+        
+        logging.info(f"Q&A {qa_id} を更新しました（管理者: {user.get('email')}）")
+        return {"message": "Q&Aを更新しました", "fallback": result.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Q&A更新エラー: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/fallbacks/{qa_id}")
+async def delete_fallback(qa_id: int, user: dict = Depends(require_auth)):
+    """Q&Aを削除"""
+    if not db_client:
+        raise HTTPException(503, "DB not initialized")
+    try:
+        result = db_client.client.table("category_fallbacks").delete().eq("id", qa_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Q&Aが見つかりません")
+        
+        logging.info(f"Q&A {qa_id} を削除しました（管理者: {user.get('email')}）")
+        return {"message": "Q&Aを削除しました"}
+    except Exception as e:
+        logging.error(f"Q&A削除エラー: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/fallbacks/vectorize-all")
+async def vectorize_all_missing_fallbacks(user: dict = Depends(require_auth)):
+    """embedding が NULL のQ&Aをすべてベクトル化する"""
+    if not db_client or not settings_manager:
+        raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
+
+    logging.info(f"全Q&Aのベクトル化処理を開始...（管理者: {user.get('email')}）")
+    
+    try:
+        # 1. embedding が NULL の Q&A をすべて取得
+        response = db_client.client.table("category_fallbacks").select("id, static_response").is_("embedding", "null").execute()
+        
+        if not response.data:
+            return {"message": "ベクトル化が必要なQ&Aはありませんでした。"}
+
+        embedding_model = settings_manager.settings.get("embedding_model", "text-embedding-004")
+        count = 0
+        
+        for item in response.data:
+            item_id = item['id']
+            text_to_vectorize = item['static_response']
+
+            if not text_to_vectorize or not text_to_vectorize.strip():
+                logging.warning(f"Q&A ID {item_id}: テキストが空のためスキップします。")
+                continue
+
+            try:
+                # 2. ベクトル化
+                embedding_response = genai.embed_content(
+                    model=embedding_model,
+                    content=text_to_vectorize
+                )
+                new_embedding = embedding_response["embedding"]
+
+                # 3. DBを更新
+                db_client.client.table("category_fallbacks").update({
+                    "embedding": new_embedding
+                }).eq("id", item_id).execute()
+                
+                logging.info(f"Q&A ID {item_id}: ベクトル化完了。")
+                count += 1
+                await asyncio.sleep(1) # APIレート制限対策
+
+            except Exception as e:
+                if "429" in str(e) or "quota" in str(e).lower():
+                    logging.warning(f"APIレート制限のため30秒待機します... (ID {item_id})")
+                    await asyncio.sleep(30)
+                    # 1回だけ再試行
+                    embedding_response = genai.embed_content(model=embedding_model, content=text_to_vectorize)
+                    new_embedding = embedding_response["embedding"]
+                    db_client.client.table("category_fallbacks").update({"embedding": new_embedding}).eq("id", item_id).execute()
+                    logging.info(f"Q&A ID {item_id}: (再試行) ベクトル化完了。")
+                    count += 1
+                else:
+                    logging.error(f"Q&A ID {item_id} のベクトル化エラー: {e}")
+
+        logging.info(f"全Q&Aベクトル化処理完了。 {count}件を処理しました。")
+        return {"message": f"ベクトル化処理が完了しました。{count}件のQ&Aを更新しました。"}
+
+    except Exception as e:
+        logging.error(f"全Q&Aベクトル化処理中にエラーが発生: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/feedback/stats")
