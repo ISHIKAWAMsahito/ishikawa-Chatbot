@@ -208,7 +208,7 @@ MAX_HISTORY_LENGTH = 20
 # 3. 内部コンポーネントの定義
 # --------------------------------------------------------------------------
 
-def split_text(text: str, max_length: int = 1000, overlap: int = 100) -> List[str]:
+def split_text(text: str, max_length: int = 1000, overlap: int = 200) -> List[str]:
     """テキストをチャンクに分割"""
     chunks = []
     start = 0
@@ -466,6 +466,7 @@ async def create_fallback_response_from_db(category: str, model: str) -> str:
     info = g_category_fallbacks.get(category)
     if not info:
         return "申し訳ありませんが、お尋ねの件について情報が見つかりませんでした。[大学公式サイト](https://www.sgu.ac.jp/)をご確認ください。"
+    
     url_to_summarize = info.get("url_to_summarize")
     if url_to_summarize:
         try:
@@ -475,10 +476,27 @@ async def create_fallback_response_from_db(category: str, model: str) -> str:
                 prompt = f"以下の大学公式サイトの内容を学生向けに分かりやすく要約してください：\n\n{content[:4000]}"
                 gemini_model = genai.GenerativeModel(model)
                 response = await safe_generate_content(gemini_model, prompt, stream=False)
-                if response and response.text:
+                
+                # --- 修正: .text の代わりに .parts でコンテンツの有無を確認 ---
+                if response and response.parts:
+                    # .parts が存在することを（安全に）確認できたので、.text にアクセスする
                     return f"**▼ {category}に関する公式情報**\n{response.text}\n\n詳細は[こちら]({url_to_summarize})をご確認ください。"
+                else:
+                    # 応答が空だった場合（セーフティブロック or モデルが空の文字列を生成）
+                    logging.warning(f"URL要約エラー ({url_to_summarize}): 応答が空でした。")
+                    if response:
+                        try:
+                            # ブロックされた場合などの原因をログに残す
+                            logging.warning(f"Finish Reason: {response.candidates[0].finish_reason}")
+                            logging.warning(f"Prompt Feedback: {response.prompt_feedback}")
+                        except Exception:
+                            pass # 詳細が取得できない場合
+                # --- 修正ここまで ---
+
         except Exception as e:
             logging.warning(f"URL要約エラー ({url_to_summarize}): {e}")
+
+    # (要約に失敗した場合は、静的応答が返される)
     return info.get("static_response", "情報が見つかりませんでした。")
 
 
