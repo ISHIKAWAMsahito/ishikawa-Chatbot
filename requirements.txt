@@ -1,6 +1,7 @@
 # --- Web & API ---
 fastapi==0.115.12
 pydantic==2.11.9
+python-multipart==0.0.20
 uvicorn==0.34.2
 gunicorn==23.0.0
 requests==2.32.5
