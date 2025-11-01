@@ -1070,14 +1070,23 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         context = ""
         has_specific_info = False
         MIN_SIMILARITY_THRESHOLD = 0.65 # 類似度のしきい値
-        search_results = [] # ★★★ この行を追加 ★★★
+        search_results = [] # ★★★ ここで初期化 ★★★
 
         # --- メインの検索ロジック：ベクトル検索を優先 ---
         try:
             query_embedding_response = genai.embed_content(model=chat_req.embedding_model, content=user_input)
             query_embedding = query_embedding_response["embedding"]
             
-# 類似度がしきい値以上の結果「のみ」を抽出する
+            # ★★★ 修正点: ここにベクトル検索の実行処理を追加 ★★★
+            if db_client:
+                search_results = db_client.search_documents_by_vector(
+                    collection_name=chat_req.collection,
+                    embedding=query_embedding,
+                    match_count=chat_req.top_k
+                )
+            # ★★★ 修正ここまで ★★★
+
+            # 類似度がしきい値以上の結果「のみ」を抽出する
             relevant_docs = [
                 doc for doc in search_results 
                 if doc.get('content') and doc.get('similarity', 0) >= MIN_SIMILARITY_THRESHOLD
