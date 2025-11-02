@@ -489,6 +489,7 @@
             }
         }
 
+// [DB.html] 436行目あたり...
         function displayQA(qaList) {
             const tbody = document.getElementById('qaBody');
             tbody.innerHTML = '';
@@ -503,8 +504,11 @@
                     embeddingStatus = '<span class="embedding-status ng">未処理</span>';
                 }
 
+                // ★★★ ここを修正 ★★★
+                // (カテゴリー列を追加し、ヘッダーの6列と一致させます)
                 tr.innerHTML = `
                     <td>${qa.id}</td>
+                    <td><span class="metadata">${escapeHtml(qa.category_name || '未分類')}</span></td>
                     <td><div class="content-preview">${escapeHtml(qa.static_response || '')}</div></td>
                     <td>${embeddingStatus}</td>
                     <td><span class="metadata">${created}</span></td>
