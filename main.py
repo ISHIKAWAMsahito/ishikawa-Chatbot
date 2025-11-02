@@ -1168,39 +1168,69 @@ async def get_all_fallbacks(user: dict = Depends(require_auth)):
 
 # [main.py] 1162行目あたり
 
+# [main.py] 1162行目あたり
+
 @app.post("/api/fallbacks")
 async def create_fallback(request: Dict[str, Any], user: dict = Depends(require_auth)):
-    """新しいQ&Aを作成（この時点ではベクトル化しない）"""
-    if not db_client:
-        raise HTTPException(503, "DB not initialized")
+    """新しいQ&Aを作成（保存時に自動でベクトル化）"""
+    # 依存関係に settings_manager を追加
+    if not db_client or not settings_manager: 
+        raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
+    
     try:
-        # ★★★ category_name をリクエストから取得 ★★★
         new_qa_text = request.get("static_response", "")
-        category_name = request.get("category_name") # ★★★ 追加 ★★★
+        category_name = request.get("category_name") 
 
         if not new_qa_text:
             raise HTTPException(status_code=400, detail="static_response (Q&Aテキスト) は必須です")
         
-        # ★★★ バリデーション追加 ★★★
         if not category_name:
-            # ここでエラーを発生させないと、DBの制約エラー (23502) になる
             raise HTTPException(status_code=400, detail="category_name は必須です")
 
-        # embedding は NULL のまま挿入
+        # --- ここから自動ベクトル化ロジック ---
+        embedding = None
+        try:
+            # 設定マネージャーからエンベディングモデルを取得
+            embedding_model = settings_manager.settings.get("embedding_model", "text-embedding-004")
+            logging.info(f"新規Q&Aのベクトルを生成します...")
+            
+            # ベクトルを生成
+            embedding_response = genai.embed_content(
+                model=embedding_model,
+                content=new_qa_text
+            )
+            embedding = embedding_response["embedding"]
+            logging.info(f"新規Q&Aのベクトル生成が完了しました。")
+        
+        except Exception as e:
+            # レート制限などで失敗しても、テキストの保存は続行する (embedding = None のまま)
+            logging.error(f"新規Q&Aのベクトル生成エラー: {e}")
+            logging.warning(f"ベクトル化に失敗しましたが、テキストは保存します。")
+        # --- ここまで ---
+
+        # embedding を挿入データに含める
         insert_data = {
             "static_response": new_qa_text,
-            "category_name": category_name, # ★★★ 追加 ★★★
-            "url_to_summarize": request.get("url_to_summarize") # (現在は使われないが、カラムが存在する場合)
+            "category_name": category_name,
+            "url_to_summarize": request.get("url_to_summarize"), # (古いカラムが残っている場合)
+            "embedding": embedding  # (None またはベクトル)
         }
         
         result = db_client.client.table("category_fallbacks").insert(insert_data).execute()
         
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Q&Aの作成に失敗しました")
+
         logging.info(f"新規Q&A {result.data[0]['id']} を作成しました（管理者: {user.get('email')}）")
-        return {"message": "新しいQ&Aを作成しました。ベクトル化を行ってください。", "fallback": result.data[0]}
+        
+        # メッセージを変更
+        message = "新しいQ&Aを保存し、ベクトル化も完了しました。" if embedding else "新しいQ&Aを保存しました（ベクトル化には失敗）"
+        return {"message": message, "fallback": result.data[0]}
+    
     except HTTPException:
         raise # 400エラーなどをそのまま返す
     except Exception as e:
-        # ★★★ DB制約エラーのハンドリング改善 ★★★
+        # DB制約エラーのハンドリング
         if "23502" in str(e) and "category_name" in str(e):
              raise HTTPException(status_code=400, detail="category_name は必須です (DB Error 23502)")
         logging.error(f"Q&A作成エラー: {e}")
