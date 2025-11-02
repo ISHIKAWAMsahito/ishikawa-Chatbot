@@ -244,7 +244,7 @@
                 <button class="btn secondary" onclick="window.location.href='/admin'">← 管理画面に戻る</button>
             </div>
 
-            <div class="table-container">
+<div class="table-container">
                 <div id="loadingIndicator" class="loading">データを読み込み中...</div>
                 <table id="documentsTable" aria-live="polite">
                     <thead>
@@ -256,8 +256,10 @@
                             <th scope="col">作成日時</th>
                             <th scope="col">操作</th>
                         </tr>
-                <div id="paginationControls" class="pagination-controls hidden">
-                    </div>
+                    </thead>
+                    
+                    <tbody id="documentsBody"></tbody>
+                
                 </table>
                 
 >
