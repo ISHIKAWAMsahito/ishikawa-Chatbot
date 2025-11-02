@@ -21,7 +21,7 @@ import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, FileResponse, Response
 from pydantic import BaseModel
 
@@ -684,15 +684,63 @@ async def get_documents(collection_name: str):
 
 # --- ドキュメント管理API（新規追加） ---
 @app.get("/api/documents/all")
-async def get_all_documents(user: dict = Depends(require_auth)):
-    """全ドキュメントを取得（管理者のみ）"""
+async def get_all_documents(
+    user: dict = Depends(require_auth),
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1, le=1000),
+    search: Optional[str] = Query(None),
+    category: Optional[str] = Query(None)
+):
+    """
+    全ドキュメントをページネーション、検索、カテゴリフィルタ対応で取得（管理者のみ）
+    """
     if not db_client:
         raise HTTPException(503, "DB not initialized")
     try:
-        result = db_client.client.table("documents").select("*").order("id", desc=True).limit(1000).execute()
-        return {"documents": result.data or []}
+        # --- 1. ベースとなるクエリを構築 ---
+        # (SupabaseのPostgRESTビルダーを使って、動的にクエリを組み立てます)
+        query = db_client.client.table("documents")
+        count_query = db_client.client.table("documents")
+
+        # --- 2. フィルタ条件の適用 ---
+        if category:
+            query = query.eq("metadata->>category", category)
+            count_query = count_query.eq("metadata->>category", category)
+
+        if search:
+            # content, category, source のいずれかに一致
+            search_term = f"%{search}%"
+            query = query.or_(
+                f"content.ilike.{search_term}",
+                f"metadata->>category.ilike.{search_term}",
+                f"metadata->>source.ilike.{search_term}"
+            )
+            count_query = count_query.or_(
+                f"content.ilike.{search_term}",
+                f"metadata->>category.ilike.{search_term}",
+                f"metadata->>source.ilike.{search_term}"
+            )
+
+        # --- 3. 総件数の取得 (フィルタ適用後) ---
+        # .select("id", count='exact') で、実際のデータを取得せず件数だけを取得
+        count_response = count_query.select("id", count='exact').execute()
+        total_records = count_response.count or 0
+
+        # --- 4. ページ指定されたデータの取得 ---
+        # Supabase (PostgREST) の range は limit/offset 方式
+        offset = (page - 1) * limit
+        # .range(from, to) ※ to は inclusive
+        data_response = query.select("*").order("id", desc=True).range(offset, offset + limit - 1).execute()
+
+        return {
+            "documents": data_response.data or [],
+            "total": total_records,
+            "page": page,
+            "limit": limit
+        }
+
     except Exception as e:
-        logging.error(f"ドキュメント一覧取得エラー: {e}")
+        logging.error(f"ドキュメント一覧(ページネーション)取得エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/documents/{doc_id}")

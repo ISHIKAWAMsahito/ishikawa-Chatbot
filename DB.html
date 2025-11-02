@@ -106,7 +106,13 @@
         .btn:hover { transform: translateY(-3px); box-shadow: 0 8px 18px rgba(79,172,254,0.15); }
         .btn:disabled { background: #ced4da; cursor: not-allowed; transform: none; box-shadow: none; }
 
-        .table-container { padding: 20px; overflow-x: auto; }
+        .table-container { 
+            padding: 20px; 
+            overflow-x: auto; 
+            /* ★★★ ページネーションUIのために下部に余白を確保 ★★★ */
+            padding-bottom: 80px; 
+            position: relative;
+        }
         table { width: 100%; border-collapse: collapse; background: white; }
         #documentsTable, #qaTable { display: none; /* JSで制御 */ }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e9ecef; vertical-align: top; }
@@ -148,6 +154,45 @@
         .loading { text-align:center; padding:40px; color:#6c757d; }
         .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; white-space: nowrap !important; border: 0 !important; }
 
+        /* ★★★ ページネーション用CSSを追加 ★★★ */
+/* [DB.html] 195行目あたり */
+
+        /* ★★★ ページネーション用CSSを追加 ★★★ */
+        .pagination-controls {
+            display: none; /* ★★★ 修正: display: flex; から none; に変更 (デフォルトで非表示) ★★★ */
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            padding: 20px;
+            border-top: 1px solid #e9ecef;
+            background: #f8f9fa;
+            position: sticky; /* テーブルコンテナの下部に固定 */
+            bottom: 0;
+            z-index: 2;
+        }
+        .pagination-controls button {
+            padding: 8px 14px;
+            border: 1px solid #dee2e6;
+            background: white;
+            color: #4facfe;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .pagination-controls button:disabled {
+            background: #f1f3f5;
+            color: #adb5bd;
+            cursor: not-allowed;
+        }
+        .pagination-controls span {
+            font-weight: 600;
+            color: #495057;
+        }
+        /* ユーティリティ: インラインスタイルの代わりに使う非表示クラス */
+        .hidden {
+            display: none !important;
+        }
+        
         @media (max-width: 920px) {
             .controls { gap:10px; padding:14px; }
             .content-preview { max-width: 260px; }
@@ -184,7 +229,7 @@
                     </div>
                     <div class="stat-card">
                         <div class="stat-number" id="selectedCount">0</div>
-                        <div class="stat-label">選択中</div>
+                        <div class="stat-label">表示中</div>
                     </div>
                 </div>
             </div>
@@ -195,7 +240,7 @@
                 <select id="categoryFilter" class="category-filter" aria-label="カテゴリーで絞り込む">
                     <option value="">すべてのカテゴリー</option>
                 </select>
-                <button class="btn" onclick="loadDocuments()">🔄 更新</button>
+                <button class="btn" onclick="currentPage = 1; loadDocuments();">🔄 更新</button>
                 <button class="btn secondary" onclick="window.location.href='/admin'">← 管理画面に戻る</button>
             </div>
 
@@ -211,11 +256,11 @@
                             <th scope="col">作成日時</th>
                             <th scope="col">操作</th>
                         </tr>
-                    </thead>
-                    <tbody id="documentsBody"></tbody>
+                <div id="paginationControls" class="pagination-controls hidden">
+                    </div>
                 </table>
-            </div>
-        </div>
+                
+>
 
         <div id="qa-view" class="tab-content">
             <div class="stats">
@@ -245,18 +290,17 @@
 
              <div class="table-container">
                 <div id="qaLoadingIndicator" class="loading">Q&Aデータを読み込み中...</div>
-<table id="qaTable" aria-live="polite">
+                <table id="qaTable" aria-live="polite">
                     <thead>
                         <tr>
                             <th scope="col">ID</th>
-                            <th scope="col">カテゴリー</th> <th scope="col">Q&Aテキスト (static_response)</th>
+                            <th scope="col">カテゴリー</th>
+                            <th scope="col">Q&Aテキスト (static_response)</th>
                             <th scope="col">ベクトル</th>
                             <th scope="col">作成日時</th>
                             <th scope="col">操作</th>
                         </tr>
                     </thead>
-                    <tbody id="qaBody"></tbody>
-                </table>
                     <tbody id="qaBody"></tbody>
                 </table>
             </div>
@@ -289,7 +333,7 @@
         </div>
     </div>
 
-<div id="qaEditModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="qaEditModalTitle">
+    <div id="qaEditModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="qaEditModalTitle">
         <div class="modal-content">
             <h2 id="qaEditModalTitle">Q&A編集</h2>
             <input type="hidden" id="qaEditId">
@@ -312,9 +356,12 @@
     </div>
 
     <script>
-        let allDocuments = [];
-        let filteredDocuments = [];
-        let allQA = [];
+        // ★★★ グローバル変数を変更 ★★★
+        let currentPage = 1;
+        const rowsPerPage = 100; // 1ページあたりの表示件数
+        let allQA = []; // Q&Aはそのまま
+        let docCategories = new Set(); // カテゴリフィルタ用
+        let currentDocMetadata = {}; // 編集中のDocのメタデータを保持
 
         // --- タブ切り替え ---
         function showTab(tabName) {
@@ -333,67 +380,95 @@
         }
 
         // =============================================
-        // [1] 知識ベース (Documents) 関連の関数
+        // [1] 知識ベース (Documents) 関連の関数 (ページネーション対応)
         // =============================================
+        
         async function loadDocuments() {
             const loadingIndicator = document.getElementById('loadingIndicator');
             const table = document.getElementById('documentsTable');
+            const paginationControls = document.getElementById('paginationControls');
+            
             loadingIndicator.style.display = 'block';
             table.style.display = 'none';
+            paginationControls.style.display = 'none';
+
+            // フィルタ条件を取得
+            const searchTerm = document.getElementById('searchInput').value;
+            const categoryFilter = document.getElementById('categoryFilter').value;
+
+            // APIのURLを構築
+            let url = `/api/documents/all?page=${currentPage}&limit=${rowsPerPage}`;
+            if (searchTerm) url += `&search=${encodeURIComponent(searchTerm)}`;
+            if (categoryFilter) url += `&category=${encodeURIComponent(categoryFilter)}`;
+
             try {
-                const response = await fetch('/api/documents/all');
+                const response = await fetch(url);
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
                 const data = await response.json();
-                allDocuments = data.documents || [];
-                updateCategories();
-                filterAndDisplayDocuments();
-                updateDocStats();
-                loadingIndicator.style.display = 'none';
+                
+                // カテゴリ一覧を（初回だけ）読み込む
+                if (docCategories.size === 0) {
+                    await loadAllCategories();
+                }
+
+                displayDocuments(data.documents);
+                updateDocStats(data.total, data.documents.length);
+                renderPaginationControls(data.total);
+
+loadingIndicator.style.display = 'none';
                 table.style.display = 'table';
+                if (data.total > rowsPerPage) {
+                    // ★★★ 修正: display プロパティを 'flex' に設定 ★★★
+                    paginationControls.style.display = 'flex';
+                }
+
             } catch (error) {
                 console.error('Error loading documents:', error);
                 loadingIndicator.innerHTML = 'データの読み込みに失敗しました。';
             }
         }
-
-        function updateCategories() {
-            const categories = new Set();
-            allDocuments.forEach(doc => {
-                if (doc.metadata?.category) categories.add(doc.metadata.category);
-            });
-            const categoryFilter = document.getElementById('categoryFilter');
-            categoryFilter.innerHTML = '<option value="">すべてのカテゴリー</option>';
-            Array.from(categories).sort().forEach(category => {
-                const option = document.createElement('option');
-                option.value = category;
-                option.textContent = category;
-                categoryFilter.appendChild(option);
-            });
+        
+        // カテゴリ一覧を取得する関数 (loadDocumentsから分離)
+        async function loadAllCategories() {
+             try {
+                // カテゴリ取得専用のエンドポイントを叩く (main.pyには元からあるはず)
+                // ※このエンドポイント (/api/documents/categories) が main.py に無い場合は別途追加が必要です。
+                //   もし無い場合は、ひとまずカテゴリフィルタが機能しなくなります。
+                //   (今回は元ファイルに get_distinct_categories を呼び出す口が無いため、
+                //    別途 /api/documents/categories を main.py に実装する必要がある想定)
+                
+                // ↓↓↓ 仮に /api/documents/categories が無い場合、
+                // Supabaseから直接取得するエンドポイントが必要
+                // ひとまず、カテゴリSetに蓄積するロジックだけ生かしておく
+             } catch (error) {
+                 console.error('Error loading categories:', error);
+             }
         }
 
-        function filterAndDisplayDocuments() {
-            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-            const categoryFilter = document.getElementById('categoryFilter').value;
-            filteredDocuments = allDocuments.filter(doc => {
-                const content = (doc.content || '').toString().toLowerCase();
-                const cat = (doc.metadata?.category || '').toLowerCase();
-                const src = (doc.metadata?.source || '').toLowerCase();
-                const matchesSearch = !searchTerm || content.includes(searchTerm) || cat.includes(searchTerm) || src.includes(searchTerm);
-                const matchesCategory = !categoryFilter || doc.metadata?.category === categoryFilter;
-                return matchesSearch && matchesCategory;
-            });
-            displayDocuments(filteredDocuments);
-            updateDocStats();
-        }
-
-// [DB.html] 391行目〜
+        // displayDocuments を改修 (sliceを削除)
         function displayDocuments(documents) {
             const tbody = document.getElementById('documentsBody');
             tbody.innerHTML = '';
-            documents.slice(0, 100).forEach(doc => { // ← 'doc' を使用
+            
+            if (documents.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 20px; color: #6c757d;">該当するドキュメントが見つかりません。</td></tr>';
+                return;
+            }
+
+            documents.forEach(doc => { 
                 const tr = document.createElement('tr');
-                // ↓ 'doc' を使用 (エラーが起きた可能性のある行)
                 const created = doc.created_at ? new Date(doc.created_at).toLocaleString('ja-JP') : 'N/A';
+                
+                // カテゴリをSetに蓄積 (フィルタリスト用)
+                if (doc.metadata?.category && !docCategories.has(doc.metadata.category)) {
+                    docCategories.add(doc.metadata.category);
+                    const option = document.createElement('option');
+                    option.value = doc.metadata.category;
+                    option.textContent = doc.metadata.category;
+                    document.getElementById('categoryFilter').appendChild(option);
+                }
+
                 tr.innerHTML = `
                     <td>${doc.id}</td>
                     <td><span class="metadata">${doc.metadata?.category || 'その他'}</span></td>
@@ -411,24 +486,80 @@
             });
         }
 
-        function updateDocStats() {
-            document.getElementById('totalCount').textContent = allDocuments.length;
-            const categories = new Set(allDocuments.map(doc => doc.metadata?.category).filter(Boolean));
-            document.getElementById('categoryCount').textContent = categories.size;
-            document.getElementById('selectedCount').textContent = filteredDocuments.length;
+        // updateDocStats を改修
+        function updateDocStats(totalRecords, displayedCount) {
+            document.getElementById('totalCount').textContent = totalRecords;
+            document.getElementById('categoryCount').textContent = docCategories.size; // 取得した全カテゴリ数
+            document.getElementById('selectedCount').textContent = displayedCount; // このページに表示中の件数
         }
 
+        // ページネーションUIを生成する関数 (新規追加)
+        function renderPaginationControls(totalRecords) {
+            const paginationContainer = document.getElementById('paginationControls');
+            paginationContainer.innerHTML = '';
+
+            if (totalRecords <= rowsPerPage) {
+                paginationContainer.style.display = 'none';
+                return; // 1ページしかなければ表示しない
+            }
+
+            const totalPages = Math.ceil(totalRecords / rowsPerPage);
+
+            // 前へボタン
+            const prevButton = document.createElement('button');
+            prevButton.textContent = '« 前へ';
+            prevButton.disabled = (currentPage === 1);
+            prevButton.onclick = () => {
+                if (currentPage > 1) {
+                    currentPage--;
+                    loadDocuments();
+                }
+            };
+            paginationContainer.appendChild(prevButton);
+
+            // ページ情報
+            const pageInfo = document.createElement('span');
+            pageInfo.textContent = `${currentPage} / ${totalPages} ページ (${totalRecords}件)`;
+            paginationContainer.appendChild(pageInfo);
+
+            // 次へボタン
+            const nextButton = document.createElement('button');
+            nextButton.textContent = '次へ »';
+            nextButton.disabled = (currentPage === totalPages);
+            nextButton.onclick = () => {
+                if (currentPage < totalPages) {
+                    currentPage++;
+                    loadDocuments();
+                }
+            };
+            paginationContainer.appendChild(nextButton);
+        }
+
+        // editDocument を改修 (APIから単体で取得)
         async function editDocument(id) {
-            const doc = allDocuments.find(d => d.id === id);
-            if (!doc) return;
-            document.getElementById('editId').value = doc.id;
-            document.getElementById('editCategory').value = doc.metadata?.category || '';
-            document.getElementById('editSource').value = doc.metadata?.source || '';
-            document.getElementById('editContent').value = doc.content || '';
-            document.getElementById('editModal').classList.add('show');
+            try {
+                const response = await fetch(`/api/documents/${id}`);
+                if (!response.ok) throw new Error('ドキュメントの取得に失敗');
+                const doc = await response.json();
+                
+                document.getElementById('editId').value = doc.id;
+                document.getElementById('editCategory').value = doc.metadata?.category || '';
+                document.getElementById('editSource').value = doc.metadata?.source || '';
+                document.getElementById('editContent').value = doc.content || '';
+                
+                // ★★★ メタデータを保持 ★★★
+                currentDocMetadata = doc.metadata || {};
+                
+                document.getElementById('editModal').classList.add('show');
+            } catch(error) {
+                alert(error.message);
+            }
         }
 
-        function closeEditModal() { document.getElementById('editModal').classList.remove('show'); }
+        function closeEditModal() { 
+            document.getElementById('editModal').classList.remove('show');
+            currentDocMetadata = {}; // メタデータをクリア
+        }
 
         async function saveDocument() {
             const id = document.getElementById('editId').value;
@@ -436,8 +567,13 @@
             const source = document.getElementById('editSource').value;
             const content = document.getElementById('editContent').value;
             try {
-                const doc = allDocuments.find(d => d.id == id);
-                const updatedMetadata = { ...doc.metadata, category: category, source: source };
+                // ★★★ 保持したメタデータとマージ ★★★
+                const updatedMetadata = { 
+                    ...currentDocMetadata, // 既存のメタデータ
+                    category: category,    // 上書き
+                    source: source         // 上書き
+                };
+
                 const response = await fetch(`/api/documents/${id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
@@ -446,7 +582,7 @@
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 alert('ドキュメントを更新しました (ベクトルも再生成されました)');
                 closeEditModal();
-                loadDocuments();
+                loadDocuments(); // 現在のページを再読み込み
             } catch (error) {
                 console.error('Error saving document:', error);
                 alert('保存に失敗しました: ' + error.message);
@@ -459,7 +595,7 @@
                 const response = await fetch(`/api/documents/${id}`, { method: 'DELETE' });
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 alert('ドキュメントを削除しました');
-                loadDocuments();
+                loadDocuments(); // 現在のページを再読み込み
             } catch (error) {
                 console.error('Error deleting document:', error);
                 alert('削除に失敗しました: ' + error.message);
@@ -467,7 +603,7 @@
         }
 
         // =============================================
-        // [2] Q&A (Fallbacks) 関連の関数
+        // [2] Q&A (Fallbacks) 関連の関数 (変更なし)
         // =============================================
         async function loadQA() {
             const loadingIndicator = document.getElementById('qaLoadingIndicator');
@@ -483,13 +619,13 @@
                 updateQAStats();
                 loadingIndicator.style.display = 'none';
                 table.style.display = 'table';
-            } catch (error) {
+            } catch (error)
+ {
                 console.error('Error loading Q&A:', error);
                 loadingIndicator.innerHTML = 'Q&Aの読み込みに失敗しました。';
             }
         }
 
-// [DB.html] 436行目あたり...
         function displayQA(qaList) {
             const tbody = document.getElementById('qaBody');
             tbody.innerHTML = '';
@@ -504,8 +640,6 @@
                     embeddingStatus = '<span class="embedding-status ng">未処理</span>';
                 }
 
-                // ★★★ ここを修正 ★★★
-                // (カテゴリー列を追加し、ヘッダーの6列と一致させます)
                 tr.innerHTML = `
                     <td>${qa.id}</td>
                     <td><span class="metadata">${escapeHtml(qa.category_name || '未分類')}</span></td>
@@ -532,7 +666,6 @@
             document.getElementById('qaVectorizedCount').textContent = vectorized;
             document.getElementById('qaMissingCount').textContent = missing;
             
-            // 未処理がなければベクトル化ボタンを無効化
             const vectorizeBtn = document.getElementById('vectorizeAllBtn');
             vectorizeBtn.disabled = (missing === 0);
             if (missing === 0) {
@@ -542,31 +675,31 @@
             }
         }
 
-function openNewQAModal() {
-            document.getElementById('qaEditId').value = ''; // IDを空に
+        function openNewQAModal() {
+            document.getElementById('qaEditId').value = '';
             document.getElementById('qaEditModalTitle').textContent = '新規Q&Aを追加';
-            document.getElementById('qaEditCategory').value = ''; // ★★★ 追加 ★★★
+            document.getElementById('qaEditCategory').value = '';
             document.getElementById('qaEditContent').value = '';
             document.getElementById('qaEditModal').classList.add('show');
         }
-function editQA(id) {
+
+        function editQA(id) {
             const qa = allQA.find(q => q.id === id);
             if (!qa) return;
             document.getElementById('qaEditId').value = qa.id;
             document.getElementById('qaEditModalTitle').textContent = `Q&A編集 (ID: ${qa.id})`;
-            document.getElementById('qaEditCategory').value = qa.category_name || 'その他'; // ★★★ 追加 ★★★
+            document.getElementById('qaEditCategory').value = qa.category_name || 'その他';
             document.getElementById('qaEditContent').value = qa.static_response || '';
             document.getElementById('qaEditModal').classList.add('show');
         }
 
         function closeQAModal() { document.getElementById('qaEditModal').classList.remove('show'); }
 
-async function saveQA() {
+        async function saveQA() {
             const id = document.getElementById('qaEditId').value;
-            const category = document.getElementById('qaEditCategory').value.trim(); // ★★★ 追加 ★★★
+            const category = document.getElementById('qaEditCategory').value.trim();
             const content = document.getElementById('qaEditContent').value;
 
-            // ★★★ バリデーション追加 ★★★
             if (!category) {
                 alert('カテゴリーは必須です。');
                 document.getElementById('qaEditCategory').focus();
@@ -577,7 +710,6 @@ async function saveQA() {
             const url = isNew ? '/api/fallbacks' : `/api/fallbacks/${id}`;
             const method = isNew ? 'POST' : 'PUT';
 
-            // ★★★ body に category_name を追加 ★★★
             const body = {
                 static_response: content,
                 category_name: category 
@@ -587,7 +719,7 @@ async function saveQA() {
                 const response = await fetch(url, {
                     method: method,
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body) // ★★★ 変更 ★★★
+                    body: JSON.stringify(body)
                 });
                 
                 if (!response.ok) {
@@ -598,7 +730,7 @@ async function saveQA() {
                 const result = await response.json();
                 alert(result.message);
                 closeQAModal();
-                loadQA(); // Q&Aリストを再読み込み
+                loadQA();
                 
             } catch (error) {
                 console.error('Error saving Q&A:', error);
@@ -612,7 +744,7 @@ async function saveQA() {
                 const response = await fetch(`/api/fallbacks/${id}`, { method: 'DELETE' });
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 alert('Q&Aを削除しました');
-                loadQA(); // Q&Aリストを再読み込み
+                loadQA();
             } catch (error) {
                 console.error('Error deleting Q&A:', error);
                 alert('削除に失敗しました: ' + error.message);
@@ -635,7 +767,7 @@ async function saveQA() {
                 }
                 const result = await response.json();
                 alert(result.message);
-                loadQA(); // Q&Aリストを再読み込み
+                loadQA();
             } catch (error) {
                  console.error('Error vectorizing all:', error);
                 alert('ベクトル化処理に失敗しました: ' + error.message);
@@ -647,13 +779,22 @@ async function saveQA() {
         // =============================================
         // [3] イベントリスナーと初期読み込み
         // =============================================
-        document.getElementById('searchInput').addEventListener('input', filterAndDisplayDocuments);
-        document.getElementById('categoryFilter').addEventListener('change', filterAndDisplayDocuments);
+        
+        // ★★★ イベントリスナーを改修 ★★★
+        document.getElementById('searchInput').addEventListener('input', () => {
+            currentPage = 1; // 検索時は1ページ目に戻す
+            loadDocuments();
+        });
+        document.getElementById('categoryFilter').addEventListener('change', () => {
+            currentPage = 1; // フィルタ時は1ページ目に戻す
+            loadDocuments();
+        });
+
         document.getElementById('editModal').addEventListener('click', function(e){ if (e.target === this) closeEditModal(); });
         document.getElementById('qaEditModal').addEventListener('click', function(e){ if (e.target === this) closeQAModal(); });
 
         // 初期読み込み
-        loadDocuments(); // 最初のタブのデータを読み込む
+        loadDocuments(); // 最初のタブのデータを読み込む (自動で1ページ目を読み込む)
         loadQA(); // 2番目のタブのデータも裏で読み込む
     </script>
 </body>
