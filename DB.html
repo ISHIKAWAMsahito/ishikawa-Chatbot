@@ -245,16 +245,18 @@
 
              <div class="table-container">
                 <div id="qaLoadingIndicator" class="loading">Q&Aデータを読み込み中...</div>
-                <table id="qaTable" aria-live="polite">
+<table id="qaTable" aria-live="polite">
                     <thead>
                         <tr>
                             <th scope="col">ID</th>
-                            <th scope="col">Q&Aテキスト (static_response)</th>
+                            <th scope="col">カテゴリー</th> <th scope="col">Q&Aテキスト (static_response)</th>
                             <th scope="col">ベクトル</th>
                             <th scope="col">作成日時</th>
                             <th scope="col">操作</th>
                         </tr>
                     </thead>
+                    <tbody id="qaBody"></tbody>
+                </table>
                     <tbody id="qaBody"></tbody>
                 </table>
             </div>
@@ -287,10 +289,16 @@
         </div>
     </div>
 
-    <div id="qaEditModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="qaEditModalTitle">
+<div id="qaEditModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="qaEditModalTitle">
         <div class="modal-content">
             <h2 id="qaEditModalTitle">Q&A編集</h2>
             <input type="hidden" id="qaEditId">
+
+            <div class="form-group">
+                <label for="qaEditCategory">カテゴリー:</label>
+                <input type="text" id="qaEditCategory" placeholder="例: 授業, 施設, その他">
+                <small>※Q&Aの分類に使います。必須です。</small>
+            </div>
             <div class="form-group">
                 <label for="qaEditContent">Q&Aテキスト (static_response):</label>
                 <textarea id="qaEditContent" placeholder="例： Q. 〇〇とは何ですか？ A. 〇〇は..."></textarea>
@@ -384,19 +392,18 @@
             documents.slice(0, 100).forEach(doc => {
                 const tr = document.createElement('tr');
                 const created = doc.created_at ? new Date(doc.created_at).toLocaleString('ja-JP') : 'N/A';
-                tr.innerHTML = `
-                    <td>${doc.id}</td>
-                    <td><span class="metadata">${doc.metadata?.category || 'その他'}</span></td>
-                    <td><span class="metadata">${escapeHtml(doc.metadata?.source || 'N/A')}</span></td>
-                    <td><div class="content-preview">${escapeHtml(doc.content || '')}</div></td>
-                    <td><span class="metadata">${created}</span></td>
-                    <td>
-                        <div class="action-buttons">
-                            <button class="action-btn edit" onclick="editDocument(${doc.id})" aria-label="編集">編集</button>
-                            <button class="action-btn delete" onclick="deleteDocument(${doc.id})" aria-label="削除">削除</button>
-                        </div>
-                    </td>
-                `;
+tr.innerHTML = `
+            <td>${qa.id}</td>
+            <td><span class="metadata">${escapeHtml(qa.category_name || '未分類')}</span></td> <td><div class="content-preview">${escapeHtml(qa.static_response || '')}</div></td>
+            <td>${embeddingStatus}</td>
+            <td><span class="metadata">${created}</span></td>
+            <td>
+                <div class="action-buttons">
+                    <button class="action-btn edit" onclick="editQA(${qa.id})" aria-label="編集">編集</button>
+                    <button class="action-btn delete" onclick="deleteQA(${qa.id})" aria-label="削除">削除</button>
+                </div>
+            </td>
+        `;
                 tbody.appendChild(tr);
             });
         }
@@ -528,37 +535,52 @@
             }
         }
 
-        function openNewQAModal() {
+function openNewQAModal() {
             document.getElementById('qaEditId').value = ''; // IDを空に
             document.getElementById('qaEditModalTitle').textContent = '新規Q&Aを追加';
+            document.getElementById('qaEditCategory').value = ''; // ★★★ 追加 ★★★
             document.getElementById('qaEditContent').value = '';
             document.getElementById('qaEditModal').classList.add('show');
         }
-
-        function editQA(id) {
+function editQA(id) {
             const qa = allQA.find(q => q.id === id);
             if (!qa) return;
             document.getElementById('qaEditId').value = qa.id;
             document.getElementById('qaEditModalTitle').textContent = `Q&A編集 (ID: ${qa.id})`;
+            document.getElementById('qaEditCategory').value = qa.category_name || 'その他'; // ★★★ 追加 ★★★
             document.getElementById('qaEditContent').value = qa.static_response || '';
             document.getElementById('qaEditModal').classList.add('show');
         }
 
         function closeQAModal() { document.getElementById('qaEditModal').classList.remove('show'); }
 
-        async function saveQA() {
+async function saveQA() {
             const id = document.getElementById('qaEditId').value;
+            const category = document.getElementById('qaEditCategory').value.trim(); // ★★★ 追加 ★★★
             const content = document.getElementById('qaEditContent').value;
+
+            // ★★★ バリデーション追加 ★★★
+            if (!category) {
+                alert('カテゴリーは必須です。');
+                document.getElementById('qaEditCategory').focus();
+                return;
+            }
             
             const isNew = !id;
             const url = isNew ? '/api/fallbacks' : `/api/fallbacks/${id}`;
             const method = isNew ? 'POST' : 'PUT';
 
+            // ★★★ body に category_name を追加 ★★★
+            const body = {
+                static_response: content,
+                category_name: category 
+            };
+
             try {
                 const response = await fetch(url, {
                     method: method,
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ static_response: content })
+                    body: JSON.stringify(body) // ★★★ 変更 ★★★
                 });
                 
                 if (!response.ok) {
