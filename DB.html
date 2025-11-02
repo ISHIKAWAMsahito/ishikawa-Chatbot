@@ -386,24 +386,27 @@
             updateDocStats();
         }
 
+// [DB.html] 391行目〜
         function displayDocuments(documents) {
             const tbody = document.getElementById('documentsBody');
             tbody.innerHTML = '';
-            documents.slice(0, 100).forEach(doc => {
+            documents.slice(0, 100).forEach(doc => { // ← 'doc' を使用
                 const tr = document.createElement('tr');
+                // ↓ 'doc' を使用 (エラーが起きた可能性のある行)
                 const created = doc.created_at ? new Date(doc.created_at).toLocaleString('ja-JP') : 'N/A';
-tr.innerHTML = `
-            <td>${qa.id}</td>
-            <td><span class="metadata">${escapeHtml(qa.category_name || '未分類')}</span></td> <td><div class="content-preview">${escapeHtml(qa.static_response || '')}</div></td>
-            <td>${embeddingStatus}</td>
-            <td><span class="metadata">${created}</span></td>
-            <td>
-                <div class="action-buttons">
-                    <button class="action-btn edit" onclick="editQA(${qa.id})" aria-label="編集">編集</button>
-                    <button class="action-btn delete" onclick="deleteQA(${qa.id})" aria-label="削除">削除</button>
-                </div>
-            </td>
-        `;
+                tr.innerHTML = `
+                    <td>${doc.id}</td>
+                    <td><span class="metadata">${doc.metadata?.category || 'その他'}</span></td>
+                    <td><span class="metadata">${escapeHtml(doc.metadata?.source || 'N/A')}</span></td>
+                    <td><div class="content-preview">${escapeHtml(doc.content || '')}</div></td>
+                    <td><span class="metadata">${created}</span></td>
+                    <td>
+                        <div class="action-buttons">
+                            <button class="action-btn edit" onclick="editDocument(${doc.id})" aria-label="編集">編集</button>
+                            <button class="action-btn delete" onclick="deleteDocument(${doc.id})" aria-label="削除">削除</button>
+                        </div>
+                    </td>
+                `;
                 tbody.appendChild(tr);
             });
         }
