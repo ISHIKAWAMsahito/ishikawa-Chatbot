@@ -793,33 +793,41 @@
                     const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
                     
-                    for (const line of lines) {
+for (const line of lines) {
                         if (line.trim().startsWith('data: ')) {
-                            try {
-                                const data = JSON.parse(line.substring(6));
-                                if (data.log_id) {
-                                    botMessageElement.dataset.logId = data.log_id;
-                                }
-                                if (data.content) {
-                                    fullResponse += data.content;
-                                    // ストリーミング中もリンクを適切に処理
-                                    if (fullResponse.includes('<a href=')) {
-                                        let processedText = fullResponse
-                                            .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
-                                            .replace(/\n/g, '<br>');
-                                        botMessageContent.innerHTML = processedText;
-                                    } else {
-                                        botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
+                            // data: 以降の文字列を取得し、念のため前後の空白を削除
+                            const jsonString = line.substring(6).trim();
+
+                            // jsonString が空でない場合のみ、JSON.parseを実行する
+                            if (jsonString) { 
+                                try {
+                                    const data = JSON.parse(jsonString); // <<< 安全にパース
+                                    if (data.log_id) {
+                                        botMessageElement.dataset.logId = data.log_id;
                                     }
-                                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    if (data.content) {
+                                        fullResponse += data.content;
+                                        // ストリーミング中もリンクを適切に処理
+                                        if (fullResponse.includes('<a href=')) {
+                                            let processedText = fullResponse
+                                                .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
+                                                .replace(/\n/g, '<br>');
+                                            botMessageContent.innerHTML = processedText;
+                                        } else {
+                                            botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
+                                        }
+                                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    }
+                                } catch (e) {
+                                    // エラー発生時は、どの文字列が原因だったかもログに出力するとデバッグしやすい
+                                    console.error("Error parsing stream data:", e, "Raw data:", jsonString);
                                 }
-                            } catch (e) {
-                                console.error("Error parsing stream data:", e);
                             }
+                            // else: jsonStringが空（例: "data: \n"）の場合は、何もせずスキップする
                         }
                     }
-                }
-            } catch (error) {
+                    } // while(true) ループを閉じる
+            } catch (error) { // fetchのtryブロックを閉じる
                 console.error('メッセージ送信エラー:', error);
                 botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
             }
