@@ -1120,7 +1120,7 @@ AIは以下のステップに従って回答を生成してください。
                     best_match = fallback_results[0]
                     
                     # Q&Aに対する類似度の「足切りライン」
-                    FALLBACK_SIMILARITY_THRESHOLD = 0.60 
+                    FALLBACK_SIMILARITY_THRESHOLD = 0.65
                     
                     if best_match.get('similarity', 0) >= FALLBACK_SIMILARITY_THRESHOLD:
                         logging.info(f"Stage 2 RAG 成功。類似Q&Aを回答します (Similarity: {best_match['similarity']:.2f})")
