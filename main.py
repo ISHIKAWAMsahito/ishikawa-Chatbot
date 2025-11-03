@@ -967,7 +967,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         context = ""
         has_specific_info = False
-        MIN_SIMILARITY_THRESHOLD = 0.65 # 類似度のしきい値
+        MIN_SIMILARITY_THRESHOLD = 0.7 # 類似度のしきい値
         search_results = [] # ★★★ ここで初期化 ★★★
 
         # --- メインの検索ロジック：ベクトル検索を優先 ---
