@@ -951,10 +951,198 @@ def clear_history(session_id: str):
 
 # [main.py] 916行目から
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
-# --- ここまでが enhanced_chat_logic 関数 ---
+    user_input = chat_req.query.strip()
+    feedback_id = str(uuid.uuid4())
+    
+    # セッションIDを取得
+    session_id = get_or_create_session_id(request)
+    
+    yield f"data: {json.dumps({'feedback_id': feedback_id})}\n\n"
+    
+    # --- ★修正: ここからがメインの try ブロック ---
+    try:
+        if not all([db_client, GEMINI_API_KEY]):
+            error_msg = "システムが利用できません。管理者にお問い合わせください。"
+            yield f"data: {json.dumps({'content': error_msg})}\n\n"
+            return
 
-# --- 置き換えはここまで (enhanced_chat_logic 関数の末尾) ---
-# --- ここまでが enhanced_chat_logic 関数 ---
+        context = ""
+        has_specific_info = False
+        MIN_SIMILARITY_THRESHOLD = 0.7 # 類似度のしきい値
+        search_results = [] # 初期化
+        relevant_docs = []  # 初期化
+
+        # --- ★修正: データベース検索を try...except で囲む ---
+        try:
+            query_embedding_response = genai.embed_content(model=chat_req.embedding_model, content=user_input)
+            query_embedding = query_embedding_response["embedding"]
+            
+            if db_client:
+                search_results = db_client.search_documents_by_vector(
+                    collection_name=chat_req.collection,
+                    embedding=query_embedding,
+                    match_count=chat_req.top_k
+                )
+
+            # 類似度がしきい値以上の結果「のみ」を抽出する
+            relevant_docs = [
+                doc for doc in search_results 
+                if doc.get('content') and doc.get('similarity', 0) >= MIN_SIMILARITY_THRESHOLD
+            ]
+
+        except Exception as e:
+            logging.error(f"データベース検索エラー: {e}")
+            # エラーが発生しても、relevant_docs は空のリスト [] のまま処理を続行
+
+        # --- ★修正: if / else のロジックを try...except の「外」に配置 ---
+        
+        # 関連ドキュメントが1件以上存在する場合のみ、RAGを実行する
+        if relevant_docs:
+            # 関連ドキュメントが存在する場合
+            context_parts = []
+            for doc in relevant_docs:
+                source_info = doc.get('metadata', {}).get('source', '不明なソース')
+                context_parts.append(f"<document source=\"{source_info}\">\n{doc['content']}\n</document>")
+            
+            context = "\n\n---\n\n".join(context_parts)
+            has_specific_info = True
+
+            # --- ★修正: RAGプロンプトとAI呼び出し (if ブロックの内部) ---
+            prompt = f"""あなたは「札幌学院大学」の学生サポート専門、RAG（Retrieval-Augmented Generation）AIアシスタントです。
+あなたのタスクは、提供された <context> のみに基づいて、ユーザーの <query> に回答することです。
+
+# 厳守ルール (System Rules)
+1.  **絶対的厳守:** 回答は、<context> タグ内に提供された情報**のみ**に基づいてください。あなたの一般知識、トレーニングデータ、<context> 外の情報は**一切使用禁止**です。
+2.  **出典の明記 (Citation):**
+    * <context> 内の情報は `<document source="...">` タグで提供されます。
+    * 回答で引用した情報（文章、事実）の**直後に**、必ずその出典を `[出典: ...]` の形式で付記してください。
+    * 複数文をまとめて引用する場合は、段落末尾にまとめて `[出典: ...]` を付記しても構いません。
+    * 例: 「履修登録はWebから行います。[出典: G-PLUSガイド.pdf]」
+3.  **推測の禁止:** <context> に書かれていない手続きの期限、担当部署、必要書類などを、あなたの知識で補完してはいけません。書かれている場合のみ、そのまま引用してください。
+
+# 回答手順 (Thinking Process)
+AIは以下のステップに従って回答を生成してください。
+
+[ステップ1: クエリ分析]  
+ユーザーの <query> が何を要求しているかを正確に分析します。  
+(例: 「2年生 経済学部 休学 留学 4年で卒業 履修」)
+
+[ステップ2: コンテキスト検索]  
+<context> 内の全ドキュメントをスキャンし、[ステップ1]のキーワードに関連する情報ブロックをすべて特定します。
+
+[ステップ3: 関連性判定と統合]  
+特定した情報を統合し、<query> 全体に答えられるか厳密に判断します。  
+- 「十分」: 質問に直接答える情報が揃っている。  
+- 「不十分」: 質問の一部にしか答えられない、または関連する情報が全くない。  
+
+[ステップ4: 回答生成]  
+* **(判定が「十分」の場合) → ケースA**
+    1.  `「データベースの情報に基づき、ご質問にお答えします。」` という書き出しで始めます。  
+    2.  [ステップ2]で特定した情報**のみ**を用いて、質問に対する具体的で分かりやすい回答を構成します。  
+    3.  ルール(2)に従い、すべての情報に出典 `[出典: ...]` を付記します。  
+
+* **(判定が「不十分」の場合) → ケースB**
+    1.  `「ご質問に直接お答えできる情報は見つかりませんでしたが、関連する情報として以下をご確認ください。」` と書き出します。  
+    2.  [ステップ2]で実際に見つかった部分的な関連情報のみを提示します。（情報が見つからなかった場合は省略）  
+    3.  出典 `[出典: ...]` を必ず付記します。  
+    4.  部署名や窓口が <context> に記載されていない場合は「大学の公式窓口にご確認ください」と案内します。  
+
+# 出力フォーマット
+- 学生にとって分かりやすい、親切で丁寧な「です・ます調」を使用します。  
+- 見出しや箇条書きを活用し、要点を整理して提示します。  
+- <context> 内にURL（http...）が記載されていた場合は、回答末尾に「参考URL:」として箇条書きで記載します。  
+
+---
+[ここからがデータです]
+
+<context>
+{context}
+</context>
+
+<query>
+{user_input}
+</query>
+
+---
+[あなたの回答]  
+回答:
+
+"""
+            model = genai.GenerativeModel(chat_req.model)
+            
+            temp_full_response = ""
+            try:
+                stream = await safe_generate_content(model, prompt, stream=True)
+            
+                async for chunk in stream:
+                    if chunk.text:
+                        temp_full_response += chunk.text
+            
+            except StopAsyncIteration:
+                logging.warning("APIから空のストリームが返されました。セーフティ設定によるブロックの可能性があります。")
+                temp_full_response = "申し訳ありませんが、そのご質問にはお答えできません。質問の内容を変えて、もう一度お試しください。"
+
+            if not temp_full_response.strip():
+                 temp_full_response = "回答を生成できませんでした。もう一度お試しください。"
+
+            full_response = format_urls_as_links(temp_full_response)
+            
+            add_to_history(session_id, "user", user_input)
+            add_to_history(session_id, "assistant", temp_full_response)
+            
+            yield f"data: {json.dumps({'content': full_response})}\n\n"
+        
+        # --- ★修正: else ブロック (if relevant_docs: に対応) ---
+        else:
+            # --- フォールバック処理 (Stage 2: Q&Aベクトル検索) ---
+            logging.info(f"Stage 1 RAG 失敗。Stage 2 (Q&Aベクトル検索) を実行します。")
+            
+            try:
+                # Stage 1 で使用した query_embedding を再利用
+                fallback_results = db_client.search_fallback_qa(
+                    embedding=query_embedding, 
+                    match_count=1  # 最も近いQ&Aを1つだけ取得
+                )
+                
+                if fallback_results:
+                    best_match = fallback_results[0]
+                    FALLBACK_SIMILARITY_THRESHOLD = 0.65
+                    
+                    if best_match.get('similarity', 0) >= FALLBACK_SIMILARITY_THRESHOLD:
+                        logging.info(f"Stage 2 RAG 成功。類似Q&Aを回答します (Similarity: {best_match['similarity']:.2f})")
+                        fallback_response = f"""データベースに直接の情報は見つかりませんでしたが、関連する「よくあるご質問」がありましたのでご案内します。
+
+---
+{best_match['content']}
+"""
+                        full_response = format_urls_as_links(fallback_response)
+                    else:
+                        logging.info(f"Stage 2 RAG 失敗。類似するQ&Aが見つかりませんでした (Best Similarity: {best_match.get('similarity', 0):.2f})")
+                        fallback_response = "申し訳ありませんが、ご質問に関連する情報がデータベース（Q&Aを含む）に見つかりませんでした。大学公式サイトをご確認いただくか、学生支援課までお問い合わせください。"
+                        full_response = format_urls_as_links(fallback_response)
+                else:
+                    logging.info(f"Stage 2 RAG 失敗。Q&Aデータベースが空か、検索エラーです。")
+                    fallback_response = "申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、学生支援課までお問い合わせください。"
+                    full_response = format_urls_as_links(fallback_response)
+
+            except Exception as e_fallback:
+                logging.error(f"Stage 2 (Q&A検索) でエラーが発生: {e_fallback}")
+                fallback_response = "申し訳ありません。現在、関連情報の検索中にエラーが発生しました。時間をおいて再度お試しください。"
+                full_response = format_urls_as_links(fallback_response)
+
+            add_to_history(session_id, "user", user_input)
+            add_to_history(session_id, "assistant", fallback_response) # 生のテキストを記録
+            
+            yield f"data: {json.dumps({'content': full_response})}\n\n"
+        
+        # --- ★修正: 最後の yield (if/else の外、main try の内部) ---
+        yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+    
+    # --- ★修正: メインの try ブロックに対応する except ---
+    except Exception as e:
+        error_message = f"エラーが発生しました: {str(e)}"
+        logging.error(f"チャットロジックエラー: {e}\n{traceback.format_exc()}")
+        yield f"data: {json.dumps({'content': error_message})}\n\n"
 
 # 履歴管理用エンドポイント
 @app.get("/chat/history")
