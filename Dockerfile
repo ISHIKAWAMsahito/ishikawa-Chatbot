@@ -1,24 +1,22 @@
+# 1. ベースとなるPythonの公式イメージを選択
 FROM python:3.11-slim
 
-# ステップ2: コンテナ内の作業ディレクトリを設定
+# 2. 環境変数を設定 (ログがバッファリングされないようにする)
+ENV PYTHONUNBUFFERED 1
+
+# 3. アプリケーションの作業ディレクトリを作成
 WORKDIR /app
 
-# ステップ3: 必要なファイルをコンテナにコピー
-# ライブラリのリスト、アプリケーション本体、HTMLファイルをコピーします
+# 4. (軽量化された) requirements.txt をコピー
+#    ★ このステップが速くなり、メモリ消費も減ります ★
 COPY requirements.txt .
-COPY main.py .
-COPY admin.html .
-COPY client.html .
-COPY DB.html .
 
-# ステップ4: requirements.txtに記載されたライブラリをインストール
+# 5. (軽量化された) ライブラリをインストール
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ステップ5: アプリケーションが使用するポート8000を開放
-EXPOSE 8000
+# 6. アプリケーションのコード全体 (軽量化された main.py など) をコピー
+COPY . .
 
-# ステップ6: コンテナ起動時にUvicornサーバーを実行
-# (Dockerfileの最後...)
-
-# Renderが指定する $PORT を shell が解釈できるように、[] を使わない形式で記述する
+# 7. Renderが $PORT を正しく解釈できる「shell形式」でサーバーを起動
+#    ★ これがポートとタイムアウトの問題を解決します ★
 CMD gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --bind "0.0.0.0:$PORT"

@@ -17,15 +17,14 @@ google-generativeai==0.8.5
 # --- Supabase DB ---
 supabase==2.19.0
 
-# --- ドキュメント処理 ---
+# --- ドキュメント処理 (軽量版) ---
 beautifulsoup4==4.13.3
 PyPDF2==3.0.1
 python-docx==1.2.0
+unstructured
+langchain-text-splitters
+markdownify
 
 # --- その他ユーティリティ ---
 python-dotenv==1.1.0
 prometheus-fastapi-instrumentator==7.1.0
-
-unstructured[local-inference,pdf,tesseract]
-langchain-text-splitters
-markdownify
