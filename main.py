@@ -110,7 +110,7 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
                     stream=True,
                     generation_config=GenerationConfig(
                         max_output_tokens=1024,
-                        temperature=0.7
+                        temperature=0.70
                     )
                 )
             else:
@@ -1120,8 +1120,7 @@ AIは以下のステップに従って回答を生成してください。
                     best_match = fallback_results[0]
                     
                     # Q&Aに対する類似度の「足切りライン」
-                    # (メインRAGの65%よりは低く設定するのが一般的です)
-                    FALLBACK_SIMILARITY_THRESHOLD = 0.30 
+                    FALLBACK_SIMILARITY_THRESHOLD = 0.60 
                     
                     if best_match.get('similarity', 0) >= FALLBACK_SIMILARITY_THRESHOLD:
                         logging.info(f"Stage 2 RAG 成功。類似Q&Aを回答します (Similarity: {best_match['similarity']:.2f})")
