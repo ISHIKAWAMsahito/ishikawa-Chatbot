@@ -39,6 +39,10 @@ from fastapi.responses import FileResponse
 
 from collections import defaultdict
 from typing import Dict, List
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document as LangChainDocument
+from unstructured.partition.auto import partition_auto
+from markdownify import markdownify as md # HTML -> Markdown 変換用
 
 # --- 初期設定 ---
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
@@ -81,17 +85,6 @@ MAX_HISTORY_LENGTH = 20
 # --------------------------------------------------------------------------
 # 3. 内部コンポーネントの定義
 # --------------------------------------------------------------------------
-
-def split_text(text: str, max_length: int = 1000, overlap: int = 200) -> List[str]:
-    """テキストをチャンクに分割"""
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + max_length
-        chunks.append(text[start:end])
-        start += max_length - overlap
-    return chunks
-
 def format_urls_as_links(text: str) -> str:
     """URLをHTMLリンクに変換"""
     url_pattern = r'(?<!\]\()(https?://[^\s\[\]()<>]+)(?!\))'
@@ -146,24 +139,89 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
     raise HTTPException(status_code=500, detail="最大リトライ回数を超えました。")
 
 class DocumentProcessor:
-    """ドキュメント処理クラス"""
-    def process(self, filename: str, content: bytes) -> List[str]:
-        text = ""
+    """
+    ドキュメント処理クラス (unstructured と 親子チャンキング対応版)
+    """
+    def __init__(self):
+        # 検索用の「子チャンク」を作成するスプリッター
+        self.child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=300,        # 検索用に小さく分割
+            chunk_overlap=50,
+            separators=["\n\n", "\n", "。", "、", " "]
+        )
+
+    def process(self, filename: str, content: bytes, category: str, collection_name: str) -> List[LangChainDocument]:
+        """
+        unstructuredでPDF/DOCXを解析し、戦略的チャンキングを実行する。
+        戻り値は、ベクトルDBに格納する「子チャンク」のリスト。
+        """
         try:
-            if filename.lower().endswith(".pdf"):
-                pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-                for page in pdf_reader.pages:
-                    text += page.extract_text() or ""
-            elif filename.lower().endswith(".docx"):
-                doc = DocxDocument(io.BytesIO(content))
-                for para in doc.paragraphs:
-                    text += para.text + "\n"
-            else:
-                text = content.decode('utf-8', errors='ignore')
+            # unstructuredでファイル要素を自動解析
+            # strategy="hi_res" で高精度解析 (テーブル認識が向上)
+            elements = partition_auto(
+                file=io.BytesIO(content), 
+                strategy="hi_res",
+                infer_table_structure=True
+            )
         except Exception as e:
-            logging.error(f"ファイル処理エラー ({filename}): {e}")
+            logging.error(f"unstructuredによるファイル解析エラー ({filename}): {e}")
             return []
-        return split_text(text)
+
+        all_child_docs: List[LangChainDocument] = []
+
+        for element in elements:
+            # --- 1. テーブル（表）の処理 ---
+            if element.category == "Table":
+                logging.info(f"テーブル検出: {filename}")
+                html_table = element.metadata.text_as_html
+                
+                # HTMLテーブルをLLMが読みやすいMarkdownに変換
+                markdown_table = md(html_table)
+                
+                # メタデータ (親コンテキストとしてテーブル全体を保持)
+                parent_content = f"以下は「{filename}」からの表です:\n\n{markdown_table}"
+                
+                # テーブルは1つのチャンクとして扱う (小さく分割しない)
+                # ただし、検索しやすいように先頭N文字を page_content にする
+                searchable_content = (markdown_table[:300] + "...") if len(markdown_table) > 300 else markdown_table
+                
+                table_doc = LangChainDocument(
+                    page_content=searchable_content, # 検索対象
+                    metadata={
+                        "source": filename,
+                        "collection_name": collection_name,
+                        "category": category,
+                        "element_type": "Table",
+                        "parent_content": parent_content # LLMに渡すコンテキスト
+                    }
+                )
+                all_child_docs.append(table_doc)
+
+            # --- 2. テキスト（見出し、本文など）の処理 ---
+            elif element.category in ["NarrativeText", "Title", "ListItem"]:
+                # これが「親」となるセクションのテキスト
+                parent_text = element.text
+                
+                if len(parent_text) < 50: # 短すぎるテキストは無視
+                    continue
+
+                # 「親」テキストを「子チャンク」に分割
+                child_chunks = self.child_splitter.split_text(parent_text)
+                
+                for child_text in child_chunks:
+                    child_doc = LangChainDocument(
+                        page_content=child_text, # 検索対象
+                        metadata={
+                            "source": filename,
+                            "collection_name": collection_name,
+                            "category": category,
+                            "element_type": element.category,
+                            "parent_content": parent_text # LLMに渡すコンテキスト
+                        }
+                    )
+                    all_child_docs.append(child_doc)
+
+        return all_child_docs
 
 class WebScraper:
     """ウェブスクレイピングクラス"""
@@ -397,6 +455,20 @@ feedback_manager = FeedbackManager()
 document_processor = DocumentProcessor()
 web_scraper = WebScraper()
 
+# --- スクレイピング用 (親子チャンキング) スプリッター ---
+# 1. サイト全体を「親」チャンクに分割するスプリッター
+scrape_parent_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=2000,       # 親コンテキストは大きめ
+    chunk_overlap=200,
+    separators=["\n\n", "\n", "。", "、", " "]
+)
+# 2. 「親」を「子」チャンクに分割するスプリッター
+scrape_child_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=300,        # 検索用に小さく分割
+    chunk_overlap=50,
+    separators=["\n\n", "\n", "。", "、", " "]
+)
+
 # --- データモデル定義 ---
 class ChatQuery(BaseModel):
     query: str
@@ -413,8 +485,6 @@ class ScrapeRequest(BaseModel):
     category: str = "その他"
     embedding_model: str = "text-embedding-004"
     collection_name: str = ACTIVE_COLLECTION_NAME
-
-
 class FeedbackRequest(BaseModel):
     feedback_id: str
     rating: str
@@ -849,62 +919,127 @@ async def upload_document(
     try:
         category = file.filename.split('_')[0] if '_' in file.filename else "その他"
         content = await file.read()
-        chunks = document_processor.process(file.filename, content)
-        for chunk in chunks:
-            metadata = {
-                "source": file.filename,
-                "collection_name": collection_name,
-                "category": category
-            }
+        
+        # --- ▼ 変更点 1 ▼ ---
+        # document_processor は List[LangChainDocument] を返す
+        # (引数に category と collection_name を渡す)
+        docs_to_embed = document_processor.process(file.filename, content, category, collection_name)
+        
+        # chunks -> docs_to_embed に変更
+        if not docs_to_embed:
+            logging.warning(f"ファイルからチャンクを抽出できませんでした: {file.filename}")
+            return {"chunks": 0, "message": "ドキュメントから有効なテキストを抽出できませんでした。"}
+            
+        logging.info(f"ファイル {file.filename} から {len(docs_to_embed)} 件の子チャンクを生成しました。")
+
+        # --- ▼ 変更点 2 ▼ ---
+        # ループ処理の変更 (chunk -> doc)
+        for doc in docs_to_embed:
+            # doc.page_content = 検索対象の「子チャンク」テキスト
+            # doc.metadata     = (source, category, parent_content など)
             try:
-                embedding_response = genai.embed_content(model=embedding_model, content=chunk)
+                # 検索対象の「子チャンク」テキストをベクトル化
+                embedding_response = genai.embed_content(model=embedding_model, content=doc.page_content)
                 embedding = embedding_response["embedding"]
-                db_client.insert_document(chunk, embedding, metadata)
-                await asyncio.sleep(1)
+                
+                # DBには「子チャンク」のテキスト、そのベクトル、
+                # そして「親コンテキスト」を含むメタデータを格納する
+                db_client.insert_document(
+                    content=doc.page_content, 
+                    embedding=embedding, 
+                    metadata=doc.metadata
+                )
+                
+                await asyncio.sleep(1) # APIレート制限対策
+            
             except Exception as e:
                 if "429" in str(e) or "quota" in str(e).lower():
                     logging.warning("埋め込み生成でAPI制限に達しました。30秒待機します。")
                     await asyncio.sleep(30)
-                    embedding_response = genai.embed_content(model=embedding_model, content=chunk)
+                    # (再試行)
+                    embedding_response = genai.embed_content(model=embedding_model, content=doc.page_content)
                     embedding = embedding_response["embedding"]
-                    db_client.insert_document(chunk, embedding, metadata)
+                    db_client.insert_document(doc.page_content, embedding, doc.metadata)
                 else:
-                    raise
-        return {"chunks": len(chunks)}
+                    # 1つのチャンクエラーで全体を停止させない
+                    logging.error(f"チャンク処理エラー ({file.filename}): {e}")
+                    continue # 次のチャンクへ
+
+        # --- ▼ 変更点 3 ▼ ---
+        return {"chunks": len(docs_to_embed)}
+    
     except Exception as e:
         logging.error(f"Upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/scrape")
-async def scrape_website(req: ScrapeRequest):
+async def scrape_website(req: ScrapeRequest, user: dict = Depends(require_auth)):
     if not db_client:
         raise HTTPException(503, "DB not initialized")
+    
+    logging.info(f"スクレイピング開始: {req.url} (管理者: {user.get('email')})")
+    
     try:
+        # 1. WebScraperでコンテンツを平文として取得
         content = web_scraper.scrape(req.url)
-        if not content:
+        if not content or len(content) < 100: # 短すぎるコンテンツは除外
+            logging.warning(f"コンテンツが取得不可、または短すぎます: {req.url}")
             raise HTTPException(status_code=400, detail="コンテンツを取得できませんでした。")
-        chunks = split_text(content)
-        for chunk in chunks:
-            metadata = {
-                "source": req.url,
-                "collection_name": req.collection_name,
-                "category": req.category
-            }
-            try:
-                embedding_response = genai.embed_content(model=req.embedding_model, content=chunk)
-                embedding = embedding_response["embedding"]
-                db_client.insert_document(chunk, embedding, metadata)
-                await asyncio.sleep(1)
-            except Exception as e:
-                if "429" in str(e) or "quota" in str(e).lower():
-                    logging.warning("スクレイピングでAPI制限に達しました。30秒待機します。")
-                    await asyncio.sleep(30)
-                    embedding_response = genai.embed_content(model=req.embedding_model, content=chunk)
+
+        logging.info(f"スクレイピング成功、{len(content)}文字取得。親子チャンキングを開始...")
+
+        # 2. 「親」チャンクに分割 (グローバルスプリッターを使用)
+        parent_chunks = scrape_parent_splitter.split_text(content)
+        total_child_chunks = 0
+        
+        # 3. 親子チャンキングの実行
+        for parent_text in parent_chunks:
+            # 4. 「親」チャンクを「子」チャンクに分割 (グローバルスプリッターを使用)
+            child_chunks = scrape_child_splitter.split_text(parent_text)
+            
+            for child_text in child_chunks:
+                # 5. メタデータを構築 (親コンテキストを含む)
+                metadata = {
+                    "source": req.url,
+                    "collection_name": req.collection_name,
+                    "category": req.category,
+                    "element_type": "ScrapedText", # スクレイピング由来
+                    "parent_content": parent_text # ★ 親コンテキストを格納
+                }
+                
+                try:
+                    # 6. 「子」チャンクのテキストでベクトル化
+                    embedding_response = genai.embed_content(
+                        model=req.embedding_model, 
+                        content=child_text # ★ 子チャンクをベクトル化
+                    )
                     embedding = embedding_response["embedding"]
-                    db_client.insert_document(chunk, embedding, metadata)
-                else:
-                    raise
-        return {"chunks": len(chunks)}
+                    
+                    # 7. DBに格納 (子チャンク, ベクトル, メタデータ)
+                    db_client.insert_document(child_text, embedding, metadata)
+                    total_child_chunks += 1
+                    
+                    await asyncio.sleep(1) # APIレート制限対策
+                
+                except Exception as e:
+                    # レート制限の処理
+                    if "429" in str(e) or "quota" in str(e).lower():
+                        logging.warning("スクレイピング(Embed)でAPI制限に達しました。30秒待機します。")
+                        await asyncio.sleep(30)
+                        # 再試行
+                        embedding_response = genai.embed_content(model=req.embedding_model, content=child_text)
+                        embedding = embedding_response["embedding"]
+                        db_client.insert_document(child_text, embedding, metadata)
+                        total_child_chunks += 1
+                    else:
+                        logging.error(f"チャンク処理エラー ({req.url}): {e}")
+                        continue # 1つのエラーで止めない
+
+        logging.info(f"スクレイピング・チャンキング完了。{len(parent_chunks)}件の親チャンク / {total_child_chunks}件の子チャンクを生成: {req.url}")
+        return {"chunks": total_child_chunks}
+
+    except HTTPException:
+        raise # 400エラーなどをそのまま返す
     except Exception as e:
         logging.error(f"Scrape error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1002,9 +1137,16 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             context_parts = []
             for doc in relevant_docs:
                 source_info = doc.get('metadata', {}).get('source', '不明なソース')
-                context_parts.append(f"<document source=\"{source_info}\">\n{doc['content']}\n</document>")
-            
-            context = "\n\n---\n\n".join(context_parts)
+                
+                # (変更後)
+                # メタデータから 'parent_content' を取得します。
+                # これが「親」の完全な文脈です。
+                # もし 'parent_content' が無い場合（古いデータなど）は、
+                # 安全策として 'content' (子) を使います。
+                context_content = doc.get('metadata', {}).get('parent_content', doc.get('content'))
+                
+                # LLMには「親」の文脈を渡します
+                context_parts.append(f"<document source=\"{source_info}\">\n{context_content}\n</document>")
             has_specific_info = True
 
             # --- ★修正: RAGプロンプトとAI呼び出し (if ブロックの内部) ---
