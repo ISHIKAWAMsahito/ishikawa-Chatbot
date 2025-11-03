@@ -18,4 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8000
 
 # ステップ6: コンテナ起動時にUvicornサーバーを実行
-CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "main:app", "--bind", "0.0.0.0:$PORT"]
+# (Dockerfileの最後...)
+
+# Renderが指定する $PORT を shell が解釈できるように、[] を使わない形式で記述する
+CMD gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --bind "0.0.0.0:$PORT"
