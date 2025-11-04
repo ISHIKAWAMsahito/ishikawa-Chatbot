@@ -19,4 +19,4 @@ COPY . .
 
 # 7. Renderが $PORT を正しく解釈できる「shell形式」でサーバーを起動
 #    ★ これがポートとタイムアウトの問題を解決します ★
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "$PORT"]
+CMD uvicorn main:app --host 0.0.0.0 --port $PORT
