@@ -27,7 +27,10 @@ from pydantic import BaseModel
 
 from supabase import create_client, Client
 import requests
-# (BeautifulSoup, PyPDF2, DocxDocument は削除)
+# ★ (修正) 低品質アップロード用に PyPDF2 と python-docx を復活
+import PyPDF2
+from docx import Document as DocxDocument
+# (BeautifulSoup は /scrape を削除したため不要)
 
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
@@ -137,6 +140,80 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
             else:
                 raise e
     raise HTTPException(status_code=500, detail="最大リトライ回数を超えました。")
+
+# ★ (修正) 低品質アップロード用の SimpleDocumentProcessor を復活
+class SimpleDocumentProcessor:
+    """
+    メモリを消費しない、単純なテキスト抽出とチャンキングを行うクラス。
+    unstructured や 親子チャンキング は使用しない。
+    """
+    def __init__(self, chunk_size=1000, chunk_overlap=200):
+        # ユーザーが指定した 1000/200 で分割するスプリッター
+        self.splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separators=["\n\n", "\n", "。", "、", " "]
+        )
+        logging.info(f"SimpleDocumentProcessor (Chunk: {chunk_size}/{chunk_overlap}) が初期化されました。")
+
+    def _extract_text(self, filename: str, content: bytes) -> str:
+        """ファイルタイプに応じてテキストを抽出する"""
+        text = ""
+        try:
+            if filename.endswith(".pdf"):
+                pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+                for page in pdf_reader.pages:
+                    text += page.extract_text()
+                logging.info(f".pdf から {len(text)} 文字を抽出 (PyPDF2)")
+            
+            elif filename.endswith(".docx"):
+                doc = DocxDocument(io.BytesIO(content))
+                for para in doc.paragraphs:
+                    text += para.text + "\n"
+                logging.info(f".docx から {len(text)} 文字を抽出 (python-docx)")
+            
+            elif filename.endswith(".txt"):
+                text = content.decode('utf-8')
+                logging.info(f".txt から {len(text)} 文字を抽出")
+            
+            else:
+                logging.warning(f"未対応のファイル形式: {filename}")
+                
+            return re.sub(r'\s+', ' ', text).strip() # 空白を正規化
+        
+        except Exception as e:
+            logging.error(f"テキスト抽出エラー ({filename}): {e}")
+            return ""
+
+    def process_and_chunk(self, filename: str, content: bytes, category: str, collection_name: str) -> List[LangChainDocument]:
+        """
+        1. テキストを抽出
+        2. 1000/200 でチャンキング
+        3. メタデータを付与 (★親コンテキストは持たない)
+        """
+        # 1. テキスト抽出
+        full_text = self._extract_text(filename, content)
+        if not full_text:
+            return []
+
+        # 2. チャンキング
+        chunks = self.splitter.split_text(full_text)
+        
+        # 3. メタデータ付与
+        docs = []
+        for chunk_text in chunks:
+            # ★★★ 親子チャンキングではないため、'parent_content' は持たない ★★★
+            metadata = {
+                "source": filename,
+                "collection_name": collection_name,
+                "category": category,
+                "element_type": "SimpleChunk", # 単純なチャンク
+                # "parent_content" はここには無い
+            }
+            docs.append(LangChainDocument(page_content=chunk_text, metadata=metadata))
+            
+        logging.info(f"{filename} から {len(docs)} 件の単純チャンクを生成しました。")
+        return docs
 
 # (DocumentProcessor クラス 削除済み)
 
@@ -308,6 +385,8 @@ class SettingsManager:
 # --------------------------------------------------------------------------
 db_client: Optional[SupabaseClientManager] = None
 settings_manager: Optional[SettingsManager] = None
+# ★ (修正) simple_processor のグローバル変数を追加
+simple_processor: Optional[SimpleDocumentProcessor] = None
 
 
 # 8. lifespan関数を更新
@@ -315,10 +394,14 @@ settings_manager: Optional[SettingsManager] = None
 async def lifespan(app: FastAPI):
     """認証システムを含むアプリケーションのライフサイクル管理"""
     # 'g_category_fallbacks' を global 宣言から削除
-    global db_client, settings_manager
+    # ★ (修正) simple_processor を global に追加
+    global db_client, settings_manager, simple_processor
     logging.info("--- アプリケーション起動処理開始(認証システム対応) ---")
 
     settings_manager = SettingsManager()
+    
+    # ★ (修正) simple_processor を初期化
+    simple_processor = SimpleDocumentProcessor(chunk_size=1000, chunk_overlap=200)
 
     if SUPABASE_URL and SUPABASE_KEY:
         try:
@@ -356,6 +439,7 @@ else:
 
 # --- グローバルインスタンス ---
 feedback_manager = FeedbackManager()
+# ★ (修正) simple_processor のインスタンス化は lifespan に移動
 # (document_processor 削除済み)
 # (web_scraper 削除済み)
 # (scrape_parent_splitter, scrape_child_splitter 削除済み)
@@ -796,7 +880,78 @@ async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
         logging.error(f"ドキュメント削除エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# (@app.post("/upload") 削除済み)
+# ★ (修正) 低品質アップロード用の /upload エンドポイントを復活
+@app.post("/upload")
+async def upload_document(
+    file: UploadFile = File(...), 
+    category: str = Form("その他"), 
+    user: dict = Depends(require_auth)
+):
+    """
+    ファイルを受け取り、(単純な)テキスト抽出とチャンキングを行い、
+    ベクトル化してDBに挿入する (低メモリ版)
+    """
+    if not db_client or not settings_manager or not simple_processor:
+        raise HTTPException(503, "システムが初期化されていません (DB, Settings, or Processor)")
+
+    try:
+        filename = file.filename
+        content = await file.read()
+        
+        logging.info(f"ファイルアップロード受信: {filename} (カテゴリ: {category})")
+
+        # 1. (新しい) SimpleDocumentProcessor で処理
+        collection_name = settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
+        docs_to_embed = simple_processor.process_and_chunk(filename, content, category, collection_name)
+        
+        if not docs_to_embed:
+            raise HTTPException(status_code=400, detail="ファイルからテキストを抽出できませんでした。")
+
+        embedding_model = settings_manager.settings.get("embedding_model", "text-embedding-004")
+        total_chunks = len(docs_to_embed)
+        logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します...")
+
+        # 2. ループしてベクトル化 & DB挿入
+        count = 0
+        for doc in docs_to_embed:
+            try:
+                # 検索対象のテキスト (page_content) をベクトル化
+                embedding_response = genai.embed_content(
+                    model=embedding_model, 
+                    content=doc.page_content
+                )
+                embedding = embedding_response["embedding"]
+                
+                # DBにはチャンクテキスト、ベクトル、メタデータ(親なし)を格納
+                db_client.insert_document(
+                    content=doc.page_content, 
+                    embedding=embedding, 
+                    metadata=doc.metadata
+                )
+                count += 1
+                
+                await asyncio.sleep(1) # APIレート制限対策
+            
+            except Exception as e:
+                if "429" in str(e) or "quota" in str(e).lower():
+                    logging.warning("埋め込み生成でAPI制限に達しました。30秒待機します。")
+                    await asyncio.sleep(30)
+                    # (再試行)
+                    embedding_response = genai.embed_content(model=embedding_model, content=doc.page_content)
+                    embedding = embedding_response["embedding"]
+                    db_client.insert_document(doc.page_content, embedding, doc.metadata)
+                else:
+                    logging.error(f"チャンク処理エラー ({filename}): {e}")
+                    continue # 次のチャンクへ
+
+        logging.info(f"ファイル処理完了: {filename} ({count}/{total_chunks}件のチャンクをDBに挿入)")
+        return {"chunks": count, "filename": filename, "total": total_chunks}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"ファイルアップロード処理エラー: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # (@app.post("/scrape") 削除済み)
     
@@ -899,6 +1054,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 # これが「親」の完全な文脈です。
                 # もし 'parent_content' が無い場合（古いデータなど）は、
                 # 安全策として 'content' (子) を使います。
+                # (★ハイブリッド構成対応: このロジックで両方に対応できる★)
                 context_content = doc.get('metadata', {}).get('parent_content', doc.get('content'))
                 
                 # LLMには「親」の文脈を渡します
