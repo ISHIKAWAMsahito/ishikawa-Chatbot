@@ -1014,7 +1014,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         context = ""
         has_specific_info = False
-        MIN_SIMILARITY_THRESHOLD = 0.10 # 類似度のしきい値
+        MIN_SIMILARITY_THRESHOLD = 0.0 # 類似度のしきい値
         search_results = [] # 初期化
         relevant_docs = []  # 初期化
 
@@ -1128,7 +1128,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 
                 if fallback_results:
                     best_match = fallback_results[0]
-                    FALLBACK_SIMILARITY_THRESHOLD = 0.10
+                    FALLBACK_SIMILARITY_THRESHOLD = 0.0
                     
                     if best_match.get('similarity', 0) >= FALLBACK_SIMILARITY_THRESHOLD:
                         logging.info(f"Stage 2 RAG 成功。類似Q&Aを回答します (Similarity: {best_match['similarity']:.2f})")
