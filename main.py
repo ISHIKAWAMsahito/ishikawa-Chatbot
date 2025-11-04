@@ -1014,7 +1014,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         context = ""
         has_specific_info = False
-        MIN_SIMILARITY_THRESHOLD = 0.0 # 類似度のしきい値
+        MIN_SIMILARITY_THRESHOLD = 0.65 # 類似度のしきい値
         search_results = [] # 初期化
         relevant_docs = []  # 初期化
 
@@ -1029,6 +1029,18 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     embedding=query_embedding,
                     match_count=chat_req.top_k
                 )
+
+            # ★★★デバッグのためにこのログを追加★★★
+            logging.info(f"--- RAG Stage 1 検索結果 (しきい値適用前) ---")
+            logging.info(f"検索結果の件数: {len(search_results)}")
+            for i, doc in enumerate(search_results):
+                # content が長い場合があるので、最初の100文字だけ表示
+                content_preview = doc.get('content', 'N/A')[:100] 
+                similarity = doc.get('similarity', 0)
+                source = doc.get('metadata', {}).get('source', 'N/A')
+                logging.info(f"  {i+1}. Similarity: {similarity:.4f} | Source: {source} | Content: {content_preview}...")
+            logging.info(f"----------------------------------------")
+            # ★★★ここまで★★★
 
             # 類似度がしきい値以上の結果「のみ」を抽出する
             relevant_docs = [
@@ -1128,7 +1140,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 
                 if fallback_results:
                     best_match = fallback_results[0]
-                    FALLBACK_SIMILARITY_THRESHOLD = 0.0
+                    FALLBACK_SIMILARITY_THRESHOLD = 0.60 # フォールバック用のしきい値
                     
                     if best_match.get('similarity', 0) >= FALLBACK_SIMILARITY_THRESHOLD:
                         logging.info(f"Stage 2 RAG 成功。類似Q&Aを回答します (Similarity: {best_match['similarity']:.2f})")
