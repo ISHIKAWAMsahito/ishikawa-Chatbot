@@ -1,3 +1,4 @@
+ishikawa-Chatbot.env
 # Pythonのキャッシュファイル
 __pycache__/
 *.pyc
@@ -24,6 +25,7 @@ replit.nix
 *.zip
 *.7z
 .env
+ishikawa-Chatbot.env
 諸資格過程/
 チャットボットdb/
 <<<<<<< HEAD
