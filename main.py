@@ -106,7 +106,7 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
                     stream=True,
                     generation_config=GenerationConfig(
                         max_output_tokens=1024,
-                        temperature=0.70
+                        temperature=0.83
                     )
                 )
             else:
