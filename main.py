@@ -106,7 +106,7 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
                     stream=True,
                     generation_config=GenerationConfig(
                         max_output_tokens=1024,
-                        temperature=0.90
+                        temperature=0.1
                     )
                 )
             else:
@@ -1014,7 +1014,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         context = ""
         has_specific_info = False
-        MIN_SIMILARITY_THRESHOLD = 0.65 # 類似度のしきい値
+        MIN_SIMILARITY_THRESHOLD = 0.83 # 類似度のしきい値
         search_results = [] # 初期化
         relevant_docs = []  # 初期化
 
