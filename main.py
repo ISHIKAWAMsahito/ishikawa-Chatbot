@@ -1014,7 +1014,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         context = ""
         has_specific_info = False
-        MIN_SIMILARITY_THRESHOLD = 0.83 # 類似度のしきい値
+        MIN_SIMILARITY_THRESHOLD = 0.87 # 類似度のしきい値
         search_results = [] # 初期化
         relevant_docs = []  # 初期化
 
