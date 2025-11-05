@@ -988,42 +988,44 @@ def get_history(session_id: str) -> List[Dict[str, str]]:
     """チャット履歴を取得"""
     return chat_histories.get(session_id, [])
 
+
 def clear_history(session_id: str):
     """チャット履歴をクリア"""
     if session_id in chat_histories:
         del chat_histories[session_id]
 
-# 次に、enhanced_chat_logic関数を正しく定義
-# main.py の916行目あたりから
 
-# [main.py] 916行目から (元の行番号)
+# ===============================
+# 正しい enhanced_chat_logic 定義
+# ===============================
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
+    """RAG + フォールバック対応のチャット処理"""
     user_input = chat_req.query.strip()
     feedback_id = str(uuid.uuid4())
-    
-    # セッションIDを取得
     session_id = get_or_create_session_id(request)
-    
+
     yield f"data: {json.dumps({'feedback_id': feedback_id})}\n\n"
-    
-    # --- ★修正: ここからがメインの try ブロック ---
+
     try:
         if not all([db_client, GEMINI_API_KEY]):
-            error_msg = "システムが利用できません。管理者にお問い合わせください。"
-            yield f"data: {json.dumps({'content': error_msg})}\n\n"
+            yield f"data: {json.dumps({'content': 'システムが利用できません。管理者にお問い合わせください。'})}\n\n"
             return
 
-        context = ""
-        has_specific_info = False
-        MIN_SIMILARITY_THRESHOLD = 0.80 # 類似度のしきい値
-        search_results = [] # 初期化
-        relevant_docs = []  # 初期化
+        # =======================
+        # ベクトル検索処理
+        # =======================
+        STRICT_THRESHOLD = 0.80
+        RELATED_THRESHOLD = 0.70
+        search_results = []
+        relevant_docs = []
 
-        # --- ★修正: データベース検索を try...except で囲む ---
         try:
-            query_embedding_response = genai.embed_content(model=chat_req.embedding_model, content=user_input)
+            query_embedding_response = genai.embed_content(
+                model=chat_req.embedding_model,
+                content=user_input
+            )
             query_embedding = query_embedding_response["embedding"]
-            
+
             if db_client:
                 search_results = db_client.search_documents_by_vector(
                     collection_name=chat_req.collection,
@@ -1031,50 +1033,27 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     match_count=chat_req.top_k
                 )
 
-            # ★★★デバッグのためにこのログを追加★★★
-            logging.info(f"--- RAG Stage 1 検索結果 (しきい値適用前) ---")
-            logging.info(f"検索結果の件数: {len(search_results)}")
-            for i, doc in enumerate(search_results):
-                # content が長い場合があるので、最初の100文字だけ表示
-                content_preview = doc.get('content', 'N/A')[:100] 
-                similarity = doc.get('similarity', 0)
-                source = doc.get('metadata', {}).get('source', 'N/A')
-                logging.info(f"  {i+1}. Similarity: {similarity:.4f} | Source: {source} | Content: {content_preview}...")
-            logging.info(f"----------------------------------------")
-            # ★★★ここまで★★★
-
-            # 類似度がしきい値以上の結果「のみ」を抽出する
-            relevant_docs = [
-                doc for doc in search_results 
-                if doc.get('content') and doc.get('similarity', 0) >= MIN_SIMILARITY_THRESHOLD
-            ]
+            logging.info(f"検索結果件数: {len(search_results)}")
 
         except Exception as e:
-            logging.error(f"データベース検索エラー: {e}")
-            # エラーが発生しても、relevant_docs は空のリスト [] のまま処理を続行
+            logging.error(f"ベクトル検索エラー: {e}")
+            search_results = []
 
-        # --- ★修正: if / else のロジックを try...except の「外」に配置 ---
-        
-        # 関連ドキュメントが1件以上存在する場合のみ、RAGを実行する
+        # 類似度フィルタリング
+        strict_docs = [d for d in search_results if d.get('similarity', 0) >= STRICT_THRESHOLD]
+        related_docs = [d for d in search_results if RELATED_THRESHOLD <= d.get('similarity', 0) < STRICT_THRESHOLD]
+        relevant_docs = strict_docs or related_docs
+
+        # =======================
+        # コンテキスト生成と回答生成
+        # =======================
         if relevant_docs:
-            # 関連ドキュメントが存在する場合
-            context_parts = []
-            for doc in relevant_docs:
-                source_info = doc.get('metadata', {}).get('source', '不明なソース')
-                
-                # (変更後)
-                # メタデータから 'parent_content' を取得します。
-                # これが「親」の完全な文脈です。
-                # もし 'parent_content' が無い場合（古いデータなど）は、
-                # 安全策として 'content' (子) を使います。
-                # (★ハイブリッド構成対応: このロジックで両方に対応できる★)
-                context_content = doc.get('metadata', {}).get('parent_content', doc.get('content'))
-                
-                # LLMには「親」の文脈を渡します
-                context_parts.append(f"<document source=\"{source_info}\">\n{context_content}\n</document>")
-            has_specific_info = True
+            context = "\n\n".join([
+                f"<document source='{d.get('metadata', {}).get('source', '不明')}'>{d.get('content', '')}</document>"
+                for d in relevant_docs
+            ])
 
-            # --- ★修正: RAGプロンプトとAI呼び出し (if ブロックの内部) ---
+            # --- RAGプロンプトとAI呼び出し (if ブロックの内部) ---
             prompt = f"""あなたは札幌学院大学の学生サポートAIです。  
 以下のルールに従ってユーザーの質問に答えてください。
 
@@ -1087,6 +1066,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
    「ご質問に関連する情報がデータベースに見つかりませんでした。詳細は大学の公式窓口にご確認ください。」と答えてください。
 5. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
 6. 大学固有の情報を推測して答えてはいけません。
+7. **特に重要**: <context> に情報がある場合は、必ずその情報を使って回答すること。情報があるのに「見つかりませんでした」と回答してはいけません。
 
 # 出力形式
 - 学生に分かりやすい「です・ます調」で回答すること。
@@ -1105,48 +1085,39 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 [あなたの回答]
 回答:
 """
+
             model = genai.GenerativeModel(chat_req.model)
-            
-            temp_full_response = ""
+            response_text = ""
             try:
                 stream = await safe_generate_content(model, prompt, stream=True)
-            
                 async for chunk in stream:
                     if chunk.text:
-                        temp_full_response += chunk.text
-            
-            except StopAsyncIteration:
-                logging.warning("APIから空のストリームが返されました。セーフティ設定によるブロックの可能性があります。")
-                temp_full_response = "申し訳ありませんが、そのご質問にはお答えできません。質問の内容を変えて、もう一度お試しください。"
+                        response_text += chunk.text
+            except Exception as e:
+                logging.error(f"生成エラー: {e}")
+                response_text = "回答の生成中にエラーが発生しました。"
 
-            if not temp_full_response.strip():
-                 temp_full_response = "回答を生成できませんでした。もう一度お試しください。"
+            full_response = format_urls_as_links(response_text.strip() or "回答を生成できませんでした。")
 
-            full_response = format_urls_as_links(temp_full_response)
-            
-            add_to_history(session_id, "user", user_input)
-            add_to_history(session_id, "assistant", temp_full_response)
-            
-            yield f"data: {json.dumps({'content': full_response})}\n\n"
-        
-        # --- ★修正: else ブロック (if relevant_docs: に対応) ---
         else:
             # --- フォールバック処理 (Stage 2: Q&Aベクトル検索) ---
             logging.info(f"Stage 1 RAG 失敗。Stage 2 (Q&Aベクトル検索) を実行します。")
-            
+
             try:
                 # Stage 1 で使用した query_embedding を再利用
                 fallback_results = db_client.search_fallback_qa(
-                    embedding=query_embedding, 
+                    embedding=query_embedding,
                     match_count=1  # 最も近いQ&Aを1つだけ取得
                 )
-                
+
                 if fallback_results:
                     best_match = fallback_results[0]
-                    FALLBACK_SIMILARITY_THRESHOLD = 0.59 # フォールバック用のしきい値
-                    
+                    FALLBACK_SIMILARITY_THRESHOLD = 0.59  # フォールバック用のしきい値
+
                     if best_match.get('similarity', 0) >= FALLBACK_SIMILARITY_THRESHOLD:
-                        logging.info(f"Stage 2 RAG 成功。類似Q&Aを回答します (Similarity: {best_match['similarity']:.2f})")
+                        logging.info(
+                            f"Stage 2 RAG 成功。類似Q&Aを回答します (Similarity: {best_match['similarity']:.2f})"
+                        )
                         fallback_response = f"""データベースに直接の情報は見つかりませんでしたが、関連する「よくあるご質問」がありましたのでご案内します。
 
 ---
@@ -1154,11 +1125,13 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 """
                         full_response = format_urls_as_links(fallback_response)
                     else:
-                        logging.info(f"Stage 2 RAG 失敗。類似するQ&Aが見つかりませんでした (Best Similarity: {best_match.get('similarity', 0):.2f})")
+                        logging.info(
+                            f"Stage 2 RAG 失敗。類似するQ&Aが見つかりませんでした (Best Similarity: {best_match.get('similarity', 0):.2f})"
+                        )
                         fallback_response = "申し訳ありませんが、ご質問に関連する情報がデータベース（Q&Aを含む）に見つかりませんでした。大学公式サイトをご確認いただくか、学生支援課までお問い合わせください。"
                         full_response = format_urls_as_links(fallback_response)
                 else:
-                    logging.info(f"Stage 2 RAG 失敗。Q&Aデータベースが空か、検索エラーです。")
+                    logging.info("Stage 2 RAG 失敗。Q&Aデータベースが空か、検索エラーです。")
                     fallback_response = "申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、学生支援課までお問い合わせください。"
                     full_response = format_urls_as_links(fallback_response)
 
@@ -1168,18 +1141,18 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 full_response = format_urls_as_links(fallback_response)
 
             add_to_history(session_id, "user", user_input)
-            add_to_history(session_id, "assistant", fallback_response) # 生のテキストを記録
-            
+            add_to_history(session_id, "assistant", fallback_response)  # 生のテキストを記録
+
             yield f"data: {json.dumps({'content': full_response})}\n\n"
-        
-        # --- ★修正: 最後の yield (if/else の外、main try の内部) ---
+
+        # 最後のフィードバック出力
         yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
-    
-    # --- ★修正: メインの try ブロックに対応する except ---
+
     except Exception as e:
-        error_message = f"エラーが発生しました: {str(e)}"
-        logging.error(f"チャットロジックエラー: {e}\n{traceback.format_exc()}")
-        yield f"data: {json.dumps({'content': error_message})}\n\n"
+        err = f"エラーが発生しました: {e}"
+        logging.error(f"チャットロジック全体エラー: {err}")
+        yield f"data: {json.dumps({'content': err})}\n\n"
+
 
 # 履歴管理用エンドポイント
 @app.get("/chat/history")
