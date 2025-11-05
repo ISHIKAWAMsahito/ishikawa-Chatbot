@@ -61,7 +61,9 @@ genai.configure(api_key=GEMINI_API_KEY)
 AUTH0_CLIENT_ID = os.getenv("AUTH0_CLIENT_ID")
 AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET")
 AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
-APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "default-secret-key-for-development")
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY") # デフォルト値を削除
+if not APP_SECRET_KEY:
+    raise ValueError("環境変数 'APP_SECRET_KEY' が設定されていません。")
 
 # Supabase設定
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -1042,7 +1044,17 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         # 類似度フィルタリング
         strict_docs = [d for d in search_results if d.get('similarity', 0) >= STRICT_THRESHOLD]
         related_docs = [d for d in search_results if RELATED_THRESHOLD <= d.get('similarity', 0) < STRICT_THRESHOLD]
-        relevant_docs = strict_docs or related_docs
+        relevant_docs = strict_docs + related_docs
+        # --- ▼ ログ出力の追加 ▼ ---
+        if relevant_docs:
+            logging.info(f"--- Stage 1 RAG ヒット (上位 {len(relevant_docs)}件) ---")
+            for doc in relevant_docs:
+                doc_source = doc.get('metadata', {}).get('source', 'N/A')
+                doc_similarity = doc.get('similarity', 0)
+                logging.info(f"  [Sim: {doc_similarity:.4f}] (Source: {doc_source})")
+        else:
+            logging.info("--- Stage 1 RAG ヒット 0件 ---")
+        # --- ▲ ログ出力の追加 ▲ ---
 
         # =======================
         # コンテキスト生成と回答生成
