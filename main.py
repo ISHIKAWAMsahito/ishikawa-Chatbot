@@ -1140,7 +1140,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 
                 if fallback_results:
                     best_match = fallback_results[0]
-                    FALLBACK_SIMILARITY_THRESHOLD = 0.60 # フォールバック用のしきい値
+                    FALLBACK_SIMILARITY_THRESHOLD = 0.55 # フォールバック用のしきい値
                     
                     if best_match.get('similarity', 0) >= FALLBACK_SIMILARITY_THRESHOLD:
                         logging.info(f"Stage 2 RAG 成功。類似Q&Aを回答します (Similarity: {best_match['similarity']:.2f})")
