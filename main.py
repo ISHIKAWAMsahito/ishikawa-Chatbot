@@ -1044,11 +1044,18 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         relevant_docs = strict_docs + related_docs
         # --- ▼ ログ出力の追加 ▼ ---
         if relevant_docs:
-            logging.info(f"--- Stage 1 RAG ヒット (上位 {len(relevant_docs)}件) ---")
-            for doc in relevant_docs:
+           logging.info(f"--- Stage 1 RAG ヒット (上位 {len(relevant_docs)}件) ---")
+        for doc in relevant_docs:
+                # ログに出力したい情報を doc (辞書) から取得
+                doc_id = doc.get('id', 'N/A')
                 doc_source = doc.get('metadata', {}).get('source', 'N/A')
                 doc_similarity = doc.get('similarity', 0)
-                logging.info(f"  [Sim: {doc_similarity:.4f}] (Source: {doc_source})")
+                
+                # content の内容をプレビューとして取得 (冒頭50文字 + 改行をスペースに置換)
+                doc_content_preview = doc.get('content', '')[:50].replace('\n', ' ') + "..."
+                
+                # ログ出力を強化
+                logging.info(f"  [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
         else:
             logging.info("--- Stage 1 RAG ヒット 0件 ---")
         # --- ▲ ログ出力の追加 ▲ ---
