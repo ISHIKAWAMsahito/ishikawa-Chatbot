@@ -751,18 +751,19 @@ async def get_all_documents(
             count_query = count_query.eq("metadata->>category", category)
 
         if search:
-            # content, category, source のいずれかに一致
-            search_term = f"%{search}%"
-            query = query.or_(
-                f"content.ilike.{search_term}",
-                f"metadata->>category.ilike.{search_term}",
-                f"metadata->>source.ilike.{search_term}"
-            )
-            count_query = count_query.or_(
-                f"content.ilike.{search_term}",
-                f"metadata->>category.ilike.{search_term}",
-                f"metadata->>source.ilike.{search_term}"
-            )
+                # content, category, source のいずれかに一致
+                search_term = f"%{search}%"
+                
+                # ▼▼▼ 修正箇所 ▼▼▼
+                # .or_() メソッドは、複数の引数ではなく、
+                # カンマ区切りの単一の文字列を引数として取ります。
+                or_filter_string = (
+                    f"content.ilike.{search_term},"
+                    f"metadata->>category.ilike.{search_term},"
+                    f"metadata->>source.ilike.{search_term}"
+                )
+                query = query.or_(or_filter_string)
+                count_query = count_query.or_(or_filter_string)
 
         # --- 3. 総件数の取得 (フィルタ適用後) ---
         # .select("id", count='exact') で、実際のデータを取得せず件数だけを取得
@@ -1014,7 +1015,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         context = ""
         has_specific_info = False
-        MIN_SIMILARITY_THRESHOLD = 0.87 # 類似度のしきい値
+        MIN_SIMILARITY_THRESHOLD = 0.80 # 類似度のしきい値
         search_results = [] # 初期化
         relevant_docs = []  # 初期化
 
@@ -1078,16 +1079,19 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 以下のルールに従ってユーザーの質問に答えてください。
 
 # ルール
-1. 回答は <context> 内の情報（大学公式情報）のみに基づいてください。  
-2. <context> に関連情報が見つからない場合は、  
-   「ご質問に関連する情報がデータベースに見つかりませんでした。詳細は大学の公式窓口にご確認ください。」と答えてください。  
-3. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。  
-4. 大学固有の情報を推測して答えてはいけません。  
+1. 回答は <context> 内の情報（大学公式情報）のみに基づいてください。
+2. <context> に質問と「完全に一致する答え」が見つからない場合でも、「関連する可能性のある情報」（例：質問は「大会での欠席」だが、資料には「病欠」について記載がある場合）が見つかった場合は、その情報を回答してください。
+3. （ルール#2 に基づき）関連情報で回答した場合は、回答の最後に必ず以下の「注意書き」を加えてください。
+   「※これは関連情報であり、ご質問の意図と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
+4. <context> 内に「関連する情報も全く見つからない」場合にのみ、
+   「ご質問に関連する情報がデータベースに見つかりませんでした。詳細は大学の公式窓口にご確認ください。」と答えてください。
+5. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
+6. 大学固有の情報を推測して答えてはいけません。
 
 # 出力形式
-- 学生に分かりやすい「です・ます調」で回答すること。  
-- 箇条書きや見出しを活用して整理すること。  
-- <context> 内にURLがあれば「参考URL:」として末尾にまとめること。  
+- 学生に分かりやすい「です・ます調」で回答すること。
+- 箇条書きや見出しを活用して整理すること。
+- <context> 内にURLがあれば「参考URL:」として末尾にまとめること。
 
 <context>
 {context}
@@ -1098,9 +1102,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 </query>
 
 ---
-[あなたの回答]  
+[あなたの回答]
 回答:
-
 """
             model = genai.GenerativeModel(chat_req.model)
             
