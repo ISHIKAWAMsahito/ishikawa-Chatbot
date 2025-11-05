@@ -1056,18 +1056,35 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 
                 # ログ出力を強化
                 logging.info(f"  [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
-        else:
-            logging.info("--- Stage 1 RAG ヒット 0件 ---")
         # --- ▲ ログ出力の追加 ▲ ---
 
         # =======================
         # コンテキスト生成と回答生成
         # =======================
         if relevant_docs:
-            context = "\n\n".join([
-                f"<document source='{d.get('metadata', {}).get('source', '不明')}'>{d.get('content', '')}</document>"
-                for d in relevant_docs
-            ])
+            # context を構築するための空リストを用意
+            context_parts = []
+            
+            for d in relevant_docs:
+                # 1. 元の source (ファイル名) を取得
+                source_name = d.get('metadata', {}).get('source', '不明')
+                
+                # 2. ★★★ ここで表示名をマッピング ★★★
+                if source_name == 'output_gakubu.txt':
+                    display_source = '履修要項2024'
+                # (必要なら、他のファイル名もマッピングできます)
+                # elif source_name == 'another_file.pdf':
+                #     display_source = '学生生活の手引き'
+                else:
+                    display_source = source_name # マッピング対象外はそのまま
+                
+                # 3. 構築
+                context_parts.append(
+                    f"<document source='{display_source}'>{d.get('content', '')}</document>"
+                )
+            
+            # 最後に context を結合
+            context = "\n\n".join(context_parts)
 
             # --- RAGプロンプトとAI呼び出し (if ブロックの内部) ---
             prompt = f"""あなたは札幌学院大学の学生サポートAIです。  
