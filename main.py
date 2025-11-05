@@ -6,7 +6,6 @@ import json
 import uvicorn
 import traceback
 import csv
-import certifi
 from datetime import datetime, timezone, timedelta
 import uuid
 import io
@@ -26,7 +25,6 @@ from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse,
 from pydantic import BaseModel
 
 from supabase import create_client, Client
-import requests
 # ★ (修正) 低品質アップロード用に PyPDF2 と python-docx を復活
 import PyPDF2
 from docx import Document as DocxDocument
@@ -36,7 +34,6 @@ from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 
 from fastapi import Request
-from fastapi.responses import FileResponse
 
 from collections import defaultdict
 from typing import Dict, List
@@ -1105,11 +1102,18 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 async for chunk in stream:
                     if chunk.text:
                         response_text += chunk.text
+            # ... (876行目付近)
             except Exception as e:
                 logging.error(f"生成エラー: {e}")
                 response_text = "回答の生成中にエラーが発生しました。"
 
             full_response = format_urls_as_links(response_text.strip() or "回答を生成できませんでした。")
+            
+            # ★★★ 修正箇所: 成功したRAGの回答をここで yield する ★★★
+            add_to_history(session_id, "user", user_input)
+            add_to_history(session_id, "assistant", response_text) # 生のテキストを記録
+            yield f"data: {json.dumps({'content': full_response})}\n\n"
+            # ★★★ 修正ここまで ★★★
 
         else:
             # --- フォールバック処理 (Stage 2: Q&Aベクトル検索) ---
