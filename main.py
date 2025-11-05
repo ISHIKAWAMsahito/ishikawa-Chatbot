@@ -19,6 +19,9 @@ from contextlib import asynccontextmanager
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
 from dotenv import load_dotenv
+from google.generativeai.types import GenerationConfig
+# ★★★ 以下の2行を追加 ★★★
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, FileResponse, Response
@@ -1117,7 +1120,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 回答:
 """
 
-            model = genai.GenerativeModel(chat_req.model)
+            # ★★★ 安全フィルターを無効化する設定 ★★★
+            # 大学の履修要項という安全なテキストでも、組み合わせによって
+            # フィルターに抵触してしまう誤検知(False Positive)が観測されたため。
+            safety_settings = {
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            }
+            
+            model = genai.GenerativeModel(
+                chat_req.model,
+                safety_settings=safety_settings # ★★★ この設定を追加 ★★★
+            )
             response_text = ""
             try:
                 stream = await safe_generate_content(model, prompt, stream=True)
