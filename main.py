@@ -753,17 +753,23 @@ async def get_all_documents(
             count_query = count_query.eq("metadata->>category", category)
 
         if search:
-                # content, category, source のいずれかに一致
-                search_term = f"%{search}%"
+                # PostgREST フィルターでは、ワイルドカードは '%' ではなく '*' を使います。
+                # また、スペースや特殊文字が含まれる場合に備えて、パターンを引用符で囲む必要があります。
                 
-                # ▼▼▼ 修正箇所 ▼▼▼
-                # .or_() メソッドは、複数の引数ではなく、
-                # カンマ区切りの単一の文字列を引数として取ります。
+                # 1. 検索語自体に含まれる " を "" にエスケープ (PostgREST の仕様)
+                safe_search = search.replace('"', '""')
+                
+                # 2. "*" ワイルドカードを付与し、パターン全体を二重引用符 " で囲む
+                search_term = f'"*{safe_search}*"' 
+                
+                # 3. .or_() に渡す単一の文字列を構築
                 or_filter_string = (
                     f"content.ilike.{search_term},"
                     f"metadata->>category.ilike.{search_term},"
                     f"metadata->>source.ilike.{search_term}"
                 )
+                
+                # 4. クエリに適用
                 query = query.or_(or_filter_string)
                 count_query = count_query.or_(or_filter_string)
 
