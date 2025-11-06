@@ -753,19 +753,18 @@ async def get_all_documents(
             count_query = count_query.eq("metadata->>category", category)
 
         if search:
-                # PostgREST フィルターでは、ワイルドカードは '%' ではなく '*' を使います。
-                # また、スペースや特殊文字が含まれる場合に備えて、パターンを引用符で囲む必要があります。
-                
-                # 1. 検索語自体に含まれる " を "" にエスケープ (PostgREST の仕様)
+                # 1. 検索語自体に含まれる " を "" にエスケープ
                 safe_search = search.replace('"', '""')
                 
                 # 2. "*" ワイルドカードを付与し、パターン全体を二重引用符 " で囲む
                 search_term = f'"*{safe_search}*"' 
                 
                 # 3. .or_() に渡す単一の文字列を構築
+                # ★★★ 修正点 ★★★
+                # metadata->>category の検索が500エラーを引き起こすため、
+                # 検索対象を content と source のみ に絞ります。
                 or_filter_string = (
                     f"content.ilike.{search_term},"
-                    f"metadata->>category.ilike.{search_term},"
                     f"metadata->>source.ilike.{search_term}"
                 )
                 
