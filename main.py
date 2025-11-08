@@ -1,7 +1,7 @@
 # --------------------------------------------------------------------------
 # 1. ライブラリのインポート
 # --------------------------------------------------------------------------
-from typing import List, Dict
+from typing import List, Dict,Any
 from collections import defaultdict
 import logging
 import uvicorn
