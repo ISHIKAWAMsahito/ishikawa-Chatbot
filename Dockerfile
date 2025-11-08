@@ -1,22 +1,23 @@
-# 1. ベースとなるPythonの公式イメージを選択
+# Dockerfile
 FROM python:3.11-slim
 
-# 2. 環境変数を設定 (ログがバッファリングされないようにする)
-ENV PYTHONUNBUFFERED 1
+# 環境変数を設定
+ENV PYTHONUNBUFFERED=1
 
-# 3. アプリケーションの作業ディレクトリを作成
+# 作業ディレクトリを作成
 WORKDIR /app
 
-# 4. (軽量化された) requirements.txt をコピー
-#    ★ このステップが速くなり、メモリ消費も減ります ★
+# requirements.txtをコピーしてインストール
 COPY requirements.txt .
-
-# 5. (軽量化された) ライブラリをインストール
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 6. アプリケーションのコード全体 (軽量化された main.py など) をコピー
-COPY . .
+# アプリケーション全体をコピー（分割された構造に対応）
+COPY main.py .
+COPY core/ ./core/
+COPY models/ ./models/
+COPY services/ ./services/
+COPY api/ ./api/
+COPY static/ ./static/
 
-# 7. Renderが $PORT を正しく解釈できる「shell形式」でサーバーを起動
-#    ★ これがポートとタイムアウトの問題を解決します ★
+# Renderが $PORT を正しく解釈できるようにサーバーを起動
 CMD uvicorn main:app --host 0.0.0.0 --port $PORT
