@@ -23,7 +23,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 # 定数
 ACTIVE_COLLECTION_NAME = "student-knowledge-base"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JST = timezone(timedelta(hours=+9), 'JST')
 
 SUPER_ADMIN_EMAILS_STR = os.getenv("SUPER_ADMIN_EMAILS", "")
