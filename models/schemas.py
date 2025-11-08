@@ -1,0 +1,29 @@
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+
+# --- データモデル定義 ---
+class ChatQuery(BaseModel):
+    query: str
+    model: str = "gemini-2.5-flash"
+    embedding_model: str = "text-embedding-004"
+    top_k: int = 5
+    collection: str = ACTIVE_COLLECTION_NAME
+
+class ClientChatQuery(BaseModel):
+    query: str
+
+class FeedbackRequest(BaseModel):
+    feedback_id: str
+    rating: str
+    comment: str = ""
+
+class AIResponseFeedbackRequest(BaseModel):
+    user_question: str
+    ai_response: str
+    rating: str  # 'good' or 'bad'
+
+class Settings(BaseModel):
+    model: Optional[str] = None
+    collection: Optional[str] = None
+    embedding_model: Optional[str] = None
+    top_k: Optional[int] = None
