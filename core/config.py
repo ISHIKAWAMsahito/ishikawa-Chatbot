@@ -3,7 +3,16 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from authlib.integrations.starlette_client import OAuth
 
-load_dotenv()
+IS_PRODUCTION = os.getenv('RENDER', False)
+
+if not IS_PRODUCTION:
+    # ローカル開発環境の場合のみ .env ファイルを読み込む
+    load_dotenv()
+    logging.info("ローカル環境として .env ファイルを読み込みました。")
+else:
+    logging.info("本番環境として起動しました (Renderの環境変数を使用)。")
+# ★★★ 修正ここまで ★★★
+
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
