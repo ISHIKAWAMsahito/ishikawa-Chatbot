@@ -6,7 +6,8 @@ import google.generativeai as genai
 from core.config import GEMINI_API_KEY, ACTIVE_COLLECTION_NAME
 # ↓↓↓ [修正] モジュール本体をインポート
 from core import database
-from core import settings
+# ↓↓↓ [修正] "as core_settings" という別名を付ける
+from core import settings as core_settings
 # ↑↑↑ [修正]
 from models.schemas import Settings
 
@@ -20,7 +21,6 @@ async def health_check():
         # ↓↓↓ [修正] 
         # db_client が存在する時点で "supabase" とわかるので、ハードコードする
         "database": "supabase" if database.db_client else "uninitialized"
-        # "database": database.db_client.get_db_type() if database.db_client else "uninitialized" # <-- 修正前
         # ↑↑↑ [修正]
     }
 
@@ -71,14 +71,15 @@ async def delete_collection(collection_name: str):
     return {"message": "コレクションが見つかりません"}
 
 @router.post("/settings")
-async def update_settings(settings: Settings):
+# ↓↓↓ [修正] 引数名を "settings_payload" に変更
+async def update_settings(settings_payload: Settings):
     """設定を更新"""
-    # ↓↓↓ [修正] "settings." を追加
-    if not settings.settings_manager:
+    # ↓↓↓ [修正] 別名を付けた "core_settings" を参照する
+    if not core_settings.settings_manager:
         raise HTTPException(503, "設定マネージャーが初期化されていません")
     try:
-        await settings.settings_manager.update_settings(settings.dict(exclude_none=True))
-        # ↑↑↑ [修正] "settings." を追加
+        # ↓↓↓ [修正] "core_settings" を参照し、引数のPydanticモデルを渡す
+        await core_settings.settings_manager.update_settings(settings_payload.dict(exclude_none=True))
         return {"message": "設定を更新しました"}
     except Exception as e:
         logging.error(f"設定更新エラー: {e}")
@@ -87,14 +88,14 @@ async def update_settings(settings: Settings):
 @router.websocket("/ws/settings")
 async def websocket_endpoint(websocket: WebSocket):
     """設定変更通知用WebSocket"""
-    # ↓↓↓ [修正] "settings." を追加
-    if not settings.settings_manager:
+    # ↓↓↓ [修正] 別名を付けた "core_settings" を参照する
+    if not core_settings.settings_manager:
         await websocket.close(code=1011, reason="Settings manager not initialized")
         return
-    await settings.settings_manager.add_websocket(websocket)
+    await core_settings.settings_manager.add_websocket(websocket)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        settings.settings_manager.remove_websocket(websocket)
-        # ↑↑↑ [修正] "settings." を追加
+        # ↓↓↓ [修正] 別名を付けた "core_settings" を参照する
+        core_settings.settings_manager.remove_websocket(websocket)
