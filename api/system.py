@@ -4,8 +4,10 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 import google.generativeai as genai
 
 from core.config import GEMINI_API_KEY, ACTIVE_COLLECTION_NAME
-from core.database import db_client
-from core.settings import settings_manager
+# ↓↓↓ [修正] モジュール本体をインポート
+from core import database
+from core import settings
+# ↑↑↑ [修正]
 from models.schemas import Settings
 
 router = APIRouter()
@@ -15,7 +17,9 @@ async def health_check():
     """ヘルスチェック"""
     return {
         "status": "ok",
-        "database": db_client.get_db_type() if db_client else "uninitialized"
+        # ↓↓↓ [修正] "database." を追加
+        "database": database.db_client.get_db_type() if database.db_client else "uninitialized"
+        # ↑↑↑ [修正]
     }
 
 @router.api_route("/healthz", methods=["GET", "HEAD"])
@@ -47,7 +51,9 @@ async def get_collections():
     """コレクション一覧を取得"""
     return [{
         "name": ACTIVE_COLLECTION_NAME, 
-        "count": db_client.count_chunks_in_collection(ACTIVE_COLLECTION_NAME) if db_client else 0
+        # ↓↓↓ [修正] "database." を追加
+        "count": database.db_client.count_chunks_in_collection(ACTIVE_COLLECTION_NAME) if database.db_client else 0
+        # ↑↑↑ [修正]
     }]
 
 @router.post("/collections")
@@ -65,10 +71,12 @@ async def delete_collection(collection_name: str):
 @router.post("/settings")
 async def update_settings(settings: Settings):
     """設定を更新"""
-    if not settings_manager:
+    # ↓↓↓ [修正] "settings." を追加
+    if not settings.settings_manager:
         raise HTTPException(503, "設定マネージャーが初期化されていません")
     try:
-        await settings_manager.update_settings(settings.dict(exclude_none=True))
+        await settings.settings_manager.update_settings(settings.dict(exclude_none=True))
+        # ↑↑↑ [修正] "settings." を追加
         return {"message": "設定を更新しました"}
     except Exception as e:
         logging.error(f"設定更新エラー: {e}")
@@ -77,12 +85,14 @@ async def update_settings(settings: Settings):
 @router.websocket("/ws/settings")
 async def websocket_endpoint(websocket: WebSocket):
     """設定変更通知用WebSocket"""
-    if not settings_manager:
+    # ↓↓↓ [修正] "settings." を追加
+    if not settings.settings_manager:
         await websocket.close(code=1011, reason="Settings manager not initialized")
         return
-    await settings_manager.add_websocket(websocket)
+    await settings.settings_manager.add_websocket(websocket)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        settings_manager.remove_websocket(websocket)
+        settings.settings_manager.remove_websocket(websocket)
+        # ↑↑↑ [修正] "settings." を追加

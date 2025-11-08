@@ -6,8 +6,10 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Q
 import google.generativeai as genai
 
 from core.dependencies import require_auth
-from core.database import db_client
-from core.settings import settings_manager
+# ↓↓↓ [修正] モジュール本体をインポート
+from core import database
+from core import settings
+# ↑↑↑ [修正]
 from core.config import ACTIVE_COLLECTION_NAME
 from services.document_processor import simple_processor
 
@@ -22,11 +24,13 @@ async def get_all_documents(
     category: Optional[str] = Query(None)
 ):
     """全ドキュメントをページネーション、検索、カテゴリフィルタ対応で取得"""
-    if not db_client:
+    # ↓↓↓ [修正] "database." を追加
+    if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     try:
-        query = db_client.client.table("documents")
-        count_query = db_client.client.table("documents")
+        query = database.db_client.client.table("documents")
+        count_query = database.db_client.client.table("documents")
+        # ↑↑↑ [修正] "database." を追加
         
         if category:
             query = query.eq("metadata->>category", category)
@@ -60,10 +64,12 @@ async def get_all_documents(
 @router.get("/api/documents/{doc_id}")
 async def get_document_by_id(doc_id: int, user: dict = Depends(require_auth)):
     """特定のドキュメントを取得"""
-    if not db_client:
+    # ↓↓↓ [修正] "database." を追加
+    if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     try:
-        result = db_client.client.table("documents").select("*").eq("id", doc_id).execute()
+        result = database.db_client.client.table("documents").select("*").eq("id", doc_id).execute()
+        # ↑↑↑ [修正] "database." を追加
         if not result.data:
             raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
         return result.data[0]
@@ -76,7 +82,8 @@ async def get_document_by_id(doc_id: int, user: dict = Depends(require_auth)):
 @router.put("/api/documents/{doc_id}")
 async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Depends(require_auth)):
     """ドキュメントを更新。content更新時にベクトルも再生成する。"""
-    if not db_client or not settings_manager:
+    # ↓↓↓ [修正] "database." と "settings." を追加
+    if not database.db_client or not settings.settings_manager:
         raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
     try:
         update_data = {}
@@ -85,7 +92,8 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
             new_content = request["content"]
             update_data["content"] = new_content
             
-            embedding_model = settings_manager.settings.get("embedding_model", "text-embedding-004")
+            embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
+            # ↑↑↑ [修正] "settings." を追加
             
             logging.info(f"ドキュメント {doc_id} のコンテンツが変更されたため、ベクトルを再生成します...")
             try:
@@ -114,7 +122,9 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
         if not update_data:
             raise HTTPException(status_code=400, detail="更新するデータがありません")
         
-        result = db_client.client.table("documents").update(update_data).eq("id", doc_id).execute()
+        # ↓↓↓ [修正] "database." を追加
+        result = database.db_client.client.table("documents").update(update_data).eq("id", doc_id).execute()
+        # ↑↑↑ [修正] "database." を追加
         
         if not result.data:
             raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
@@ -130,10 +140,12 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
 @router.delete("/api/documents/{doc_id}")
 async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
     """ドキュメントを削除"""
-    if not db_client:
+    # ↓↓↓ [修正] "database." を追加
+    if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     try:
-        result = db_client.client.table("documents").delete().eq("id", doc_id).execute()
+        result = database.db_client.client.table("documents").delete().eq("id", doc_id).execute()
+        # ↑↑↑ [修正] "database." を追加
         
         if not result.data:
             raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
@@ -153,22 +165,27 @@ async def upload_document(
     user: dict = Depends(require_auth)
 ):
     """ファイルを受け取り、テキスト抽出・チャンキング・ベクトル化してDBに挿入"""
-    if not db_client or not settings_manager or not simple_processor:
+    # ↓↓↓ [修正] "database." と "settings." を追加
+    if not database.db_client or not settings.settings_manager or not simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
-
+    # ↑↑↑ [修正]
+    
     try:
         filename = file.filename
         content = await file.read()
         
         logging.info(f"ファイルアップロード受信: {filename} (カテゴリ: {category})")
 
-        collection_name = settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
+        # ↓↓↓ [修正] "settings." を追加
+        collection_name = settings.settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
         docs_to_embed = simple_processor.process_and_chunk(filename, content, category, collection_name)
         
         if not docs_to_embed:
             raise HTTPException(status_code=400, detail="ファイルからテキストを抽出できませんでした。")
 
-        embedding_model = settings_manager.settings.get("embedding_model", "text-embedding-004")
+        embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
+        # ↑↑↑ [修正] "settings." を追加
+        
         total_chunks = len(docs_to_embed)
         logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します...")
 
@@ -181,11 +198,13 @@ async def upload_document(
                 )
                 embedding = embedding_response["embedding"]
                 
-                db_client.insert_document(
+                # ↓↓↓ [修正] "database." を追加
+                database.db_client.insert_document(
                     content=doc.page_content, 
                     embedding=embedding, 
                     metadata=doc.metadata
                 )
+                # ↑↑↑ [修正]
                 count += 1
                 
                 await asyncio.sleep(1)
@@ -196,7 +215,9 @@ async def upload_document(
                     await asyncio.sleep(30)
                     embedding_response = genai.embed_content(model=embedding_model, content=doc.page_content)
                     embedding = embedding_response["embedding"]
-                    db_client.insert_document(doc.page_content, embedding, doc.metadata)
+                    # ↓↓↓ [修正] "database." を追加
+                    database.db_client.insert_document(doc.page_content, embedding, doc.metadata)
+                    # ↑↑↑ [修正]
                 else:
                     logging.error(f"チャンク処理エラー ({filename}): {e}")
                     continue
@@ -212,9 +233,11 @@ async def upload_document(
 
 @router.get("/collections/{collection_name}/documents")
 async def get_documents(collection_name: str):
-    if not db_client:
+    # ↓↓↓ [修正] "database." を追加
+    if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     return {
-        "documents": db_client.get_documents_by_collection(collection_name),
-        "count": db_client.count_chunks_in_collection(collection_name)
+        "documents": database.db_client.get_documents_by_collection(collection_name),
+        "count": database.db_client.count_chunks_in_collection(collection_name)
     }
+    # ↑↑↑ [修正]
