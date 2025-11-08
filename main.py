@@ -35,6 +35,7 @@ from collections import defaultdict
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document as LangChainDocument
+from core.config import GEMINI_API_KEY, APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY
 
 # --- 初期設定 ---
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
