@@ -1,24 +1,24 @@
 # --------------------------------------------------------------------------
 # 1. ライブラリのインポート
 # --------------------------------------------------------------------------
-import os
+
 import json
 import uvicorn
 import traceback
 import csv
-from datetime import datetime, timezone, timedelta
+
 import uuid
 import io
-import logging
+
 import asyncio
 import re
-from typing import List, Optional, Dict, Any
+
 from contextlib import asynccontextmanager
 
 # --- サードパーティライブラリ ---
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
-from dotenv import load_dotenv
+
 from google.generativeai.types import GenerationConfig
 # ★★★ 以下の2行を追加 ★★★
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -26,59 +26,24 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, FileResponse, Response
 from pydantic import BaseModel
-
-from supabase import create_client, Client
 # ★ (修正) 低品質アップロード用に PyPDF2 と python-docx を復活
 import PyPDF2
 from docx import Document as DocxDocument
 # (BeautifulSoup は /scrape を削除したため不要)
-
 from starlette.middleware.sessions import SessionMiddleware
-from authlib.integrations.starlette_client import OAuth
-
-from fastapi import Request
 
 from collections import defaultdict
 from typing import Dict, List
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document as LangChainDocument
-# (unstructured, markdownify は削除)
 
 # --- 初期設定 ---
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
-load_dotenv()
 
 # --------------------------------------------------------------------------
 # 2. 環境変数と基本設定
 # --------------------------------------------------------------------------
-# Gemini API設定
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise ValueError("環境変数 'GEMINI_API_KEY' が設定されていません。")
 genai.configure(api_key=GEMINI_API_KEY)
-
-# Auth0設定 (これは元のコードのもので、新しいJWT認証とは別)
-AUTH0_CLIENT_ID = os.getenv("AUTH0_CLIENT_ID")
-AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET")
-AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
-APP_SECRET_KEY = os.getenv("APP_SECRET_KEY") # デフォルト値を削除
-if not APP_SECRET_KEY:
-    raise ValueError("環境変数 'APP_SECRET_KEY' が設定されていません。")
-
-# Supabase設定
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
-
-# 定数
-ACTIVE_COLLECTION_NAME = "student-knowledge-base"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-JST = timezone(timedelta(hours=+9), 'JST')
-
-SUPER_ADMIN_EMAILS_STR = os.getenv("SUPER_ADMIN_EMAILS", "")
-SUPER_ADMIN_EMAILS = [email.strip() for email in SUPER_ADMIN_EMAILS_STR.split(',') if email.strip()]
-
-ALLOWED_CLIENT_EMAILS_STR = os.getenv("ALLOWED_CLIENT_EMAILS", "")
-ALLOWED_CLIENT_EMAILS = [email.strip() for email in ALLOWED_CLIENT_EMAILS_STR.split(',') if email.strip()]
 # キーワードマッピング
 
 # データベースから読み込むフォールバック情報を格納するグローバル変数
@@ -87,7 +52,57 @@ MAX_HISTORY_LENGTH = 20
 # --------------------------------------------------------------------------
 # 3. 内部コンポーネントの定義
 # --------------------------------------------------------------------------
+class SettingsManager:
+    """設定管理クラス"""
+    def __init__(self):
+        self.settings = {
+            "model": "gemini-2.5-flash",
+            "collection": ACTIVE_COLLECTION_NAME,
+            "embedding_model": "text-embedding-004",
+            "top_k": 5
+        }
+        self.websocket_connections: List[WebSocket] = []
+        self.settings_file = os.path.join(BASE_DIR, "shared_settings.json")
+        self.load_settings()
 
+    def load_settings(self):
+        try:
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, 'r', encoding='utf-8') as f:
+                    self.settings.update(json.load(f))
+        except Exception as e:
+            logging.error(f"設定ファイルの読み込みエラー: {e}")
+
+    def save_settings(self):
+        try:
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
+                json.dump(self.settings, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logging.error(f"設定ファイルの保存エラー: {e}")
+
+    async def update_settings(self, new_settings: Dict[str, Any]):
+        self.settings.update(new_settings)
+        self.save_settings()
+        await self.broadcast_settings()
+
+    async def add_websocket(self, websocket: WebSocket):
+        await websocket.accept()
+        self.websocket_connections.append(websocket)
+
+    def remove_websocket(self, websocket: WebSocket):
+        if websocket in self.websocket_connections:
+            self.websocket_connections.remove(websocket)
+
+    async def broadcast_settings(self):
+        message = {"type": "settings_update", "data": self.settings}
+        disconnected = []
+        for conn in self.websocket_connections:
+            try:
+                await conn.send_json(message)
+            except:
+                disconnected.append(conn)
+        for conn in disconnected:
+            self.remove_websocket(conn)
 # (split_text 関数 削除済み)
 
 def format_urls_as_links(text: str) -> str:
@@ -268,124 +283,7 @@ class FeedbackManager:
             logging.error(f"フィードバック統計取得エラー: {e}")
             return {"total": 0, "resolved": 0, "not_resolved": 0, "rate": 0}
 
-class SupabaseClientManager:
-    """Supabaseクライアント管理クラス"""
-    def search_documents_by_vector(self, collection_name: str, embedding: List[float], match_count: int) -> List[dict]:
-        """カテゴリで絞り込まずにベクトル検索を行う"""
-        params = {
-            "p_collection_name": collection_name,
-            "p_query_embedding": embedding,
-            "p_match_count": match_count
-        }
-        # 作成した新しいRPC関数 'match_documents_by_vector' を呼び出す
-        result = self.client.rpc("match_documents_by_vector", params).execute()
-        return result.data or []
-    def search_fallback_qa(self, embedding: List[float], match_count: int) -> List[dict]:
-        """Q&Aフォールバックをベクトル検索する"""
-        params = {
-            "p_query_embedding": embedding,
-            "p_match_count": match_count
-        }
-        # ステップ1で作成した 'match_fallback_qa' を呼び出す
-        result = self.client.rpc("match_fallback_qa", params).execute()
-        return result.data or []
-    def __init__(self, url: str, key: str):
-        self.client: Client = create_client(url, key)
 
-    def get_db_type(self) -> str:
-        return "supabase"
-
-    def insert_document(self, content: str, embedding: List[float], metadata: dict):
-        self.client.table("documents").insert({
-            "content": content,
-            "embedding": embedding,
-            "metadata": metadata
-        }).execute()
-
-    def search_documents(self, collection_name: str, category: str, embedding: List[float], match_count: int) -> List[dict]:
-        params = {
-            "p_collection_name": collection_name,
-            "p_category": category,
-            "p_query_embedding": embedding,
-            "p_match_count": match_count
-        }
-        result = self.client.rpc("match_documents", params).execute()
-        return result.data or []
-
-    def get_documents_by_collection(self, collection_name: str) -> List[dict]:
-        result = self.client.table("documents").select("id, metadata").eq("metadata->>collection_name", collection_name).execute()
-        return result.data or []
-
-    def count_chunks_in_collection(self, collection_name: str) -> int:
-        result = self.client.table("documents").select("id", count='exact').eq("metadata->>collection_name", collection_name).execute()
-        return result.count or 0
-
-    def get_distinct_categories(self, collection_name: str) -> List[str]:
-        try:
-            result = self.client.rpc("get_distinct_categories", {"p_collection_name": collection_name}).execute()
-            categories = [item['category'] for item in (result.data or []) if item.get('category')]
-            return categories if categories else ["その他"]
-        except Exception as e:
-            logging.error(f"RPC 'get_distinct_categories' の呼び出しエラー: {e}")
-            return ["その他"]
-
-class SettingsManager:
-    """設定管理クラス"""
-    def __init__(self):
-        self.settings = {
-            "model": "gemini-2.5-flash",
-            "collection": ACTIVE_COLLECTION_NAME,
-            "embedding_model": "text-embedding-004",
-            "top_k": 5
-        }
-        self.websocket_connections: List[WebSocket] = []
-        self.settings_file = os.path.join(BASE_DIR, "shared_settings.json")
-        self.load_settings()
-
-    def load_settings(self):
-        try:
-            if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r', encoding='utf-8') as f:
-                    self.settings.update(json.load(f))
-        except Exception as e:
-            logging.error(f"設定ファイルの読み込みエラー: {e}")
-
-    def save_settings(self):
-        try:
-            with open(self.settings_file, 'w', encoding='utf-8') as f:
-                json.dump(self.settings, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logging.error(f"設定ファイルの保存エラー: {e}")
-
-    async def update_settings(self, new_settings: Dict[str, Any]):
-        self.settings.update(new_settings)
-        self.save_settings()
-        await self.broadcast_settings()
-
-    async def add_websocket(self, websocket: WebSocket):
-        await websocket.accept()
-        self.websocket_connections.append(websocket)
-
-    def remove_websocket(self, websocket: WebSocket):
-        if websocket in self.websocket_connections:
-            self.websocket_connections.remove(websocket)
-
-    async def broadcast_settings(self):
-        message = {"type": "settings_update", "data": self.settings}
-        disconnected = []
-        for conn in self.websocket_connections:
-            try:
-                await conn.send_json(message)
-            except:
-                disconnected.append(conn)
-        for conn in disconnected:
-            self.remove_websocket(conn)
-
-
-# --------------------------------------------------------------------------
-# 4. FastAPIアプリケーションのセットアップ
-# --------------------------------------------------------------------------
-db_client: Optional[SupabaseClientManager] = None
 settings_manager: Optional[SettingsManager] = None
 # ★ (修正) simple_processor のグローバル変数を追加
 simple_processor: Optional[SimpleDocumentProcessor] = None
@@ -425,19 +323,6 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=APP_SECRET_KEY)
 from prometheus_fastapi_instrumentator import Instrumentator
 Instrumentator().instrument(app).expose(app)
-
-# OAuth設定
-oauth = OAuth()
-if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
-    oauth.register(
-        name='auth0',
-        client_id=AUTH0_CLIENT_ID,
-        client_secret=AUTH0_CLIENT_SECRET,
-        server_metadata_url=f'https://{AUTH0_DOMAIN}/.well-known/openid-configuration',
-        client_kwargs={'scope': 'openid profile email'},
-    )
-else:
-    logging.warning("Auth0の設定が不完全なため、管理者ページの認証機能は動作しません。")
 
 # --- グローバルインスタンス ---
 feedback_manager = FeedbackManager()
@@ -523,61 +408,6 @@ def get_config():
         "supabase_url": os.getenv("SUPABASE_URL"),
         "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY")
     }
-    
-
-
-    
-# --- 認証関数 (Auth0用) ---
-# --- 管理者用認証 ---
-def require_auth(request: Request):
-    """管理者用認証 (SUPER_ADMIN_EMAILS のみ許可)"""
-    user = request.session.get('user')
-    if not user:
-        raise HTTPException(status_code=307, headers={'Location': '/login'})
-    
-    # 念のため小文字に変換して比較
-    user_email = user.get('email', '').lower()
-    super_admin_emails_lower = [email.lower() for email in SUPER_ADMIN_EMAILS]
-
-    if user_email in super_admin_emails_lower:
-        return user
-    else:
-        # スーパー管理者リストに含まれていない場合は、管理者ページへのアクセスを拒否
-        raise HTTPException(status_code=403, detail="管理者ページへのアクセス権がありません。")
-
-# --- 学生用認証 ---
-def require_auth_client(request: Request):
-    """クライアント用認証 (ALLOWED_CLIENT_EMAILS または SUPER_ADMIN_EMAILS を許可)"""
-    user = request.session.get('user')
-
-    # 1. 最初に、ログインしているかどうかを確認します。
-    if not user:
-        raise HTTPException(status_code=307, headers={'Location': '/login'})
-
-    # 2. ユーザー情報があることが確定してから、メールアドレスを取得します。
-    user_email = user.get('email', '').lower()
-
-    # 3. 比較対象の許可リストを両方とも小文字に変換しておきます。
-    allowed_emails_lower = [email.lower() for email in ALLOWED_CLIENT_EMAILS]
-    super_admin_emails_lower = [email.lower() for email in SUPER_ADMIN_EMAILS]
-
-    # --- デバッグ用のprint文（安全な場所に移動） ---
-    # print("--- クライアント認証チェック ---")
-    # print(f"ログイン試行中のメアド (小文字化後): '[{user_email}]'")
-    # print(f"クライアント許可リスト: {allowed_emails_lower}")
-    # print(f"管理者許可リスト: {super_admin_emails_lower}")
-    # print(f"クライアントリストに含まれているか？: {user_email in allowed_emails_lower}")
-    # print(f"管理者リストに含まれているか？: {user_email in super_admin_emails_lower}")
-    # print("--------------------")
-    # -----------------------------------------------------------
-
-    # 4. 認証チェックを実行します。
-    # (クライアント許可リスト、または管理者許可リストのどちらかに含まれていればOK)
-    if (user_email in allowed_emails_lower or
-        user_email in super_admin_emails_lower):
-        return user
-    else:
-        raise HTTPException(status_code=403, detail="このサービスへのアクセスは許可されていません。")
 
 # --- 認証とHTML提供 (Auth0用) ---
 # main.pyの修正箇所（ルート定義部分のみ）
@@ -1021,7 +851,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         # ベクトル検索処理
         # =======================
         STRICT_THRESHOLD = 0.80
-        RELATED_THRESHOLD = 0.70
+        RELATED_THRESHOLD = 0.75
         search_results = []
         relevant_docs = []
 
