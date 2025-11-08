@@ -49,7 +49,12 @@ async def lifespan(app: FastAPI):
 
 # FastAPIアプリケーション作成
 app = FastAPI(lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=APP_SECRET_KEY)
+app.add_middleware(
+    SessionMiddleware, 
+    secret_key=APP_SECRET_KEY,
+    https_only=True,  # HTTPS接続でのみクッキーを送信
+    same_site='none'  # WSS (クロスサイト) 接続でもクッキーを送信許可
+)
 
 # Prometheusメトリクス
 Instrumentator().instrument(app).expose(app)
