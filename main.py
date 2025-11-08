@@ -276,12 +276,6 @@ Instrumentator().instrument(app).expose(app)
 
 # --- グローバルインスタンス ---
 feedback_manager = FeedbackManager()
-# ★ (修正) simple_processor のインスタンス化は lifespan に移動
-# (document_processor 削除済み)
-# (web_scraper 削除済み)
-# (scrape_parent_splitter, scrape_child_splitter 削除済み)
-manager = ConnectionManager()
-
 # --------------------------------------------------------------------------
 # 5. APIエンドポイント定義
 # --------------------------------------------------------------------------
