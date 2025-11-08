@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 from authlib.integrations.starlette_client import OAuth
+import logging
 
 IS_PRODUCTION = os.getenv('RENDER', False)
 
