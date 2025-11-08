@@ -746,7 +746,6 @@ async def get_all_documents(
         # (SupabaseのPostgRESTビルダーを使って、動的にクエリを組み立てます)
         query = db_client.client.table("documents")
         count_query = db_client.client.table("documents")
-
         # --- 2. フィルタ条件の適用 ---
         if category:
             query = query.eq("metadata->>category", category)
@@ -757,7 +756,7 @@ async def get_all_documents(
                 safe_search = search.replace('"', '""')
                 
                 # 2. "*" ワイルドカードを付与し、パターン全体を二重引用符 " で囲む
-                search_term = f'"*{safe_search}*"' 
+                search_term = f"*{safe_search}*"
                 
                 # 3. .or_() に渡す単一の文字列を構築
                 # ★★★ 修正点 ★★★
