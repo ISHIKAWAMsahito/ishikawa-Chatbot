@@ -16,7 +16,11 @@ import io
 
 import asyncio
 import re
-from core.config import GEMINI_API_KEY, APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY, BASE_DIR, JST
+# main.py の import 文をこれに書き換える
+from core.config import (
+    GEMINI_API_KEY, APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY, 
+    BASE_DIR, JST, ACTIVE_COLLECTION_NAME
+)
 from contextlib import asynccontextmanager
 
 # --- サードパーティライブラリ ---
@@ -276,39 +280,6 @@ feedback_manager = FeedbackManager()
 # (document_processor 削除済み)
 # (web_scraper 削除済み)
 # (scrape_parent_splitter, scrape_child_splitter 削除済み)
-
-# --- データモデル定義 ---
-class ChatQuery(BaseModel):
-    query: str
-    model: str = "gemini-2.5-flash"
-    embedding_model: str = "text-embedding-004"
-    top_k: int = 5
-    collection: str = ACTIVE_COLLECTION_NAME
-
-class ClientChatQuery(BaseModel):
-    query: str
-
-# (ScrapeRequest 削除済み)
-
-# (重複したChatQueryを修正 -> FeedbackRequest)
-class FeedbackRequest(BaseModel):
-    feedback_id: str
-    rating: str
-    comment: str = ""
-
-class AIResponseFeedbackRequest(BaseModel):
-    user_question: str
-    ai_response: str
-    rating: str  # 'good' or 'bad'
-
-class Settings(BaseModel):
-    model: Optional[str] = None
-    collection: Optional[str] = None
-    embedding_model: Optional[str] = None
-    top_k: Optional[int] = None
-
-# WebSocket接続管理
-
 manager = ConnectionManager()
 
 # --------------------------------------------------------------------------
