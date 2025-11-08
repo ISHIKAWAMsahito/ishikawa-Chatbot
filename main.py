@@ -1,6 +1,8 @@
 # --------------------------------------------------------------------------
 # 1. ライブラリのインポート
 # --------------------------------------------------------------------------
+from typing import List, Dict
+from collections import defaultdict
 import logging
 import uvicorn
 import traceback
@@ -31,8 +33,6 @@ from docx import Document as DocxDocument
 # (BeautifulSoup は /scrape を削除したため不要)
 from starlette.middleware.sessions import SessionMiddleware
 
-from collections import defaultdict
-
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document as LangChainDocument
 from core.config import GEMINI_API_KEY, APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY
@@ -47,8 +47,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 # キーワードマッピング
 
 # データベースから読み込むフォールバック情報を格納するグローバル変数
-chat_histories: Dict[str, List[Dict[str, str]]] = defaultdict(list)
-MAX_HISTORY_LENGTH = 20 
+
 # --------------------------------------------------------------------------
 # 3. 内部コンポーネントの定義
 # --------------------------------------------------------------------------
