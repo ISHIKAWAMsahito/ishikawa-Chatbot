@@ -16,7 +16,7 @@ import io
 
 import asyncio
 import re
-
+from core.config import GEMINI_API_KEY, APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY, BASE_DIR, JST
 from contextlib import asynccontextmanager
 
 # --- サードパーティライブラリ ---
