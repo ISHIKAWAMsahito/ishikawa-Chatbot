@@ -39,7 +39,11 @@ async def lifespan(app: FastAPI):
             database.db_client = SupabaseClientManager(url=SUPABASE_URL, key=SUPABASE_KEY)
             logging.info("Supabaseクライアントの初期化完了。")
         except Exception as e:
-            logging.error(f"Supabase初期化エラー: {e}")
+            # ↓↓↓↓ ここから修正 ↓↓↓↓
+            error_message = f"Supabase初期化エラー: {e}"
+            logging.error(error_message)
+            # ログが隠蔽されても、これで強制的にクラッシュさせてエラーを表示する
+            raise RuntimeError(error_message)
     else:
         logging.warning("Supabaseの環境変数が設定されていません。")
 
