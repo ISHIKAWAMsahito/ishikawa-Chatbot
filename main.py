@@ -764,7 +764,7 @@ async def get_all_documents(
                 # 検索対象を content と source のみ に絞ります。
                 or_filter_string = (
                     f"content.ilike.{search_term},"
-                    f"metadata->>source.ilike.{search_term}"
+                    # f"metadata->>source.ilike.{search_term}"
                 )
                 
                 # 4. クエリに適用
