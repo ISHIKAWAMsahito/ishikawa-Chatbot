@@ -4,25 +4,6 @@ from supabase import create_client, Client
 
 class SupabaseClientManager:
     """Supabaseクライアント管理クラス"""
-    def search_documents_by_vector(self, collection_name: str, embedding: List[float], match_count: int) -> List[dict]:
-        """カテゴリで絞り込まずにベクトル検索を行う"""
-        params = {
-            "p_collection_name": collection_name,
-            "p_query_embedding": embedding,
-            "p_match_count": match_count
-        }
-        # 作成した新しいRPC関数 'match_documents_by_vector' を呼び出す
-        result = self.client.rpc("match_documents_by_vector", params).execute()
-        return result.data or []
-    def search_fallback_qa(self, embedding: List[float], match_count: int) -> List[dict]:
-        """Q&Aフォールバックをベクトル検索する"""
-        params = {
-            "p_query_embedding": embedding,
-            "p_match_count": match_count
-        }
-        # ステップ1で作成した 'match_fallback_qa' を呼び出す
-        result = self.client.rpc("match_fallback_qa", params).execute()
-        return result.data or []
     def __init__(self, url: str, key: str):
         self.client: Client = create_client(url, key)
 
@@ -46,6 +27,25 @@ class SupabaseClientManager:
         result = self.client.rpc("match_documents", params).execute()
         return result.data or []
 
+    def search_documents_by_vector(self, collection_name: str, embedding: List[float], match_count: int) -> List[dict]:
+        """カテゴリで絞り込まずにベクトル検索を行う"""
+        params = {
+            "p_collection_name": collection_name,
+            "p_query_embedding": embedding,
+            "p_match_count": match_count
+        }
+        result = self.client.rpc("match_documents_by_vector", params).execute()
+        return result.data or []
+
+    def search_fallback_qa(self, embedding: List[float], match_count: int) -> List[dict]:
+        """Q&Aフォールバックをベクトル検索する"""
+        params = {
+            "p_query_embedding": embedding,
+            "p_match_count": match_count
+        }
+        result = self.client.rpc("match_fallback_qa", params).execute()
+        return result.data or []
+
     def get_documents_by_collection(self, collection_name: str) -> List[dict]:
         result = self.client.table("documents").select("id, metadata").eq("metadata->>collection_name", collection_name).execute()
         return result.data or []
@@ -63,10 +63,5 @@ class SupabaseClientManager:
             logging.error(f"RPC 'get_distinct_categories' の呼び出しエラー: {e}")
             return ["その他"]
 
-
-
-
-# --------------------------------------------------------------------------
-# 4. FastAPIアプリケーションのセットアップ
-# --------------------------------------------------------------------------
+# グローバルインスタンス
 db_client: Optional[SupabaseClientManager] = None

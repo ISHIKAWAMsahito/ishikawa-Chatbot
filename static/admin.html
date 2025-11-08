@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI chatbot system【管理者画面】</title>
+    
+<style>
+    /* --- 基本設定 --- */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* Fix: model-select-row for AI設定 select row */
+    .model-select-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 24px;
+        overflow-x: hidden;
+    }
+
+    /* --- レイアウトコンテナ --- */
+    .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        background: rgba(255, 255, 255, 0.98);
+        border-radius: 16px; /* 統一 */
+        box-shadow: 0 32px 64px rgba(0, 0, 0, 0.15);
+        overflow: hidden;
+    }
+    .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 40px;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+    }
+    .header h1 {
+        font-size: 2.5rem;
+        margin-bottom: 16px; /* 統一 */
+        text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3);
+        position: relative;
+        z-index: 1;
+    }
+    .header p {
+        font-size: 1.1rem;
+        opacity: 0.9;
+        position: relative;
+        z-index: 1;
+    }
+    .main-content {
+        display: grid;
+        grid-template-columns: 1fr 300px;
+        gap: 32px; /* 統一 */
+        padding: 32px; /* 統一 */
+        min-height: 600px;
+    }
+
+    /* --- チャットエリア --- */
+    .chat-container {
+        display: flex;
+        flex-direction: column;
+        background: white;
+        border-radius: 16px; /* 統一 */
+        box-shadow: 0 16px 32px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        position: relative;
+    }
+    .chat-header {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        padding: 16px; /* 統一 */
+        text-align: center;
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+    .chat-messages {
+        flex: 1;
+        padding: 24px; /* 統一 */
+        overflow-y: auto;
+        max-height: 500px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px; /* 統一 */
+    }
+    .message {
+        max-width: 80%;
+        padding: 12px 16px; /* 統一 */
+        border-radius: 16px; /* 統一 */
+        position: relative;
+        animation: slideIn 0.3s ease-out;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+    .message.user {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        align-self: flex-end;
+        margin-left: auto;
+    }
+    .message.bot {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        color: #333;
+        align-self: flex-start;
+        border-left: 4px solid #4facfe;
+    }
+    .message-content { line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; }
+    .message-content a { color: #007bff; text-decoration: underline; }
+    .message-content a:hover { color: #0056b3; }
+    .message-time { font-size: 0.8rem; opacity: 0.7; margin-top: 8px; /* 統一 */ }
+    
+    /* ★修正点1のCSSを追加 */
+    .important-note {
+        color: red;
+        font-weight: bold;
+    }
+
+    .chat-input-container { padding: 24px; /* 統一 */ background: #f8f9fa; border-top: 1px solid #e9ecef; }
+    .chat-input-box { display: flex; gap: 8px; /* 統一 */ align-items: flex-end; }
+    .chat-input {
+        flex: 1;
+        padding: 12px 16px; /* 統一 */
+        border: 2px solid #e9ecef;
+        border-radius: 9999px; /* Pill Shape */
+        font-size: 1rem; /* 統一 */
+        outline: none;
+        transition: all 0.3s ease;
+        resize: none;
+        min-height: 48px; /* 統一 */
+        max-height: 120px;
+    }
+    .chat-input:focus { border-color: #4facfe; box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1); }
+    .send-btn {
+        padding: 12px 24px; /* 統一 */
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        border: none;
+        border-radius: 9999px; /* Pill Shape */
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        display:flex;
+        gap: 8px; /* 統一 */
+        align-items:center;
+    }
+    .send-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(79, 172, 254, 0.3); }
+    .send-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+    /* --- 右側パネル --- */
+    .right-panel { display: flex; flex-direction: column; gap: 24px; /* 統一 */ }
+    .panel-section { background: white; padding: 24px; /* 統一 */ border-radius: 16px; /* 統一 */ box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); }
+    .section-title {
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin-bottom: 16px; /* 統一 */
+        color: #333;
+        border-bottom: 3px solid #4facfe;
+        padding-bottom: 8px; /* 統一 */
+    }
+
+    /* --- 汎用 & 状態表示 --- */
+    .status-indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; /* 統一 */ animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(79, 172, 254, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(79, 172, 254, 0); } 100% { box-shadow: 0 0 0 0 rgba(79, 172, 254, 0); } }
+    .status-connected { background-color: #28a745; }
+    .status-disconnected { background-color: #dc3545; }
+    .margin-top-10 { margin-top: 8px; /* 統一 */ } /* クラス名はそのまま */
+    .db-info { font-size: 0.9rem; color: #666; margin-top: 8px; /* 統一 */ }
+
+    /* --- フォーム要素 --- */
+    .model-info { background: #e3f2fd; padding: 16px; /* 統一 */ border-radius: 8px; /* 統一 */ margin-top: 8px; /* 統一 */ font-size: 0.9rem; }
+    .model-select, .collection-select, .embedding-model-select, .collection-input, .scrape-input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        margin-top: 10px;
+    }
+    /* ★修正点2のCSSを追加 */
+    .model-select {
+        flex: 1;
+    }
+    .topk-select { width: 64px; /* 統一 */ padding: 4px; /* 統一 */ }
+    .document-upload { margin-top: 15px; /* 統一 */ }
+    #fileInput { display: none; }
+    .upload-btn {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 5px;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 10px;
+    }
+    .upload-btn:hover {
+        background: #218838;
+    }
+    .upload-btn.danger { background: #dc3545; }
+    .upload-btn.danger:hover { background: #c82333; }
+    /* ★修正点3のCSSを追加 */
+    .upload-note {
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 5px;
+    }
+   .document-list {
+    max-height: 150px;
+    overflow-y: auto;
+    margin-top: 10px;
+}
+.document-item {
+    padding: 8px 12px;
+    background: #f8f9fa;
+    margin: 5px 0;
+    border-radius: 5px;
+    font-size: 0.9rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.total-chunks-info {
+    text-align: right;
+    font-size: 0.9rem;
+    margin-top: 10px;
+    color: #333;
+}
+.document-item:hover {
+    background: #e9ecef;
+}
+    .db-controls { display: flex; gap: 8px; /* 統一 */ margin-top: 8px; /* 統一 */ }
+    .small-btn { padding: 4px 8px; /* 統一 */ font-size: 0.8rem; border: none; border-radius: 4px; /* 統一 */ cursor: pointer; }
+    .small-btn.primary { background: #007bff; color: white; }
+    .small-btn.success { background: #28a745; color: white; }
+    .small-btn.danger { background: #dc3545; color: white; }
+
+    /* --- その他 --- */
+    .feedback-container { margin-top: 12px; padding-top: 8px; /* 統一 */ border-top: 1px solid #ddd; }
+    .feedback-btn { background: none; border: 1px solid #ccc; border-radius: 16px; /* 統一 */ padding: 4px 8px; /* 統一 */ margin-left: 8px; /* 統一 */ cursor: pointer; transition: all 0.2s ease; }
+    .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
+    /* ★修正点4のCSSを追加 */
+    .feedback-thanks {
+        font-size: 0.8rem;
+        color: #28a745;
+    }
+    
+    /* --- 文書管理・ウェブサイト取得 --- */
+    .scrape-btn {
+        margin-top: 16px; /* 統一 */
+        padding: 10px 15px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 8px; /* 統一 */
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-weight: 600;
+    }
+    .scrape-btn:hover {
+        background: #0056b3;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+    }
+    .scrape-btn:disabled {
+        background-color: #6c757d;
+        cursor: not-allowed;
+        transform: none;
+        opacity: 0.6;
+    }
+    .website-example { 
+        padding: 12px 16px; /* 統一 */ 
+        background: #f0f8ff; 
+        border-radius: 8px; /* 統一 */ 
+        margin-bottom: 8px; /* 統一 */ 
+        cursor: pointer; 
+        transition: all 0.2s ease; 
+        font-size: 0.9rem; 
+        border-left: 4px solid #007bff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+    }
+    .website-example:hover { 
+        background: #e0f0ff; 
+        transform: translateX(4px);
+        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.15);
+    }
+    .admin-tool-btn { display: block; width: 100%; padding: 12px; background: linear-gradient(135deg, #6c757d 0%, #343a40 100%); color: white; border: none; border-radius: 8px; /* 統一 */ cursor: pointer; font-weight: 700; }
+    .admin-tool-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2); }
+    .sync-status { font-size: 0.85rem; color: #28a745; margin-top: 4px; /* 統一 */ font-style: italic; }
+    .sync-status.error { color: #dc3545; }
+    .setting-item { margin-bottom: 16px; /* 統一 */ padding: 16px; /* 統一 */ border: 1px solid #e9ecef; border-radius: 8px; /* 統一 */ background: #f8f9fa; }
+    .setting-item.active { border-color: #28a745; background: #e8f5e8; }
+    .auto-sync-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #28a745; margin-left: 8px; /* 統一 */ animation: blink 1s infinite; }
+    @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
+
+    /* --- モーダル --- */
+    .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.2s; }
+    .modal-overlay.visible { opacity: 1; visibility: visible; }
+    .modal-content { background: white; padding: 32px; /* 統一 */ border-radius: 16px; /* 統一 */ box-shadow: 0 16px 40px rgba(0,0,0,0.2); text-align: center; max-width: 400px; transform: scale(0.9); transition: transform 0.2s; }
+    .modal-overlay.visible .modal-content { transform: scale(1); }
+    .modal-message { font-size: 1.1rem; margin-bottom: 24px; /* 統一 */ color: #333; }
+    .modal-buttons { display: flex; gap: 16px; /* 統一 */ justify-content: center; }
+    .modal-btn { padding: 8px 24px; /* 統一 */ border: none; border-radius: 8px; /* 統一 */ cursor: pointer; font-weight: 600; transition: all 0.2s; }
+    .modal-btn.confirm { background: #dc3545; color: white; }
+    .modal-btn.confirm:hover { background: #c82333; }
+    .modal-btn.cancel { background: #e9ecef; color: #333; }
+    .modal-btn.cancel:hover { background: #ced4da; }
+
+    /* --- レスポンシブ対応 --- */
+    @media (max-width: 820px) {
+        body { padding: 16px; /* 統一 */ }
+        .container { border-radius: 16px; /* 統一 */ }
+        .main-content { grid-template-columns: 1fr; padding: 16px; /* 統一 */ gap: 24px; /* 統一 */ }
+        .header { padding: 24px; /* 統一 */ }
+        .header h1 { font-size: 2rem; }
+        .header p { font-size: 1rem; }
+        .chat-messages { max-height: 45vh; }
+        .panel-section { padding: 16px; /* 統一 */ }
+        .section-title { font-size: 1.2rem; }
+    }
+    @media (max-width: 480px) {
+        body { padding: 8px; /* 統一 */ }
+        .main-content { padding: 8px; /* 統一 */ }
+        .header { padding: 16px; /* 統一 */ }
+        .header h1 { font-size: 1.6rem; }
+        .header p { font-size: 0.9rem; }
+        .chat-input-container { padding: 16px; /* 統一 */ }
+        .chat-input-box { flex-direction: column; align-items: stretch; }
+        .send-btn { justify-content: center; padding: 12px; /* 統一 */ }
+        .panel-section { padding: 16px; /* 統一 */ }
+    }
+</style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 AI chatbot system【管理者】</h1>
+            <p>学生支援のためのAIチャットボット (Gemini API版)</p>
+        </div>
+
+        <div class="main-content">
+            <div class="chat-container">
+                <div class="chat-header">💬 AIチャット</div>
+                <div class="chat-messages" id="chatMessages">
+                    <div class="message bot">
+                        <div class="message-content">
+                            私は学生支援チャットボットです。🚀<br>
+                            - 学生証を紛失・盗難・汚損したときは？<br>
+                            - 新しいサークルを作るには？<br>
+                            - 休学・復学・退学の手続きをしたいときは？<br>
+                            様々な質問にお答えします！
+                            <span class="important-note">
+                            ※氏名・住所・学籍番号などの個人情報は入力しないでください。
+                            </span>
+                        </div>
+                        <div class="message-time">システム起動時刻</div>
+                    </div>
+                </div>
+                <div class="chat-input-container">
+                    <div class="chat-input-box">
+                        <textarea id="chatInput" class="chat-input" placeholder="質問を入力してください..." rows="1"></textarea>
+                        <button id="sendBtn" class="send-btn">
+                            <span>送信</span>
+                            <span>🔍</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <div class="panel-section">
+                    <h3 class="section-title">🌐 接続状況</h3>
+                    <div>
+                        <span id="dbStatusIndicator" class="status-indicator status-disconnected"></span>
+                        <span id="dbStatusText">データベース接続確認中...</span>
+                    </div>
+                    <div class="margin-top-10">
+                        <span id="geminiStatus" class="status-indicator status-disconnected"></span>
+                        <span id="geminiStatusText">Gemini API接続確認中...</span>
+                    </div>
+                    <div class="margin-top-10">
+                        <span id="syncStatus" class="status-indicator status-disconnected"></span>
+                        <span id="syncStatusText">設定同期接続中...</span>
+                    </div>
+                    <div class="db-info">
+                        <strong>バックエンド API:</strong> <span id="backendUrl"></span>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3 class="section-title">🧠 AI設定 <span class="auto-sync-indicator" id="autoSyncIndicator" title="自動同期中"></span></h3>
+                    <div class="setting-item" id="modelSetting">
+                        <label for="modelSelect"><strong>使用モデル:</strong></label><br>
+                        <div class="model-select-row">
+                            <select id="topKSelect" class="topk-select" title="検索件数を選択">
+                                <option value="3">3</option>
+                                <option value="5" selected>5</option>
+                                <option value="10">10</option>
+                            </select>
+                            <select id="modelSelect" class="model-select"></select>
+                        </div>
+                        <div class="sync-status" id="modelSyncStatus">設定同期待機中...</div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3 class="section-title" id="collectionTitle">🗃️ データコレクション</h3>
+                    <div class="setting-item" id="collectionSetting">
+                        <label for="collectionSelect"><strong>コレクション:</strong></label><br>
+                        <select id="collectionSelect" class="collection-select"></select>
+                        <div class="sync-status" id="collectionSyncStatus">設定同期待機中...</div>
+                    </div>
+                    <div>
+                        <input type="text" id="newCollectionName" class="collection-input" placeholder="新しいコレクション名">
+                        <div class="db-controls">
+                            <button class="small-btn success" onclick="createCollection()">作成</button>
+                            <button class="small-btn danger" onclick="deleteCollection()">削除</button>
+                            <button class="small-btn primary" onclick="refreshCollections()">更新</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3 class="section-title">✨ 埋め込みモデル</h3>
+                    <div class="setting-item" id="embeddingSetting">
+                        <label for="embeddingModelSelect"><strong>埋め込みモデル:</strong></label><br>
+                        <select id="embeddingModelSelect" class="embedding-model-select" aria-label="埋め込みモデル選択">
+                           <option value="text-embedding-004" selected>text-embedding-004 (Gemini)</option>
+                        </select>
+                        <div class="sync-status" id="embeddingSyncStatus">設定同期待機中...</div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3 class="section-title">📊 ドキュメント管理</h3>
+                    <button class="admin-tool-btn" onclick="openDocumentManager()">📝 レコード管理画面を開く</button>
+                </div>
+
+                <div class="panel-section">
+                    <h3 class="section-title">📄 文書管理</h3>
+                    <div class="document-upload">
+                        <input type="file" id="fileInput" accept=".txt,.md,.pdf,.docx" multiple>
+                        <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📁 文書アップロード</button>
+                        <p class="upload-note">
+                            ※メタデータ登録のため、ファイル名は「<b>カテゴリ名</b>_ファイル名.txt」の形式にしてください。
+                        </p>
+                    </div>
+                    <div class="document-list" id="documentList"></div>
+                </div>
+
+                <div class="panel-section">
+                    <h3 class="section-title">🌐 ウェブサイトから取得</h3>
+                    <div>
+                        <input type="text" id="scrapeUrlInput" class="scrape-input" placeholder="https://...">
+                        <button id="scrapeBtn" class="scrape-btn" onclick="scrapeWebsite()">このURLから情報を取得</button>
+                    </div>
+                </div>
+            </div> </div>
+    </div>
+
+    <div id="confirmModal" class="modal-overlay">
+        <div class="modal-content">
+            <p id="modalMessage" class="modal-message"></p>
+            <div class="modal-buttons">
+                <button id="modalCancel" class="modal-btn cancel">キャンセル</button>
+                <button id="modalConfirm" class="modal-btn confirm">削除</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const modelSelect = document.getElementById('modelSelect');
+        const fileInput = document.getElementById('fileInput');
+        const documentList = document.getElementById('documentList');
+        const collectionSelect = document.getElementById('collectionSelect');
+        const topKSelect = document.getElementById('topKSelect');
+        const embeddingModelSelect = document.getElementById('embeddingModelSelect');
+        const scrapeUrlInput = document.getElementById('scrapeUrlInput');
+        const scrapeBtn = document.getElementById('scrapeBtn');
+        
+        let currentCollection = '';
+        let backendConnected = false;
+        let settingsSocket = null;
+
+        // openDocumentManager を定義（実行ホストに応じて動的に DB.html を開く）
+        function openDocumentManager() {
+            // 実行中のオリジン（プロトコル+ホスト+ポート）を使う方法
+            const url = `${window.location.origin}/DB.html`;
+            // あるいは、ルートからの絶対パスで良ければ: const url = '/DB.html';
+            window.open(url, '_blank');
+        }
+        // onclick 属性から確実に参照できるようグローバルに割り当て
+        window.openDocumentManager = openDocumentManager;
+
+        /* 以下既存の WebSocket 等の処理は変更無し */
+        function connectSettingsWebSocket() {
+            try {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
+                settingsSocket = new WebSocket(wsUrl);
+
+                settingsSocket.onopen = function() {
+                    console.log('設定同期WebSocket接続完了');
+                    updateSyncStatus(true, '設定同期接続済み');
+                };
+ 
+                settingsSocket.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'settings_update') {
+                            console.log('設定更新を受信:', data.data);
+                            applyReceivedSettings(data.data);
+                        }
+                    } catch (e) {
+                        console.log('WebSocketメッセージ:', event.data);
+                    }
+                };
+
+                settingsSocket.onclose = function() {
+                    console.log('設定同期WebSocket切断');
+                    updateSyncStatus(false, '設定同期切断');
+                    setTimeout(connectSettingsWebSocket, 5000);
+                };
+
+                settingsSocket.onerror = function(error) {
+                    console.error('設定同期WebSocketエラー:', error);
+                    updateSyncStatus(false, '設定同期エラー');
+                };
+
+            } catch (error) {
+                console.error('WebSocket接続エラー:', error);
+                updateSyncStatus(false, '設定同期接続失敗');
+                setTimeout(connectSettingsWebSocket, 5000);
+            }
+        }
+
+        function updateSyncStatus(connected, message) {
+            const syncStatus = document.getElementById('syncStatus');
+            const syncStatusText = document.getElementById('syncStatusText');
+            const autoSyncIndicator = document.getElementById('autoSyncIndicator');
+            
+            if (syncStatus && syncStatusText) {
+                syncStatus.className = `status-indicator ${connected ? 'status-connected' : 'status-disconnected'}`;
+                syncStatusText.textContent = message;
+                if (autoSyncIndicator) {
+                    autoSyncIndicator.style.display = connected ? 'inline-block' : 'none';
+                }
+            }
+        }
+
+        function applyReceivedSettings(settings) {
+            console.log('設定を適用中:', settings);
+            if (settings.model && modelSelect.value !== settings.model) {
+                if ([...modelSelect.options].some(opt => opt.value === settings.model)) {
+                    modelSelect.value = settings.model;
+                    highlightSettingChange('modelSetting', 'modelSyncStatus', 'モデルが更新されました');
+                }
+            }
+            if (settings.collection && collectionSelect.value !== settings.collection) {
+                if ([...collectionSelect.options].some(opt => opt.value === settings.collection)) {
+                    collectionSelect.value = settings.collection;
+                    currentCollection = settings.collection;
+                    updateDocumentList();
+                    highlightSettingChange('collectionSetting', 'collectionSyncStatus', 'コレクションが更新されました');
+                }
+            }
+            if (settings.embedding_model && embeddingModelSelect.value !== settings.embedding_model) {
+                if ([...embeddingModelSelect.options].some(opt => opt.value === settings.embedding_model)) {
+                    embeddingModelSelect.value = settings.embedding_model;
+                    highlightSettingChange('embeddingSetting', 'embeddingSyncStatus', '埋め込みモデルが更新されました');
+                }
+            }
+            if (settings.top_k && parseInt(topKSelect.value) !== settings.top_k) {
+                if ([...topKSelect.options].some(opt => parseInt(opt.value) === settings.top_k)) {
+                    topKSelect.value = settings.top_k.toString();
+                    highlightSettingChange('modelSetting', 'modelSyncStatus', '検索件数が更新されました');
+                }
+            }
+        }
+
+        function highlightSettingChange(settingId, statusId, message) {
+            const settingElement = document.getElementById(settingId);
+            const statusElement = document.getElementById(statusId);
+            if (settingElement) {
+                settingElement.classList.add('active');
+                setTimeout(() => settingElement.classList.remove('active'), 2000);
+            }
+            if (statusElement) {
+                statusElement.textContent = message;
+                statusElement.className = 'sync-status';
+                setTimeout(() => {
+                    statusElement.textContent = '設定同期待機中...';
+                    statusElement.className = 'sync-status';
+                }, 3000);
+            }
+        }
+
+        async function updateServerSettings() {
+            const settings = {
+                model: modelSelect.value,
+                collection: collectionSelect.value,
+                embedding_model: embeddingModelSelect.value,
+                top_k: parseInt(topKSelect.value, 10)
+            };
+            try {
+                const response = await fetch('/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+                if (response.ok) console.log('設定をサーバーに送信:', settings);
+                else console.error('設定送信エラー:', await response.text());
+            } catch (error) {
+                console.error('設定送信通信エラー:', error);
+            }
+        }
+
+        function addMessage(text, type) {
+            const messageWrapper = document.createElement('div');
+            messageWrapper.className = `message ${type}`;
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+             // HTMLとして解釈されるようにinnerHTMLを使用
+            messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+            // リンクが含まれる場合はHTMLとして処理、そうでなければエスケープ
+            if (text.includes('<a href=')) {
+                // リンクタグ以外のHTMLをエスケープ
+                let processedText = text.replace(/\n/g, '<br>');
+                messageContent.innerHTML = processedText;
+            } else {
+                // 通常のテキストはエスケープしてから改行を<br>に変換
+                messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
+            }
+            messageWrapper.appendChild(messageContent);
+            const messageTime = document.createElement('div');
+            messageTime.className = 'message-time';
+            messageTime.textContent = new Date().toLocaleTimeString();
+            messageWrapper.appendChild(messageTime);
+            chatMessages.appendChild(messageWrapper);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return messageWrapper;
+        }
+
+        async function sendFeedback(element, rating) {
+            const messageWrapper = element.closest('.message');
+            const logId = messageWrapper.dataset.logId;
+            if (!logId) {
+                console.error("Log ID not found for feedback.");
+                addMessage('フィードバックの送信に失敗しました (log_idが見つかりません)', 'bot');
+                return;
+            }
+            try {
+                const res = await fetch(`/feedback`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ log_id: logId, rating: rating })
+                });
+                if(!res.ok) {
+                    const errorData = await res.json();
+                    throw new Error(errorData.detail || "Failed to send feedback.");
+                }
+                const feedbackContainer = element.parentElement;
+                // ★修正点4: style属性を使わず、class属性を使用するように変更
+                feedbackContainer.innerHTML = '<span class="feedback-thanks">フィードバックありがとうございます！</span>';
+            } catch(error) {
+                console.error("Error sending feedback:", error);
+                addMessage(`フィードバックの送信中にエラーが発生しました: ${error.message}`, 'bot');
+            };
+        }
+
+        async function initializeSystem() {
+            document.getElementById('backendUrl').textContent = window.location.origin;
+            
+            const dbType = await checkBackendConnection();
+            if (backendConnected) {
+                checkDbConnection(dbType);
+                await checkGeminiConnection();
+                await refreshCollections();
+                connectSettingsWebSocket();
+            }
+        }
+
+        async function checkBackendConnection() {
+            try {
+                const response = await fetch(`/health`);
+                const data = await response.json();
+                backendConnected = response.ok;
+                if (!backendConnected) addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
+                return data.database; // 'supabase' or 'chromadb'
+            } catch (error) {
+                backendConnected = false;
+                addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
+                return null;
+            }
+        }
+        
+        function updateStatus(elementId, textId, connected, serviceName) {
+            const statusIndicator = document.getElementById(elementId);
+            const statusText = document.getElementById(textId);
+            if(statusIndicator && statusText) {
+                statusIndicator.className = `status-indicator ${connected ? 'status-connected' : 'status-disconnected'}`;
+                statusText.textContent = connected ? `${serviceName} 接続済み` : `${serviceName} 未接続`;
+            }
+        }
+        
+        function checkDbConnection(dbType) {
+            const dbName = dbType || '不明';
+            const dbNameCapitalized = dbName.charAt(0).toUpperCase() + dbName.slice(1);
+            
+            updateStatus('dbStatusIndicator', 'dbStatusText', backendConnected, dbNameCapitalized);
+
+            const collectionTitle = document.getElementById('collectionTitle');
+            if(collectionTitle){
+                collectionTitle.innerHTML = `🗃️ ${dbNameCapitalized} コレクション`;
+            }
+        }
+
+        async function checkGeminiConnection() {
+            try {
+                const response = await fetch(`/gemini/status`);
+                const data = await response.json();
+                updateStatus('geminiStatus', 'geminiStatusText', response.ok && data.connected, 'Gemini API');
+                if (response.ok && data.connected && data.models) {
+                    updateGenericList(data.models.map(m => m), modelSelect, 'gemini-1.5-flash-latest');
+                } else if (response.ok && !data.connected) {
+                    addMessage(`❌ Gemini APIに接続できません: ${data.detail}`, 'bot');
+                }
+            } catch (error) {
+                updateStatus('geminiStatus', 'geminiStatusText', false, 'Gemini API');
+            }
+        }
+
+        async function sendMessage() {
+            const userInput = chatInput.value.trim();
+            if (!userInput) return;
+            if (!currentCollection) {
+                addMessage('❌ コレクションが選択されていません。', 'bot');
+                return;
+            }
+
+            addMessage(userInput, 'user');
+            chatInput.value = '';
+            chatInput.style.height = 'auto';
+
+            const botMessageElement = addMessage('思考中...', 'bot');
+            const botMessageContent = botMessageElement.querySelector('.message-content');
+            let fullResponse = '';
+
+            try {
+                const response = await fetch(`/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: userInput,
+                        model: modelSelect.value,
+                        collection: currentCollection,
+                        embedding_model: embeddingModelSelect.value,
+                        top_k: parseInt(topKSelect.value, 10)
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: `APIエラー: ${response.statusText}` }));
+                    throw new Error(errorData.detail);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                botMessageContent.innerHTML = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        if (botMessageElement.dataset.logId) {
+                            const feedbackContainer = document.createElement('div');
+                            feedbackContainer.className = 'feedback-container';
+                            feedbackContainer.innerHTML = `
+                                <span>この回答は役に立ちましたか？</span>
+                                <button class="feedback-btn" data-rating="good">👍</button>
+                                <button class="feedback-btn" data-rating="bad">👎</button>
+                            `;
+                            botMessageElement.appendChild(feedbackContainer);
+                        }
+                        break;
+                    }
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+                    
+for (const line of lines) {
+                        if (line.trim().startsWith('data: ')) {
+                            // data: 以降の文字列を取得し、念のため前後の空白を削除
+                            const jsonString = line.substring(6).trim();
+
+                            // jsonString が空でない場合のみ、JSON.parseを実行する
+                            if (jsonString) { 
+                                try {
+                                    const data = JSON.parse(jsonString); // <<< 安全にパース
+                                    if (data.log_id) {
+                                        botMessageElement.dataset.logId = data.log_id;
+                                    }
+                                    if (data.content) {
+                                        fullResponse += data.content;
+                                        // ストリーミング中もリンクを適切に処理
+                                        if (fullResponse.includes('<a href=')) {
+                                            let processedText = fullResponse
+                                                .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
+                                                .replace(/\n/g, '<br>');
+                                            botMessageContent.innerHTML = processedText;
+                                        } else {
+                                            botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
+                                        }
+                                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    }
+                                } catch (e) {
+                                    // エラー発生時は、どの文字列が原因だったかもログに出力するとデバッグしやすい
+                                    console.error("Error parsing stream data:", e, "Raw data:", jsonString);
+                                }
+                            }
+                            // else: jsonStringが空（例: "data: \n"）の場合は、何もせずスキップする
+                        }
+                    }
+                    } // while(true) ループを閉じる
+            } catch (error) { // fetchのtryブロックを閉じる
+                console.error('メッセージ送信エラー:', error);
+                botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
+            }
+        }
+
+        async function handleFileUpload(event) {
+            const files = Array.from(event.target.files);
+            if (files.length === 0 || !currentCollection) {
+                addMessage(files.length === 0 ? 'ファイルが選択されていません。' : '❌ コレクションを選択してください。', 'bot');
+                return;
+            }
+            for (const file of files) {
+                const botMsg = addMessage(`⏳「${file.name}」を処理中...`, 'bot');
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('collection_name', currentCollection);
+                formData.append('embedding_model', embeddingModelSelect.value);
+                try {
+                    const response = await fetch(`/upload`, { method: 'POST', body: formData });
+                    const result = await response.json();
+                    if (response.ok) {
+                        botMsg.querySelector('.message-content').textContent = `✅「${file.name}」をコレクション「${currentCollection}」に追加しました（${result.chunks}チャンク）`;
+                        await refreshCollections();
+                    } else {
+                        botMsg.querySelector('.message-content').textContent = `❌「${file.name}」の処理中にエラー: ${result.detail}`;
+                    }
+                } catch (error) {
+                    botMsg.querySelector('.message-content').textContent = `❌「${file.name}」の処理中に通信エラー: ${error.message}`;
+                }
+            }
+            fileInput.value = '';
+        }
+
+        async function createCollection() {
+            const collectionName = document.getElementById('newCollectionName').value.trim();
+            if (!collectionName) {
+                addMessage('❌ コレクション名を入力してください。', 'bot');
+                return;
+            }
+            try {
+                const response = await fetch(`/collections`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: collectionName })
+                });
+                const result = await response.json();
+                addMessage(response.ok ? `✅ コレクション「${collectionName}」を作成しました` : `❌ 作成失敗: ${result.detail}`, 'bot');
+                if (response.ok) {
+                    document.getElementById('newCollectionName').value = '';
+                    
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await refreshCollections();
+                }
+            } catch (error) {
+                addMessage(`❌ 作成中に通信エラー: ${error.message}`, 'bot');
+            }
+        }
+        
+        async function deleteCollection() {
+            const collectionName = collectionSelect.value;
+            if (!collectionName) return;
+            const confirmed = await showConfirm(`コレクション「${collectionName}」を本当に削除しますか？`);
+            if (!confirmed) return;
+            try {
+                const response = await fetch(`/collections/${collectionName}`, { method: 'DELETE' });
+                const result = await response.json();
+                addMessage(response.ok ? `✅ ${result.message}` : `❌ 削除失敗: ${result.detail}`, 'bot');
+                if (response.ok) {
+                    await refreshCollections();
+                }
+            } catch (error) {
+                addMessage(`❌ 削除中に通信エラー: ${error.message}`, 'bot');
+            }
+        }
+
+        async function refreshCollections() {
+            try {
+                const response = await fetch(`/collections`);
+                if (response.ok) {
+                    const collections = await response.json();
+                    updateCollectionList(collections);
+                } else {
+                   addMessage('❌ コレクション一覧の取得に失敗しました。', 'bot');
+                   updateCollectionList([]);
+                }
+            } catch (error) {
+                addMessage(`❌ コレクションの更新に失敗: ${error.message}`, 'bot');
+                updateCollectionList([]);
+            }
+        }
+
+        async function updateDocumentList() {
+            if (!currentCollection) {
+                documentList.innerHTML = '<span>コレクションを選択してください</span>';
+                return;
+            }
+            documentList.innerHTML = '読み込み中...';
+            try {
+                const response = await fetch(`/collections/${currentCollection}/documents`);
+                const data = await response.json();
+                documentList.innerHTML = '';
+                if (response.ok && data.documents && data.documents.length > 0) {
+                     data.documents.forEach(doc => {
+                        const item = document.createElement('div');
+                        item.className = 'document-item';
+                        item.textContent = doc.id;
+                        documentList.appendChild(item);
+                    });
+                   const totalItem = document.createElement('div');
+totalItem.className = 'total-chunks-info'; // この一行でスタイルを適用します
+totalItem.innerHTML = `<strong>合計: ${data.count} チャンク</strong>`;
+documentList.appendChild(totalItem);
+
+                } else {
+                    documentList.innerHTML = '<span>ドキュメントはありません</span>';
+                }
+            } catch (error) {
+                documentList.innerHTML = '<span>リストの取得中にエラーが発生しました</span>';
+            }
+        }
+
+        function updateGenericList(items, selectElement, defaultValue = '') {
+            const currentValue = selectElement.value;
+            selectElement.innerHTML = '';
+            items.forEach(item => {
+                const option = document.createElement('option');
+                option.value = typeof item === 'string' ? item : item.name;
+                option.textContent = typeof item === 'string' ? item : `${item.name} (${item.count})`;
+                selectElement.appendChild(option);
+            });
+            
+            const values = items.map(item => typeof item === 'string' ? item : item.name);
+
+            if (values.includes(currentValue)) {
+                selectElement.value = currentValue;
+            } else if (values.includes(defaultValue)) {
+                selectElement.value = defaultValue;
+            } else if (values.length > 0) {
+                selectElement.value = values[0];
+            }
+            return selectElement.value || '';
+        }
+        
+        function updateCollectionList(collections) {
+            currentCollection = updateGenericList(collections, collectionSelect);
+            updateDocumentList();
+        }
+        
+        async function scrapeWebsite() {
+            const url = scrapeUrlInput.value.trim();
+            if (!url || !currentCollection) {
+                addMessage(!url ? '❌ URLを入力してください。' : '❌ コレクションを選択してください。', 'bot');
+                return;
+            }
+            scrapeBtn.disabled = true;
+            scrapeBtn.textContent = '取得中...';
+            addMessage(`⏳ URLから情報を取得中...\n${url}`, 'bot');
+            try {
+                const response = await fetch(`/scrape`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: url,
+                        collection_name: currentCollection,
+                        embedding_model: embeddingModelSelect.value
+                    })
+                });
+                const result = await response.json();
+                addMessage(response.ok ? `✅ URLの情報を追加しました（${result.chunks}チャンク）` : `❌ 取得失敗: ${result.detail}`, 'bot');
+                if (response.ok) await refreshCollections();
+            } catch (error) {
+                addMessage(`❌ 通信エラー: ${error.message}`, 'bot');
+            } finally {
+                scrapeBtn.disabled = false;
+                scrapeBtn.textContent = 'このURLから情報を取得';
+                scrapeUrlInput.value = '';
+            }
+        }
+
+        function showConfirm(message) {
+            return new Promise(resolve => {
+                const modal = document.getElementById('confirmModal');
+                const msgEl = document.getElementById('modalMessage');
+                const confirmBtn = document.getElementById('modalConfirm');
+                const cancelBtn = document.getElementById('modalCancel');
+
+                msgEl.textContent = message;
+                modal.classList.add('visible');
+                const close = (value) => {
+                    modal.classList.remove('visible');
+                    confirmBtn.onclick = null;
+                    cancelBtn.onclick = null;
+                    resolve(value);
+                };
+                confirmBtn.onclick = () => close(true);
+                cancelBtn.onclick = () => close(false);
+            });
+        }
+
+        window.createCollection = createCollection;
+        window.deleteCollection = deleteCollection;
+        window.refreshCollections = refreshCollections;
+        window.scrapeWebsite = scrapeWebsite;
+        window.setScrapeUrl = function(url) {
+            scrapeUrlInput.value = url;
+        }
+
+        modelSelect.addEventListener('change', updateServerSettings);
+        collectionSelect.addEventListener('change', (e) => {
+            currentCollection = e.target.value;
+            updateDocumentList();
+            updateServerSettings();
+        });
+        embeddingModelSelect.addEventListener('change', updateServerSettings);
+        topKSelect.addEventListener('change', updateServerSettings);
+        sendBtn.addEventListener('click', sendMessage);
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        chatInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+        });
+        fileInput.addEventListener('change', handleFileUpload);
+        
+        chatMessages.addEventListener('click', (e) => {
+            if (e.target.classList.contains('feedback-btn')) {
+                const rating = e.target.dataset.rating;
+                if (rating) {
+                    sendFeedback(e.target, rating);
+                }
+            }
+        });
+
+        initializeSystem();
+    });
+</script>
+</body>
+</html>

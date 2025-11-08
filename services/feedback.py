@@ -1,0 +1,56 @@
+import os
+import json
+import logging
+from datetime import datetime
+from typing import Dict, Any
+from core.config import BASE_DIR, JST
+
+class FeedbackManager:
+    """フィードバック管理クラス(簡素化版)"""
+    def __init__(self):
+        self.feedback_file = os.path.join(BASE_DIR, "feedback.json")
+
+    def save_feedback(self, feedback_id: str, rating: str, comment: str = ""):
+        """フィードバックを保存"""
+        try:
+            feedback_data = []
+            if os.path.exists(self.feedback_file):
+                with open(self.feedback_file, 'r', encoding='utf-8') as f:
+                    feedback_data = json.load(f)
+            feedback_entry = {
+                "id": feedback_id,
+                "rating": rating,
+                "comment": comment,
+                "timestamp": datetime.now(JST).isoformat()
+            }
+            feedback_data.append(feedback_entry)
+            with open(self.feedback_file, 'w', encoding='utf-8') as f:
+                json.dump(feedback_data, f, ensure_ascii=False, indent=2)
+            logging.info(f"フィードバック保存完了: {feedback_id} - {rating}")
+        except Exception as e:
+            logging.error(f"フィードバック保存エラー: {e}")
+            raise
+
+    def get_feedback_stats(self) -> Dict[str, Any]:
+        """フィードバック統計を取得"""
+        try:
+            if not os.path.exists(self.feedback_file):
+                return {"total": 0, "resolved": 0, "not_resolved": 0, "rate": 0}
+            with open(self.feedback_file, 'r', encoding='utf-8') as f:
+                feedback_data = json.load(f)
+            total = len(feedback_data)
+            resolved = sum(1 for fb in feedback_data if fb['rating'] == 'resolved')
+            not_resolved = total - resolved
+            rate = (resolved / total * 100) if total > 0 else 0
+            return {
+                "total": total,
+                "resolved": resolved,
+                "not_resolved": not_resolved,
+                "rate": round(rate, 1)
+            }
+        except Exception as e:
+            logging.error(f"フィードバック統計取得エラー: {e}")
+            return {"total": 0, "resolved": 0, "not_resolved": 0, "rate": 0}
+
+# グローバルインスタンス
+feedback_manager = FeedbackManager()

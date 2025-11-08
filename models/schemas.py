@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+from core.config import ACTIVE_COLLECTION_NAME
 
-# --- データモデル定義 ---
 class ChatQuery(BaseModel):
     query: str
     model: str = "gemini-2.5-flash"
@@ -20,7 +20,7 @@ class FeedbackRequest(BaseModel):
 class AIResponseFeedbackRequest(BaseModel):
     user_question: str
     ai_response: str
-    rating: str  # 'good' or 'bad'
+    rating: str
 
 class Settings(BaseModel):
     model: Optional[str] = None
