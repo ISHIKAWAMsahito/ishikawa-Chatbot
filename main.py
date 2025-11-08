@@ -48,12 +48,16 @@ async def lifespan(app: FastAPI):
     logging.info("--- アプリケーション終了処理 ---")
 
 # FastAPIアプリケーション作成
+# 1. FastAPIアプリケーション作成
+app = FastAPI(lifespan=lifespan)
+
+# 2. app を定義した後に middleware を追加
 app.add_middleware(
     SessionMiddleware, 
     secret_key=APP_SECRET_KEY,
-    https_only=False,         # ⬅️ 明示的に False に戻す
-    secure=True,              # ⬅️ 'SameSite=none' のために 'Secure' フラグを立てる
-    same_site='none'          # ⬅️ WSS (クロスサイト) 接続でもクッキーを送信許可
+    https_only=False,
+    secure=True,
+    same_site='none'
 )
 
 # Prometheusメトリクス
