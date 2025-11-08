@@ -12,24 +12,36 @@ if not IS_PRODUCTION:
     logging.info("ローカル環境として .env ファイルを読み込みました。")
 else:
     logging.info("本番環境として起動しました (Renderの環境変数を使用)。")
-# ★★★ 修正ここまで ★★★
-
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("環境変数 'GEMINI_API_KEY' が設定されていません。")
 
-# Auth0設定 (これは元のコードのもので、新しいJWT認証とは別)
+# Auth0設定
 AUTH0_CLIENT_ID = os.getenv("AUTH0_CLIENT_ID")
 AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET")
 AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
-APP_SECRET_KEY = os.getenv("APP_SECRET_KEY") # デフォルト値を削除
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY")
 if not APP_SECRET_KEY:
     raise ValueError("環境変数 'APP_SECRET_KEY' が設定されていません。")
 
 # Supabase設定
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+
+# --- vvv ここから修正 vvv ---
+# アプリケーション起動時に変数が None でないか強制的にチェックする
+# これがインポートのタイミングの問題（分割バグ）か、
+# Renderの環境変数設定ミス（タイプミス）かを切り分ける
+if not SUPABASE_URL:
+    logging.error("### 'SUPABASE_URL' が None です。インポート順の問題か、環境変数が設定されていません。 ###")
+    raise ValueError("環境変数 'SUPABASE_URL' が設定されていません。")
+    
+if not SUPABASE_KEY:
+    logging.error("### 'SUPABASE_SERVICE_KEY' が None です。インポート順の問題か、環境変数が設定されていません。 ###")
+    raise ValueError("環境変数 'SUPABASE_SERVICE_KEY' が設定されていません。")
+# --- ^^^ ここまで修正 ^^^ ---
+
 
 # 定数
 ACTIVE_COLLECTION_NAME = "student-knowledge-base"
