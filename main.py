@@ -55,9 +55,8 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     SessionMiddleware, 
     secret_key=APP_SECRET_KEY,
-    https_only=False,
-    secure=True,
-    same_site='none'
+    https_only=True,   # ⬅️ ★ 'secure=True' ではなく、こちらを使います
+    same_site='none'   # ⬅️ 'wss://' (WebSocket) 接続を許可します
 )
 
 # Prometheusメトリクス
