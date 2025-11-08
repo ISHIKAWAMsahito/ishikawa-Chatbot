@@ -1,50 +1,70 @@
-ishikawa-Chatbot.env
-# Pythonのキャッシュファイル
-__pycache__/
-*.pyc
-
-
-# Sentence Transformersのモデルキャッシュフォルダ
-model_cache/
-st_models/
-
-# Node.js / npm 関連
-node_modules/
-package-lock.json
-
-# 仮想環境
-.venv/
-oct_env/
-
-# Replitが自動生成するファイル
-.replit
-replit.nix
-
-# コンパイルされたファイルや圧縮ファイル
-*.exe
-*.zip
-*.7z
+# ---------------------------------
+# 環境変数 (★最重要★)
+# ---------------------------------
 .env
-ishikawa-Chatbot.env
-諸資格過程/
-チャットボットdb/
-<<<<<<< HEAD
+*.env
+ishikawa-Chatbot.env 
+GrafanaAPIKEY.env
+SBIpw .txt
 
-"GeminiAPI\343\201\256\343\203\235\343\203\252\343\202\267\343\203\274,supabace,RAG\343\201\256\350\252\277\346\237\273.docx"
-=======
- "GeminiAPI\343\201\256\343\203\235\343\203\252\343\202\267\343\203\274,supabace,RAG\343\201\256\350\252\277\346\237\273.docx"
+# ---------------------------------
+# Python 関連
+# ---------------------------------
+__pycache__/ 
+*.pyc 
+.venv/ 
+oct_env/ 
+packages.txt
+requirements_local.txt
 
-        c.html
-      
-        prometheus-3.6.0-rc.1.windows-amd64/
-        "\343\202\263\343\203\236\343\203\263\343\203\211\351\233\206/"
-prometheus-3.6.0-rc.1.windows-amd64/
+# ---------------------------------
+# ライブラリ・モデルキャッシュ
+# ---------------------------------
+model_cache/ 
+st_models/ 
 
-ProgPythongit 
-ProgPython/
-grafana_data/
-migrate.py
-# 日本語フォルダを無視
-コマンド集
-チャットボットdb
-チャットボットドキュメント
+# ---------------------------------
+# Node.js 関連
+# ---------------------------------
+node_modules/ 
+package-lock.json 
+
+# ---------------------------------
+# ビルド・ツール
+# ---------------------------------
+*.exe 
+*.zip 
+*.7z 
+prometheus-3.6.0-rc.1.windows-amd64/ 
+
+# ---------------------------------
+# Replit 関連
+# ---------------------------------
+.replit 
+replit.nix 
+
+# ---------------------------------
+# ローカルデータ・ドキュメント
+# ---------------------------------
+grafana_data/ 
+ProgPython/ 
+諸資格過程/ 
+チャットボットdb/ 
+チャットボットドキュメント/ 
+コマンド集/ 
+output_gakubu.txt
+output_shokitei.txt
+test_output.txt
+
+# ---------------------------------
+# 競合していたファイル
+# ---------------------------------
+"GeminiAPIのポリシー,supabace,RAGの調査.docx" 
+c.html 
+
+# ---------------------------------
+# スクリプト
+# ---------------------------------
+# ⚠️ 注意: このファイルはリポジトリに含めなくて本当に大丈夫ですか？
+migrate.py  
+upload_script.py
