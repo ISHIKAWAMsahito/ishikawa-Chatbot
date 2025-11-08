@@ -9,7 +9,11 @@ import google.generativeai as genai
 from google.generativeai.types import GenerationConfig, HarmCategory, HarmBlockThreshold
 
 from core.config import GEMINI_API_KEY
-from core.database import db_client
+
+# ↓↓↓ [修正] 変数ではなくモジュールをインポートし、別名を付ける
+from core import database as core_database
+# ↑↑↑ [修正]
+
 from models.schemas import ChatQuery
 from services.utils import format_urls_as_links
 
@@ -95,9 +99,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     yield f"data: {json.dumps({'feedback_id': feedback_id})}\n\n"
 
     try:
-        if not all([db_client, GEMINI_API_KEY]):
+        # ↓↓↓ [修正] core_database を参照
+        if not all([core_database.db_client, GEMINI_API_KEY]):
             yield f"data: {json.dumps({'content': 'システムが利用できません。管理者にお問い合わせください。'})}\n\n"
             return
+        # ↑↑↑ [修正]
 
         # ベクトル検索処理
         STRICT_THRESHOLD = 0.80
@@ -112,12 +118,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             )
             query_embedding = query_embedding_response["embedding"]
 
-            if db_client:
-                search_results = db_client.search_documents_by_vector(
+            # ↓↓↓ [修正] core_database を参照
+            if core_database.db_client:
+                search_results = core_database.db_client.search_documents_by_vector(
                     collection_name=chat_req.collection,
                     embedding=query_embedding,
                     match_count=chat_req.top_k
                 )
+            # ↑↑↑ [修正]
 
             logging.info(f"検索結果件数: {len(search_results)}")
 
@@ -223,10 +231,12 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             logging.info(f"Stage 1 RAG 失敗。Stage 2 (Q&Aベクトル検索) を実行します。")
 
             try:
-                fallback_results = db_client.search_fallback_qa(
+                # ↓↓↓ [修正] core_database を参照
+                fallback_results = core_database.db_client.search_fallback_qa(
                     embedding=query_embedding,
                     match_count=1
                 )
+                # ↑↑↑ [修正]
 
                 if fallback_results:
                     best_match = fallback_results[0]
