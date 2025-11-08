@@ -17,8 +17,10 @@ async def health_check():
     """ヘルスチェック"""
     return {
         "status": "ok",
-        # ↓↓↓ [修正] "database." を追加
-        "database": database.db_client.get_db_type() if database.db_client else "uninitialized"
+        # ↓↓↓ [修正] 
+        # db_client が存在する時点で "supabase" とわかるので、ハードコードする
+        "database": "supabase" if database.db_client else "uninitialized"
+        # "database": database.db_client.get_db_type() if database.db_client else "uninitialized" # <-- 修正前
         # ↑↑↑ [修正]
     }
 
