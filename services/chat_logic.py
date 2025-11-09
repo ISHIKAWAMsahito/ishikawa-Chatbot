@@ -106,8 +106,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         # ↑↑↑ [修正]
 
         # ベクトル検索処理
-        STRICT_THRESHOLD = 0.80
-        RELATED_THRESHOLD = 0.70
+        STRICT_THRESHOLD = 0.85
+        RELATED_THRESHOLD = 0.80
         search_results = []
         relevant_docs = []
 
