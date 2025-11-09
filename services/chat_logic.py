@@ -150,28 +150,29 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 logging.info(f"  [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
 
         # コンテキスト生成と回答生成
+        # chat_logic.py (166行目から)
+
+        # コンテキスト生成と回答生成
         if relevant_docs:
             context_parts = []
             
-            # chat_logic.py (L181あたり)
+            # ↓↓↓ [修正] この For ループはコンテキストを収集するだけ (L181)
+            for d in relevant_docs:
+                source_name = d.get('metadata', {}).get('source', '不明')
 
-        for d in relevant_docs:
-            source_name = d.get('metadata', {}).get('source', '不明')
+                if source_name == 'output_gakubu.txt':
+                    display_source = '履修要項2024'
+                else:
+                    display_source = source_name
 
-            if source_name == 'output_gakubu.txt':
-                display_source = '履修要項2024'
-            else:
-                display_source = source_name
+                parent_text = d.get('metadata', {}).get('parent_content', d.get('content', ''))
 
-            # ↓↓↓ ★★★ ここを修正 ★★★
-            # 'content' (子) ではなく 'parent_content' (親) を取得する
-            parent_text = d.get('metadata', {}).get('parent_content', d.get('content', ''))
-
-            context_parts.append(
-                f"<document source='{display_source}'>{parent_text}</document>"
-            )
-            # ↑↑↑ ★★★ ここまで修正 ★★★
+                context_parts.append(
+                    f"<document source='{display_source}'>{parent_text}</document>"
+                )
+            # ↑↑↑ [修正] For ループはここで終わり
             
+            # ↓↓↓ [修正] 以下の処理 (L198) はインデントを左にずらし、ループの外に出す
             context = "\n\n".join(context_parts)
 
             prompt = f"""あなたは札幌学院大学の学生サポートAIです。  
@@ -181,7 +182,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 1. 回答は <context> 内の情報(大学公式情報)のみに基づいてください。
 2. <context> に質問と「完全に一致する答え」が見つからない場合でも、「関連する可能性のある情報」(例:質問は「大会での欠席」だが、資料には「病欠」について記載がある場合)が見つかった場合は、その情報を回答してください。
 3. (ルール#2 に基づき)関連情報で回答した場合は、回答の最後に必ず以下の「注意書き」を加えてください。
-   「※これは関連情報であり、ご質問の意図と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
+   「※これは関連情報であり、ご質問Nの意図と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
 4. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
 5. 大学固有の情報を推測して答えてはいけません。
 6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。と回答しても構いません。
@@ -211,11 +212,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
             }
+            
             logging.critical(f"--- APIに送信するプロンプト ---\n{prompt}\n--- プロンプト終了 ---")
+            
             model = genai.GenerativeModel(
                 chat_req.model,
                 safety_settings=safety_settings
             )
+            
             response_text = ""
             try:
                 stream = await safe_generate_content(model, prompt, stream=True)
@@ -230,9 +234,13 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             
             add_to_history(session_id, "user", user_input)
             add_to_history(session_id, "assistant", response_text)
+            
             yield f"data: {json.dumps({'content': full_response})}\n\n"
+            # ↑↑↑ [修正] ここまでがインデントをずらす範囲
 
         else:
+            # フォールバック処理 (Stage 2: Q&Aベクトル検索)
+            # ... (ここは変更なし) ...
             # フォールバック処理 (Stage 2: Q&Aベクトル検索)
             logging.info(f"Stage 1 RAG 失敗。Stage 2 (Q&Aベクトル検索) を実行します。")
 
