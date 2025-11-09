@@ -217,7 +217,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     if chunk.text:
                         response_text += chunk.text
             except Exception as e:
-                logging.error(f"生成エラー: {e}")
+                logging.error("生成エラー:", exc_info=True)
                 response_text = "回答の生成中にエラーが発生しました。"
 
             full_response = format_urls_as_links(response_text.strip() or "回答を生成できませんでした。")
