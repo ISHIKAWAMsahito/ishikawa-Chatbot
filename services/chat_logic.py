@@ -178,7 +178,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
    「※これは関連情報であり、ご質問の意図と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
 4. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
 5. 大学固有の情報を推測して答えてはいけません。
-6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「ご質問に関連する情報が見つかりませんでした」と回答しても構いません。
+6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。と回答しても構いません。
 
 # 出力形式
 - 学生に分かりやすい「です・ます調」で回答すること。
@@ -205,7 +205,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
             }
-            logging.critical(f"--- APIに送信するプロンプト ---\n{prompt}\n--- プロンプト終了 ---")
+            # logging.critical(f"--- APIに送信するプロンプト ---\n{prompt}\n--- プロンプト終了 ---")
             model = genai.GenerativeModel(
                 chat_req.model,
                 safety_settings=safety_settings
@@ -256,11 +256,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                         logging.info(
                             f"Stage 2 RAG 失敗。類似するQ&Aが見つかりませんでした (Best Similarity: {best_match.get('similarity', 0):.2f})"
                         )
-                        fallback_response = "申し訳ありませんが、ご質問に関連する情報がデータベース(Q&Aを含む)に見つかりませんでした。大学公式サイトをご確認いただくか、学生支援課までお問い合わせください。"
+                        fallback_response = "申し訳ありませんが、ご質問に関連する情報がデータベース(Q&Aを含む)に見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。"
                         full_response = format_urls_as_links(fallback_response)
                 else:
                     logging.info("Stage 2 RAG 失敗。Q&Aデータベースが空か、検索エラーです。")
-                    fallback_response = "申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、学生支援課までお問い合わせください。"
+                    fallback_response = "申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。"
                     full_response = format_urls_as_links(fallback_response)
 
             except Exception as e_fallback:
