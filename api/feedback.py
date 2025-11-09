@@ -3,7 +3,9 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from models.schemas import FeedbackRequest, AIResponseFeedbackRequest
 from services.feedback import feedback_manager
-from core.database import db_client
+# ↓↓↓ [修正] モジュール本体をインポート
+from core import database
+# ↑↑↑ [修正]
 from core.config import JST
 
 router = APIRouter()
@@ -22,11 +24,13 @@ async def save_feedback(feedback: FeedbackRequest):
 async def save_ai_response_feedback(feedback: AIResponseFeedbackRequest):
     """AI回答へのフィードバックを保存"""
     try:
-        db_client.client.table("anonymous_comments").insert({
+        # ↓↓↓ [修正] "database." を追加
+        database.db_client.client.table("anonymous_comments").insert({
             "comment": f"Q: {feedback.user_question}\nA: {feedback.ai_response}",
             "created_at": datetime.now(JST).isoformat(),
             "rating": feedback.rating
         }).execute()
+        # ↑↑↑ [修正]
         return {"message": "AI回答へのフィードバックを保存しました"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

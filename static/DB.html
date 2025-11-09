@@ -415,13 +415,13 @@
 
                 displayDocuments(data.documents);
                 updateDocStats(data.total, data.documents.length);
-                renderPaginationControls(data.total);
+                renderPaginationControls(data.total); // ★この関数が...
 
-loadingIndicator.style.display = 'none';
+                loadingIndicator.style.display = 'none';
                 table.style.display = 'table';
-                if (data.total > rowsPerPage) {
+                if (data.total > rowsPerPage) { // ★...このロジックを...
                     // ★★★ 修正: display プロパティを 'flex' に設定 ★★★
-                    paginationControls.style.display = 'flex';
+                    paginationControls.style.display = 'flex'; // ★...すでに内部で実行している
                 }
 
             } catch (error) {
