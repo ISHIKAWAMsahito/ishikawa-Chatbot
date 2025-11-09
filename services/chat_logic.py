@@ -107,7 +107,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         # ベクトル検索処理
         STRICT_THRESHOLD = 0.80
-        RELATED_THRESHOLD = 0.75
+        RELATED_THRESHOLD = 0.78
         search_results = []
         relevant_docs = []
 
@@ -178,7 +178,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
    「※これは関連情報であり、ご質問の意図と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
 4. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
 5. 大学固有の情報を推測して答えてはいけません。
-6. **特に重要**: <context> には必ず関連情報が含まれています。その情報を使って回答すること。「見つかりませんでした」と答えてはいけません。
+6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「ご質問に関連する情報が見つかりませんでした」と回答しても構いません。
 
 # 出力形式
 - 学生に分かりやすい「です・ます調」で回答すること。
