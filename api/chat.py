@@ -10,7 +10,14 @@ from core import settings as core_settings  # <-- "as" で別名を付ける
 
 from core.config import ACTIVE_COLLECTION_NAME
 from models.schemas import ChatQuery, ClientChatQuery
-from services.chat_logic import enhanced_chat_logic, get_or_create_session_id, get_history, clear_history
+
+# ↓↓↓ [ImportErrorの修正]
+from services.chat_logic import (
+    enhanced_chat_logic, 
+    get_or_create_session_id, 
+    history_manager
+)
+# ↑↑↑ [ImportErrorの修正]
 
 router = APIRouter()
 
@@ -49,12 +56,20 @@ async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: d
 async def get_chat_history(request: Request, user: dict = Depends(require_auth_client)):
     """現在のセッションのチャット履歴を取得"""
     session_id = get_or_create_session_id(request)
-    history = get_history(session_id)
+    
+    # ↓↓↓ [ImportErrorの修正] 呼び出し方を変更
+    history = history_manager.get_history(session_id)
+    # ↑↑↑ [ImportErrorの修正]
+    
     return {"history": history}
 
 @router.delete("/chat/history")
 async def delete_chat_history(request: Request, user: dict = Depends(require_auth_client)):
     """現在のセッションのチャット履歴を削除"""
     session_id = get_or_create_session_id(request)
-    clear_history(session_id)
+    
+    # ↓↓↓ [ImportErrorの修正] 呼び出し方を変更
+    history_manager.clear_history(session_id)
+    # ↑↑↑ [ImportErrorの修正]
+    
     return {"message": "履歴をクリアしました"}
