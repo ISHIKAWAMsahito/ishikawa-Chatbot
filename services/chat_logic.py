@@ -335,7 +335,16 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 full_response = "回答の生成中にエラーが発生しました。"
                 yield f"data: {json.dumps({'content': full_response})}\n\n"
             
-            
+            # -----------------------------------------------
+            # [デバッグログ追加] 
+            # AIの回答が "見つからない" だったかどうかの判定をログに出力
+            # -----------------------------------------------
+            logging.info(f"--- Stage 1 判定デバッグ ---")
+            logging.info(f" [AIの回答(full_response)]: {full_response[:100]}...") # 回答の冒頭100文字
+            logging.info(f" [探す文字列(AI_NOT_FOUND_MESSAGE)]: {AI_NOT_FOUND_MESSAGE}")
+            is_match = AI_NOT_FOUND_MESSAGE in full_response
+            logging.info(f" [判定結果 (in)]: {is_match}")
+            logging.info(f"--- デバッグ終了 ---")
             # -----------------------------------------------
             # [修正] AIの回答をチェックして、Stage 2 に移行するか判断
             # -----------------------------------------------
