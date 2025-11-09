@@ -8,7 +8,13 @@ from collections import defaultdict
 from typing import List, Dict, Any, AsyncGenerator
 from fastapi import Request, HTTPException
 import google.generativeai as genai
-from google.generativeai.types import GenerationConfig, HarmCategory, HarmBlockThreshold
+# ↓↓↓ [修正] HarmCategory をすべてインポート
+from google.generativeai.types import (
+    GenerationConfig, 
+    HarmCategory, 
+    HarmBlockThreshold
+)
+# ↑↑↑ [修正]
 
 # -----------------------------------------------
 # 外部モジュール・設定のインポート
@@ -29,13 +35,12 @@ RELATED_THRESHOLD = 0.80
 FALLBACK_SIMILARITY_THRESHOLD = 0.80
 
 # RAGコンテキストの最大文字数 (トークン制限超過を避けるための簡易的な制限)
-MAX_CONTEXT_CHAR_LENGTH = 15000  # 約1万5千文字
+MAX_CONTEXT_CHAR_LENGTH = 15000
 
 # 履歴の最大保持数 (永続化の際に利用)
 MAX_HISTORY_LENGTH = 20
 
-# [修正] AIが「見つからない」と判断したときのマジックストリング
-# 「見つからない」 -> 「見つかりません」 に変更
+# AIが「見つからない」と判断したときのマジックストリング
 AI_NOT_FOUND_MESSAGE = "申し訳ありませんが、ご質問に関連する情報が見つかりません"
 
 # -----------------------------------------------
@@ -92,13 +97,22 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
     for attempt in range(max_retries):
         try:
             config = GenerationConfig(
-                max_output_tokens=1024 if stream else 512,
+                # 1024 -> 4096 に引き上げ
+                max_output_tokens=4096 if stream else 512,
                 temperature=0.1 if stream else 0.3
             )
             if stream:
                 return await model.generate_content_async(prompt, stream=True, generation_config=config)
             else:
                 return await model.generate_content_async(prompt, generation_config=config)
+
+        # ↓↓↓ [修正] StopAsyncIteration をキャッチ
+        except StopAsyncIteration:
+            # これはセーフティフィルターが作動したときに発生する
+            logging.error(f"APIが空のストリームを返しました (StopAsyncIteration)。セーフティフィルターが作動した可能性があります。")
+            # この例外は re-raise せずに、呼び出し元で処理させる
+            raise Exception("APIが空の応答を返しました。セーフティフィルターが作動した可能性があります。")
+        # ↑↑↑ [修正]
 
         except Exception as e:
             error_str = str(e)
@@ -138,6 +152,10 @@ async def _run_stage2_fallback(
     fallback_response = ""
 
     try:
+        # クエリが空（ベクトル化失敗）の場合は検索しない
+        if not query_embedding:
+            raise ValueError("Q&A検索のためのクエリベクトルがありません。")
+
         fallback_results = core_database.db_client.search_fallback_qa(
             embedding=query_embedding,
             match_count=1
@@ -156,7 +174,6 @@ async def _run_stage2_fallback(
 """
             else:
                 logging.info(f"Stage 2 RAG 失敗。類似Q&Aなし (Best Sim: {best_sim:.4f} < {FALLBACK_SIMILARITY_THRESHOLD})")
-                # Q&Aでも見つからなかった場合
                 fallback_response = "申し訳ありませんが、ご質問に関連する情報がデータベース(Q&Aを含む)に見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。"
         else:
             logging.info("Stage 2 RAG 失敗。Q&Aデータベースが空か、検索エラーです。")
@@ -236,6 +253,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         except Exception as e:
             logging.error(f"ベクトル検索エラー: {e}", exc_info=True)
             search_results = []
+            # [修正] ベクトル化失敗時も Stage 2 に進めるようにする
+            logging.info(f"ベクトル化または検索に失敗したため、Stage 2へ移行します。")
 
         # 3d. 類似度によるフィルタリング
         strict_docs = [d for d in search_results if d.get('similarity', 0) >= STRICT_THRESHOLD]
@@ -271,7 +290,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             
             context = "\n\n".join(context_parts)
 
-            # 4b. プロンプトの構築 (ルール#6 が AI_NOT_FOUND_MESSAGE の元)
+            # 4b. プロンプトの構築
             prompt = f"""あなたは札幌学院大学の学生サポートAIです。  
 以下のルールに従ってユーザーの質問に答えてください。
 
@@ -282,7 +301,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
    「※これは関連情報であり、ご質問Nの意図と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
 4. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
 5. **大学固有の事実（学費、特定のゼミ、手続き、校舎の場所など）を推測して答えてはいけません。**
-6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「{AI_NOT_FOUND_MESSAGE}でした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。」と回答しても構いません。
+6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「{{AI_NOT_FOUND_MESSAGE}}でした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。」と回答しても構いません。
 7. **一般知識の使用について**:
    - <context> の情報を**補足説明**したり、**簡潔にまとめる（要約する）**際には、あなたの一般知識（内部知識）を使用しても構いません。
    - 質問が「（大学固有ではない）一般的な知識」についてである場合（例：「データサイエンスとは？」、「SPI試験の対策方法は？」）、<context> に情報がなくても、あなたの一般知識で回答してください。
@@ -306,12 +325,15 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 回答:
 """
             # 4c. 安全フィルターの無効化設定
+            # ↓↓↓ [修正] HARM_CATEGORY_UNSPECIFIED を追加
             safety_settings = {
                 HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_UNSPECIFIED: HarmBlockThreshold.BLOCK_NONE,
             }
+            # ↑↑↑ [修正]
             
             logging.critical(f"--- APIに送信するプロンプト (Stage 1 RAG) ---\n(Context文字数: {len(context)}) \n--- プロンプト終了 ---")
             
@@ -334,37 +356,44 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 full_response = format_urls_as_links(response_text.strip() or "回答を生成できませんでした。")
 
             except Exception as e:
+                # [修正] safe_generate_content から StopAsyncIteration が Exception として送られてくる
                 logging.error(f"Stage 1 回答生成エラー: {e}", exc_info=True)
-                full_response = "回答の生成中にエラーが発生しました。"
-                yield f"data: {json.dumps({'content': full_response})}\n\n"
+                full_response = "回答の生成中にエラーが発生しました。" # この時点ではまだ full_response は空
+                
+                # [修正] フィルターエラーの場合、full_response に AI_NOT_FOUND_MESSAGE を代入し、
+                # Stage 2 に移行させる（これが「回答の生成中にエラー」と表示される原因）
+                if "StopAsyncIteration" in str(e) or "空の応答" in str(e):
+                    logging.warning("セーフティフィルター作動の可能性があるため、Stage 2に移行します。")
+                    # full_response を AI_NOT_FOUND_MESSAGE と同じにして、Stage 2 に強制移行
+                    full_response = AI_NOT_FOUND_MESSAGE 
+                else:
+                    # その他のエラーの場合は、エラーメッセージをそのまま表示
+                    yield f"data: {json.dumps({'content': full_response})}\n\n"
             
-            # -----------------------------------------------
-            # [デバッグログ追加] 
-            # AIの回答が "見つからない" だったかどうかの判定をログに出力
-            # -----------------------------------------------
-            logging.info(f"--- Stage 1 判定デバッグ ---")
-            logging.info(f" [AIの回答(full_response)]: {full_response[:100]}...") # 回答の冒頭100文字
-            logging.info(f" [探す文字列(AI_NOT_FOUND_MESSAGE)]: {AI_NOT_FOUND_MESSAGE}")
-            is_match = AI_NOT_FOUND_MESSAGE in full_response
-            logging.info(f" [判定結果 (in)]: {is_match}")
-            logging.info(f"--- デバッグ終了 ---")
+            
             # -----------------------------------------------
             # [修正] AIの回答をチェックして、Stage 2 に移行するか判断
             # -----------------------------------------------
-            if AI_NOT_FOUND_MESSAGE in full_response:
-                logging.info("Stage 1 AIがコンテキスト内に回答を発見できませんでした。Stage 2 (Q&A) に移行します。")
-                # Stage 2 を実行
-                async for fallback_chunk in _run_stage2_fallback(query_embedding, session_id, user_input, feedback_id):
-                    yield fallback_chunk
             
-            else:
-                # --- Stage 1 成功 ---
-                # 履歴に追加
-                history_manager.add_to_history(session_id, "user", user_input)
-                history_manager.add_to_history(session_id, "assistant", full_response)
+            # [修正] エラー応答（"回答の生成中にエラー..."）でなければ、Stage 2 移行チェックを行う
+            if "エラーが発生しました" not in full_response:
+                if AI_NOT_FOUND_MESSAGE in full_response:
+                    logging.info("Stage 1 AIがコンテキスト内に回答を発見できませんでした。Stage 2 (Q&A) に移行します。")
+                    # Stage 2 を実行
+                    async for fallback_chunk in _run_stage2_fallback(query_embedding, session_id, user_input, feedback_id):
+                        yield fallback_chunk
+                
+                else:
+                    # --- Stage 1 成功 ---
+                    # 履歴に追加
+                    history_manager.add_to_history(session_id, "user", user_input)
+                    history_manager.add_to_history(session_id, "assistant", full_response)
 
-                # 5. 最終処理 (フィードバック表示トリガー)
-                yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+                    # 5. 最終処理 (フィードバック表示トリガー)
+                    yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+            else:
+                # (エラーメッセージは既に yield されているため、ここでは何もしない)
+                pass
 
 
         else:
