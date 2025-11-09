@@ -95,7 +95,6 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
     for attempt in range(max_retries):
         try:
             config = GenerationConfig(
-                # 1024 -> 4096 に引き上げ
                 max_output_tokens=4096 if stream else 512,
                 temperature=0.1 if stream else 0.3
             )
@@ -292,7 +291,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 1. 回答は <context> 内の情報(大学公式情報)を**最優先**にしてください。
 2. <context> に質問と「完全に一致する答え」が見つからない場合でも、「関連する可能性のある情報」が見つかった場合は、その情報を回答してください。
 3. (ルール#2 に基づき)関連情報で回答した場合は、回答の最後に必ず以下の「注意書き」を加えてください。
-   「※これは関連情報であり、ご質問Nの意G]意と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
+   「※これは関連情報であり、ご質問NのG]意と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
 4. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
 5. **大学固有の事実（学費、特定のゼミ、手続き、校舎の場所など）を推測して答えてはいけません。**
 6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「{{AI_NOT_FOUND_MESSAGE}}でした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。」と回答しても構いません。
@@ -319,13 +318,12 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 回答:
 """
             # 4c. 安全フィルターの無効化設定
-            # ↓↓↓ [修正] UNSPECIFIED を削除し、CIVIC_INTEGRITY を追加
+            # ↓↓↓ [修正] HARM_CATEGORY_CIVIC_INTEGRITY の行を削除
             safety_settings = {
                 HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY: HarmBlockThreshold.BLOCK_NONE,
             }
             # ↑↑↑ [修正]
             
