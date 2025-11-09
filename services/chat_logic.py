@@ -205,7 +205,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
             }
-            
+            logging.critical(f"--- APIに送信するプロンプト ---\n{prompt}\n--- プロンプト終了 ---")
             model = genai.GenerativeModel(
                 chat_req.model,
                 safety_settings=safety_settings
