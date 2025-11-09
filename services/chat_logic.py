@@ -153,18 +153,24 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         if relevant_docs:
             context_parts = []
             
-            for d in relevant_docs:
-                source_name = d.get('metadata', {}).get('source', '不明')
-                
-                # ファイル名のマッピング
-                if source_name == 'output_gakubu.txt':
-                    display_source = '履修要項2024'
-                else:
-                    display_source = source_name
-                
-                context_parts.append(
-                    f"<document source='{display_source}'>{d.get('content', '')}</document>"
-                )
+            # chat_logic.py (L181あたり)
+
+        for d in relevant_docs:
+            source_name = d.get('metadata', {}).get('source', '不明')
+
+            if source_name == 'output_gakubu.txt':
+                display_source = '履修要項2024'
+            else:
+                display_source = source_name
+
+            # ↓↓↓ ★★★ ここを修正 ★★★
+            # 'content' (子) ではなく 'parent_content' (親) を取得する
+            parent_text = d.get('metadata', {}).get('parent_content', d.get('content', ''))
+
+            context_parts.append(
+                f"<document source='{display_source}'>{parent_text}</document>"
+            )
+            # ↑↑↑ ★★★ ここまで修正 ★★★
             
             context = "\n\n".join(context_parts)
 
