@@ -291,7 +291,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 # 出力形式
 - 学生に分かりやすい「です・ます調」で回答すること。
 - 箇条書きや見出しを活用して整理すること。
-- <context> 内にURLがあれば「参考URL:」として末尾にまとめること。
+- <context> 内にURLがあれば「参考URL:」として末尾にまとめること。その際、必ず **Markdown 形式（例: `[リンクテキスト](URL)`）** を使用すること。
 
 <context>
 {context}
