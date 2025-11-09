@@ -35,8 +35,8 @@ MAX_CONTEXT_CHAR_LENGTH = 15000  # 約1万5千文字
 MAX_HISTORY_LENGTH = 20
 
 # [修正] AIが「見つからない」と判断したときのマジックストリング
-# プロンプトのルール#6と一致させること
-AI_NOT_FOUND_MESSAGE = "申し訳ありませんが、ご質問に関連する情報が見つからない"
+# 「見つからない」 -> 「見つかりません」 に変更
+AI_NOT_FOUND_MESSAGE = "申し訳ありませんが、ご質問に関連する情報が見つかりません"
 
 # -----------------------------------------------
 # チャット履歴管理
@@ -123,7 +123,7 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
 
 
 # -----------------------------------------------
-# [修正] Stage 2 (Q&Aフォールバック) ロジック
+# Stage 2 (Q&Aフォールバック) ロジック
 # -----------------------------------------------
 async def _run_stage2_fallback(
     query_embedding: List[float], 
@@ -156,8 +156,7 @@ async def _run_stage2_fallback(
 """
             else:
                 logging.info(f"Stage 2 RAG 失敗。類似Q&Aなし (Best Sim: {best_sim:.4f} < {FALLBACK_SIMILARITY_THRESHOLD})")
-                # [修正] ここで返すメッセージも、AI_NOT_FOUND_MESSAGE と区別できるようにする（または合わせる）
-                # ここでは、より詳細なメッセージを返す
+                # Q&Aでも見つからなかった場合
                 fallback_response = "申し訳ありませんが、ご質問に関連する情報がデータベース(Q&Aを含む)に見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。"
         else:
             logging.info("Stage 2 RAG 失敗。Q&Aデータベースが空か、検索エラーです。")
@@ -190,7 +189,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     user_input = chat_req.query.strip()
     feedback_id = str(uuid.uuid4())
     session_id = get_or_create_session_id(request)
-    query_embedding = [] # [修正] 埋め込みベクトルを後で使えるようにスコープを上げる
+    query_embedding = [] # 埋め込みベクトルを後で使えるようにスコープを上げる
 
     # 1. フィードバックIDをクライアントに即時送信
     yield f"data: {json.dumps({'feedback_id': feedback_id})}\n\n"
@@ -212,7 +211,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 model=chat_req.embedding_model,
                 content=user_input
             )
-            query_embedding = query_embedding_response["embedding"] # [修正] 変数に格納
+            query_embedding = query_embedding_response["embedding"] # 変数に格納
 
             # 3b. ベクトルDB検索
             if core_database.db_client:
@@ -247,7 +246,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         if relevant_docs:
             logging.info(f"--- Stage 1 コンテキストに使用 (上記候補から {len(relevant_docs)}件を抽出) ---")
         else:
-            # [修正] この時点で relevant_docs が空なら、ログを追加
             logging.info(f"--- Stage 1 関連文書なし (閾値 {RELATED_THRESHOLD} 未満)。Stage 2へ移行します。 ---")
 
 
@@ -284,7 +282,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
    「※これは関連情報であり、ご質問Nの意図と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
 4. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
 5. 大学固有の情報を推測してはいけません。
-6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「{AI_NOT_FOUND_MESSAGE}ませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。」と回答しても構いません。
+6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「{AI_NOT_FOUND_MESSAGE}でした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。」と回答しても構いません。
+# [修正] 「ませんでした」 -> 「でした」 に変更し、タイポを修正
 
 # 出力形式
 - 学生に分かりやすい「です・ます調」で回答すること。
@@ -358,7 +357,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         else:
             # --- Stage 1 RAG (最初から文書が見つからなかった場合) ---
-            # [修正] Stage 2 関数を呼び出す
+            # Stage 2 関数を呼び出す
             async for fallback_chunk in _run_stage2_fallback(query_embedding, session_id, user_input, feedback_id):
                 yield fallback_chunk
 
