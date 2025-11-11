@@ -39,10 +39,11 @@ async def get_all_documents(
         if search:
             safe_search = search.replace('"', '""')
             search_term = f"*{safe_search}*"
-            or_filter_string = f"content.ilike.{search_term}"
             
-            query = query.or_(or_filter_string)
-            count_query = count_query.or_(or_filter_string)
+            # [修正] .or_() でエラーが発生するため、.ilike() に変更
+            # 'content' カラムの値を search_term であいまい検索します
+            query = query.ilike("content", search_term)
+            count_query = count_query.ilike("content", search_term)
 
         count_response = count_query.select("id", count='exact').execute()
         total_records = count_response.count or 0
