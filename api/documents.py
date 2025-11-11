@@ -15,6 +15,8 @@ from services.document_processor import simple_processor
 
 router = APIRouter()
 
+# [documents.py]
+
 @router.get("/api/documents/all")
 async def get_all_documents(
     user: dict = Depends(require_auth),
@@ -24,32 +26,38 @@ async def get_all_documents(
     category: Optional[str] = Query(None)
 ):
     """全ドキュメントをページネーション、検索、カテゴリフィルタ対応で取得"""
-    # ↓↓↓ [修正] "database." を追加
     if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     try:
-        query = database.db_client.client.table("documents")
-        count_query = database.db_client.client.table("documents")
-        # ↑↑↑ [修正] "database." を追加
+        # 1. [修正] ベースクエリは .select() から開始する
+        query = database.db_client.client.table("documents").select("*")
         
+        # 2. [修正] カウント用クエリも .select() から開始する
+        #    (count='exact' は select メソッド内で指定)
+        count_query = database.db_client.client.table("documents").select("id", count='exact')
+        
+        # 3. [順序変更] .select() の *後* で .eq() を適用
         if category:
             query = query.eq("metadata->>category", category)
             count_query = count_query.eq("metadata->>category", category)
 
+        # 4. [順序変更 & 修正] .select() の *後* で .ilike() を適用
         if search:
             safe_search = search.replace('"', '""')
-            search_term = f"*{safe_search}*"
+            # [修正] SQLのワイルドカードは * ではなく %
+            search_term = f"%{safe_search}%"
             
-            # [修正案] .ilike() の代わりに .filter() を使用
-            # "content" カラムを "ilike" (あいまい検索) 演算子で検索
-            query = query.filter("content", "ilike", search_term)
-            count_query = count_query.filter("content", "ilike", search_term)
+            # [これが正しい .ilike() の使い方]
+            query = query.ilike("content", search_term)
+            count_query = count_query.ilike("content", search_term)
 
-        count_response = count_query.select("id", count='exact').execute()
+        # 5. [修正] 既に .select() 済みなので、ここでは .execute() のみ
+        count_response = count_query.execute()
         total_records = count_response.count or 0
 
+        # 6. [修正] 既に .select() 済みなので、ここではチェーンを続ける
         offset = (page - 1) * limit
-        data_response = query.select("*").order("id", desc=True).range(offset, offset + limit - 1).execute()
+        data_response = query.order("id", desc=True).range(offset, offset + limit - 1).execute()
 
         return {
             "documents": data_response.data or [],
@@ -60,6 +68,8 @@ async def get_all_documents(
 
     except Exception as e:
         logging.error(f"ドキュメント一覧取得エラー: {e}")
+        # エラーの詳細をログに出力
+        logging.error(traceback.format_exc()) 
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/api/documents/{doc_id}")
