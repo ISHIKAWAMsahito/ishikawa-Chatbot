@@ -277,12 +277,12 @@ async def scrape_website(
 
     try:
         # 1. Webサイトからコンテンツを取得
-        async with httpx.AsyncClient() as client:
+        # ▼▼▼ [修正] verify=False を ( ) の中（コンストラクタ）に移動 ▼▼▼
+        async with httpx.AsyncClient(verify=False) as client:
+        # ▲▲▲ [修正] ▲▲▲
             try:
                 # タイムアウトとリダイレクトを許可
-                # ▼▼▼ [修正] verify=False を追加 ▼▼▼
-                response = await client.get(request.url, follow_redirects=True, timeout=10.0, verify=False)
-                # ▲▲▲ [修正] ▲▲▲
+                response = await client.get(request.url, follow_redirects=True, timeout=10.0) # <--- ★ここから verify=False を削除
                 response.raise_for_status() # 200 OK以外はエラー
             except httpx.RequestError as e:
                 logging.error(f"URL取得エラー: {e}")
