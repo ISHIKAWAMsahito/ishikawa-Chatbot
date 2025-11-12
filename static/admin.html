@@ -728,7 +728,7 @@
                 const data = await response.json();
                 updateStatus('geminiStatus', 'geminiStatusText', response.ok && data.connected, 'Gemini API');
                 if (response.ok && data.connected && data.models) {
-                    updateGenericList(data.models.map(m => m), modelSelect, 'gemini-1.5-flash-latest');
+                    updateGenericList(data.models.map(m => m), modelSelect, 'gemini-2.5-flash');
                 } else if (response.ok && !data.connected) {
                     addMessage(`❌ Gemini APIに接続できません: ${data.detail}`, 'bot');
                 }
