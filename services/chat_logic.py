@@ -256,21 +256,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         # 3e. ログ出力 (フィルタリング後)
         # 3e. ログ出力 (フィルタリング後)
+        # 3e. ログ出力 (フィルタリング後)
         if relevant_docs:
             logging.info(f"--- Stage 1 コンテキストに使用 (上記候補から {len(relevant_docs)}件を抽出) ---")
             
-            # ▼▼▼ [ここから追加] ▼▼▼
-            # 実際にコンテキストとして使用するドキュメントの詳細をログに出力
             for doc in relevant_docs:
                 doc_id = doc.get('id', 'N/A')
                 doc_source = doc.get('metadata', {}).get('source', 'N/A')
                 doc_similarity = doc.get('similarity', 0)
-                # content よりも parent_content を参照した方が、AIに渡す実データと一致する可能性が高い
                 content_to_log = doc.get('metadata', {}).get('parent_content', doc.get('content', ''))
                 doc_content_preview = content_to_log[:60].replace('\n', ' ') + "..."
                 
-                logging.info(f"  -> [使用] [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
-            # ▲▲▲ [ここまで追加] ▲▲▲
+                # ▼▼▼ [ここを .info から .critical に変更] ▼▼▼
+                logging.critical(f"  -> [使用] [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
+                # ▲▲▲ [変更] ▲▲▲
 
         else:
             logging.info(f"--- Stage 1 関連文書なし (閾値 {RELATED_THRESHOLD} 未満)。Stage 2へ移行します。 ---")
