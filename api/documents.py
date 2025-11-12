@@ -283,13 +283,24 @@ async def scrape_website(
                 raise HTTPException(status_code=400, detail=f"URLの取得に失敗しました: {e}")
         
         # 2. HTMLからテキストを抽出 (シンプルな例)
+        # 2. HTMLからテキストを抽出 (堅牢性を向上)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # bodyタグ内の全テキストを取得 (scriptやstyleタグは除く)
+        # scriptやstyleタグは除く
         for script_or_style in soup(["script", "style"]):
-            script_or_style.decompose() # scriptとstyleタグを削除
-            
-        body_text = soup.body.get_text(separator=' ', strip=True)
+            script_or_style.decompose()
+        
+        # ▼▼▼ [ここから修正] ▼▼▼
+        # soup.body が存在するかチェックする
+        target_element = soup.body
+        if not target_element:
+            # body がない場合 (例: <frameset> のみ)、soup全体をフォールバックとして使用
+            logging.warning(f"URL: {request.url} に <body> タグが見つからなかったため、HTML全体からテキストを抽出します。")
+            target_element = soup 
+
+        body_text = target_element.get_text(separator=' ', strip=True)
+        # ▲▲▲ [ここまで修正] ▲▲▲
+
         if not body_text:
             raise HTTPException(status_code=400, detail="Webサイトからテキストを抽出できませんでした。")
         
