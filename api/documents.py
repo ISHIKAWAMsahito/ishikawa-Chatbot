@@ -279,8 +279,11 @@ async def scrape_website(
         # 1. Webサイトからコンテンツを取得
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(request.url, follow_redirects=True, timeout=10.0)
-                response.raise_for_status() 
+                # タイムアウトとリダイレクトを許可
+                # ▼▼▼ [修正] verify=False を追加 ▼▼▼
+                response = await client.get(request.url, follow_redirects=True, timeout=10.0, verify=False)
+                # ▲▲▲ [修正] ▲▲▲
+                response.raise_for_status() # 200 OK以外はエラー
             except httpx.RequestError as e:
                 logging.error(f"URL取得エラー: {e}")
                 raise HTTPException(status_code=400, detail=f"URLの取得に失敗しました: {e}")
