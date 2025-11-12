@@ -4,6 +4,15 @@ import traceback
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 import google.generativeai as genai
+import httpx  # Webアクセス用
+from bs4 import BeautifulSoup # HTML解析用
+from pydantic import BaseModel # リクエストの型定義用
+# [documents.py の import 文のすぐ下あたり]
+
+class ScrapeRequest(BaseModel):
+    url: str
+    collection_name: str
+    embedding_model: str
 
 from core.dependencies import require_auth
 # ↓↓↓ [修正] モジュール本体をインポート
@@ -251,4 +260,95 @@ async def get_documents(collection_name: str):
         "documents": database.db_client.get_documents_by_collection(collection_name),
         "count": database.db_client.count_chunks_in_collection(collection_name)
     }
+@router.post("/scrape")
+async def scrape_website(
+    request: ScrapeRequest, 
+    user: dict = Depends(require_auth)
+):
+    """URLからテキストを抽出し、ベクトル化してDBに挿入"""
+    if not database.db_client or not settings.settings_manager or not simple_processor:
+        raise HTTPException(503, "システムが初期化されていません")
+
+    logging.info(f"Scrapeリクエスト受信: {request.url} (Collection: {request.collection_name})")
+
+    try:
+        # 1. Webサイトからコンテンツを取得
+        async with httpx.AsyncClient() as client:
+            try:
+                # タイムアウトとリダイレクトを許可
+                response = await client.get(request.url, follow_redirects=True, timeout=10.0)
+                response.raise_for_status() # 200 OK以外はエラー
+            except httpx.RequestError as e:
+                logging.error(f"URL取得エラー: {e}")
+                raise HTTPException(status_code=400, detail=f"URLの取得に失敗しました: {e}")
+        
+        # 2. HTMLからテキストを抽出 (シンプルな例)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # bodyタグ内の全テキストを取得 (scriptやstyleタグは除く)
+        for script_or_style in soup(["script", "style"]):
+            script_or_style.decompose() # scriptとstyleタグを削除
+            
+        body_text = soup.body.get_text(separator=' ', strip=True)
+        if not body_text:
+            raise HTTPException(status_code=400, detail="Webサイトからテキストを抽出できませんでした。")
+        
+        # 3. チャンキング (uploadのロジックを流用)
+        # ファイル名の代わりにURLを、カテゴリは"WebScrape"にする
+        filename_from_url = request.url.split('/')[-1] or request.url
+        docs_to_embed = simple_processor.process_and_chunk(
+            filename=f"scrape_{filename_from_url}.txt", 
+            content=body_text.encode('utf-8'), # process_and_chunk は bytes を期待
+            category="WebScrape", 
+            collection_name=request.collection_name
+        )
+        
+        if not docs_to_embed:
+            raise HTTPException(status_code=400, detail="テキストのチャンキングに失敗しました。")
+
+        # 4. ベクトル化 & DB挿入 (uploadのロジックを流用)
+        embedding_model = request.embedding_model # リクエストで指定されたモデルを使用
+        total_chunks = len(docs_to_embed)
+        logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します...")
+
+        count = 0
+        for doc in docs_to_embed:
+            try:
+                embedding_response = genai.embed_content(
+                    model=embedding_model, 
+                    content=doc.page_content
+                )
+                embedding = embedding_response["embedding"]
+                
+                # [修正] "database." を追加
+                database.db_client.insert_document(
+                    content=doc.page_content, 
+                    embedding=embedding, 
+                    metadata=doc.metadata
+                )
+                count += 1
+                
+                # レート制限を避けるための軽い待機
+                await asyncio.sleep(1) # /upload と同様
+            
+            except Exception as e:
+                if "429" in str(e) or "quota" in str(e).lower():
+                    logging.warning("埋め込み生成でAPI制限に達しました。30秒待機します。")
+                    await asyncio.sleep(30)
+                    embedding_response = genai.embed_content(model=embedding_model, content=doc.page_content)
+                    embedding = embedding_response["embedding"]
+                    database.db_client.insert_document(doc.page_content, embedding, doc.metadata) # [修正] "database." を追加
+                else:
+                    logging.error(f"チャンク処理エラー ({request.url}): {e}")
+                    continue
+
+        logging.info(f"スクレイプ処理完了: {request.url} ({count}/{total_chunks}件のチャンクをDBに挿入)")
+        # admin.html が期待するレスポンス
+        return {"chunks": count, "filename": request.url, "total": total_chunks}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"スクレイプ処理エラー: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
     # ↑↑↑ [修正]

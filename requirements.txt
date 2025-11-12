@@ -4,6 +4,7 @@ pydantic==2.11.9
 python-multipart==0.0.20
 uvicorn==0.34.2
 requests==2.32.5
+httpx beautifulsoup4
 
 # --- 認証 & セキュリティ ---
 Authlib==1.6.3
