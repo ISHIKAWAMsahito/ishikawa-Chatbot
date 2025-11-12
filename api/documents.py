@@ -86,12 +86,10 @@ async def get_all_documents(
 @router.get("/api/documents/{doc_id}")
 async def get_document_by_id(doc_id: int, user: dict = Depends(require_auth)):
     """特定のドキュメントを取得"""
-    # ↓↓↓ [修正] "database." を追加
     if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     try:
         result = database.db_client.client.table("documents").select("*").eq("id", doc_id).execute()
-        # ↑↑↑ [修正] "database." を追加
         if not result.data:
             raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
         return result.data[0]
@@ -104,7 +102,6 @@ async def get_document_by_id(doc_id: int, user: dict = Depends(require_auth)):
 @router.put("/api/documents/{doc_id}")
 async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Depends(require_auth)):
     """ドキュメントを更新。content更新時にベクトルも再生成する。"""
-    # ↓↓↓ [修正] "database." と "settings." を追加
     if not database.db_client or not settings.settings_manager:
         raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
     try:
@@ -115,7 +112,6 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
             update_data["content"] = new_content
             
             embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
-            # ↑↑↑ [修正] "settings." を追加
             
             logging.info(f"ドキュメント {doc_id} のコンテンツが変更されたため、ベクトルを再生成します...")
             try:
@@ -144,9 +140,7 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
         if not update_data:
             raise HTTPException(status_code=400, detail="更新するデータがありません")
         
-        # ↓↓↓ [修正] "database." を追加
         result = database.db_client.client.table("documents").update(update_data).eq("id", doc_id).execute()
-        # ↑↑↑ [修正] "database." を追加
         
         if not result.data:
             raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
@@ -162,12 +156,10 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
 @router.delete("/api/documents/{doc_id}")
 async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
     """ドキュメントを削除"""
-    # ↓↓↓ [修正] "database." を追加
     if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     try:
         result = database.db_client.client.table("documents").delete().eq("id", doc_id).execute()
-        # ↑↑↑ [修正] "database." を追加
         
         if not result.data:
             raise HTTPException(status_code=404, detail="ドキュメントが見つかりません")
@@ -180,57 +172,44 @@ async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
         logging.error(f"ドキュメント削除エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/scrape")
-async def scrape_website(
-    request: ScrapeRequest, 
+#
+# --- ★★★ /upload 関数 (これが欠落していました) ★★★ ---
+#
+@router.post("/upload")
+async def upload_document(
+    file: UploadFile = File(...), 
+    category: str = Form("その他"), 
     user: dict = Depends(require_auth)
 ):
-    """URLからテキストを抽出し、(古いデータを削除後)、ベクトル化してDBに挿入"""
+    """ファイルを受け取り、(古いデータを削除後)、テキスト抽出・チャンキング・ベクトル化してDBに挿入"""
     if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
-
-    logging.info(f"Scrapeリクエスト受信: {request.url} (Collection: {request.collection_name})")
-
+    
     try:
-        # ... (1. Webサイトからコンテンツを取得) ...
-        # ... (2. HTMLからテキストを抽出) ...
-        # ... (body_text = ... の行まで) ...
-
-        if not body_text:
-            raise HTTPException(status_code=400, detail="Webサイトからテキストを抽出できませんでした。")
+        filename = file.filename
+        content = await file.read()
         
-        # 3. チャンキング (uploadのロジックを流用)
-        filename_from_url = request.url.split('/')[-1] or request.url
-        
-        # ▼▼▼ [修正] source_nameを変数として定義 ▼▼▼
-        source_name = f"scrape_{filename_from_url}.txt"
+        logging.info(f"ファイルアップロード受信: {filename} (カテゴリ: {category})")
 
-        # ▼▼▼ [ここから追加] ▼▼▼
-        # 3b. 古いデータを削除
-        logging.info(f"古いチャンク (source: {source_name}) を削除しています...")
+        # 1. 古いデータを削除
+        logging.info(f"古いチャンク (source: {filename}) を削除しています...")
         try:
-            delete_result = database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
+            delete_result = database.db_client.client.table("documents").delete().eq("metadata->>source", filename).execute()
             if delete_result.data:
                 logging.info(f"{len(delete_result.data)} 件の古いチャンクを削除しました。")
             else:
                 logging.info("削除対象の古いチャンクはありませんでした。")
         except Exception as e:
             logging.error(f"古いチャンクの削除中にエラー: {e}。処理を続行します。")
-        # ▲▲▲ [ここまで追加] ▲▲▲
-
-        # 3c. 新しいデータを処理
-        docs_to_embed = document_processor.simple_processor.process_and_chunk(
-            filename=source_name, # ⬅️ [修正] 変数を使う
-            content=body_text.encode('utf-8'), # process_and_chunk は bytes を期待
-            category="WebScrape", 
-            collection_name=request.collection_name
-        )
+            
+        # 2. 新しいデータを処理
+        collection_name = settings.settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
+        docs_to_embed = document_processor.simple_processor.process_and_chunk(filename, content, category, collection_name)
         
         if not docs_to_embed:
             raise HTTPException(status_code=400, detail="ファイルからテキストを抽出できませんでした。")
 
         embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
-        # ↑↑↑ [修正] "settings." を追加
         
         total_chunks = len(docs_to_embed)
         logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します...")
@@ -244,13 +223,11 @@ async def scrape_website(
                 )
                 embedding = embedding_response["embedding"]
                 
-                # ↓↓↓ [修正] "database." を追加
                 database.db_client.insert_document(
                     content=doc.page_content, 
                     embedding=embedding, 
                     metadata=doc.metadata
                 )
-                # ↑↑↑ [修正]
                 count += 1
                 
                 await asyncio.sleep(1)
@@ -261,9 +238,7 @@ async def scrape_website(
                     await asyncio.sleep(30)
                     embedding_response = genai.embed_content(model=embedding_model, content=doc.page_content)
                     embedding = embedding_response["embedding"]
-                    # ↓↓↓ [修正] "database." を追加
                     database.db_client.insert_document(doc.page_content, embedding, doc.metadata)
-                    # ↑↑↑ [修正]
                 else:
                     logging.error(f"チャンク処理エラー ({filename}): {e}")
                     continue
@@ -279,7 +254,6 @@ async def scrape_website(
 
 @router.get("/collections/{collection_name}/documents")
 async def get_documents(collection_name: str):
-    # ↓↓↓ [修正] "database." を追加
     if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     return {
@@ -287,16 +261,17 @@ async def get_documents(collection_name: str):
         "count": database.db_client.count_chunks_in_collection(collection_name)
     }
 
+#
+# --- ★★★ /scrape 関数 (これが重複していました) ★★★ ---
+#
 @router.post("/scrape")
 async def scrape_website(
     request: ScrapeRequest, 
     user: dict = Depends(require_auth)
 ):
-    """URLからテキストを抽出し、ベクトル化してDBに挿入"""
-    # ↓↓↓ [修正] "document_processor." を追加
+    """URLからテキストを抽出し、(古いデータを削除後)、ベクトル化してDBに挿入"""
     if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
-    # ↑↑↑ [修正]
 
     logging.info(f"Scrapeリクエスト受信: {request.url} (Collection: {request.collection_name})")
 
@@ -304,49 +279,56 @@ async def scrape_website(
         # 1. Webサイトからコンテンツを取得
         async with httpx.AsyncClient() as client:
             try:
-                # タイムアウトとリダイレクトを許可
                 response = await client.get(request.url, follow_redirects=True, timeout=10.0)
-                response.raise_for_status() # 200 OK以外はエラー
+                response.raise_for_status() 
             except httpx.RequestError as e:
                 logging.error(f"URL取得エラー: {e}")
                 raise HTTPException(status_code=400, detail=f"URLの取得に失敗しました: {e}")
         
-        # 2. HTMLからテキストを抽出 (堅牢性を向上)
+        # 2. HTMLからテキストを抽出
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # scriptやstyleタグは除く
         for script_or_style in soup(["script", "style"]):
             script_or_style.decompose()
         
-        # soup.body が存在するかチェックする
         target_element = soup.body
         if not target_element:
-            # body がない場合 (例: <frameset> のみ)、soup全体をフォールバックとして使用
             logging.warning(f"URL: {request.url} に <body> タグが見つからなかったため、HTML全体からテキストを抽出します。")
             target_element = soup 
 
-        body_text = target_element.get_text(separator=' ', strip=True)
+        body_text = target_element.get_text(separator=' ', strip=True) 
 
         if not body_text:
             raise HTTPException(status_code=400, detail="Webサイトからテキストを抽出できませんでした。")
         
-        # 3. チャンキング (uploadのロジックを流用)
-        # ファイル名の代わりにURLを、カテゴリは"WebScrape"にする
+        # 3. チャンキング 
         filename_from_url = request.url.split('/')[-1] or request.url
-        # ↓↓↓ [修正] "document_processor." を追加
+        source_name = f"scrape_{filename_from_url}.txt"
+
+        # 3b. 古いデータを削除
+        logging.info(f"古いチャンク (source: {source_name}) を削除しています...")
+        try:
+            delete_result = database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
+            if delete_result.data:
+                logging.info(f"{len(delete_result.data)} 件の古いチャンクを削除しました。")
+            else:
+                logging.info("削除対象の古いチャンクはありませんでした。")
+        except Exception as e:
+            logging.error(f"古いチャンクの削除中にエラー: {e}。処理を続行します。")
+
+        # 3c. 新しいデータを処理
         docs_to_embed = document_processor.simple_processor.process_and_chunk(
-            filename=f"scrape_{filename_from_url}.txt", 
-            content=body_text.encode('utf-8'), # process_and_chunk は bytes を期待
+            filename=source_name, 
+            content=body_text.encode('utf-8'), 
             category="WebScrape", 
             collection_name=request.collection_name
         )
-        # ↑↑↑ [修正]
         
         if not docs_to_embed:
             raise HTTPException(status_code=400, detail="テキストのチャンキングに失敗しました。")
 
-        # 4. ベクトル化 & DB挿入 (uploadのロジックを流用)
-        embedding_model = request.embedding_model # リクエストで指定されたモデルを使用
+        # 4. ベクトル化 & DB挿入
+        embedding_model = request.embedding_model
         total_chunks = len(docs_to_embed)
         logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します...")
 
@@ -359,7 +341,6 @@ async def scrape_website(
                 )
                 embedding = embedding_response["embedding"]
                 
-                # [修正] "database." を追加
                 database.db_client.insert_document(
                     content=doc.page_content, 
                     embedding=embedding, 
@@ -367,8 +348,7 @@ async def scrape_website(
                 )
                 count += 1
                 
-                # レート制限を避けるための軽い待機
-                await asyncio.sleep(1) # /upload と同様
+                await asyncio.sleep(1)
             
             except Exception as e:
                 if "429" in str(e) or "quota" in str(e).lower():
@@ -376,13 +356,12 @@ async def scrape_website(
                     await asyncio.sleep(30)
                     embedding_response = genai.embed_content(model=embedding_model, content=doc.page_content)
                     embedding = embedding_response["embedding"]
-                    database.db_client.insert_document(doc.page_content, embedding, doc.metadata) # [修正] "database." を追加
+                    database.db_client.insert_document(doc.page_content, embedding, doc.metadata)
                 else:
                     logging.error(f"チャンク処理エラー ({request.url}): {e}")
                     continue
 
         logging.info(f"スクレイプ処理完了: {request.url} ({count}/{total_chunks}件のチャンクをDBに挿入)")
-        # admin.html が期待するレスポンス
         return {"chunks": count, "filename": request.url, "total": total_chunks}
 
     except HTTPException:
