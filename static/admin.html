@@ -807,15 +807,30 @@ for (const line of lines) {
                                     }
                                     if (data.content) {
                                         fullResponse += data.content;
-                                        // ストリーミング中もリンクを適切に処理
-                                        if (fullResponse.includes('<a href=')) {
-                                            let processedText = fullResponse
-                                                .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '')
-                                                .replace(/\n/g, '<br>');
-                                            botMessageContent.innerHTML = processedText;
-                                        } else {
-                                            botMessageContent.innerHTML = fullResponse.replace(/\n/g, '<br>');
-                                        }
+
+                                        // --- [ここから修正] ---
+                                        
+                                        // 1. まず、安全のためにHTMLをエスケープする
+                                        let safeText = fullResponse
+                                            .replace(/</g, "&lt;")
+                                            .replace(/>/g, "&gt;");
+
+                                        // 2. 次に、Markdownのリンク形式 [text](url) を <a href...> タグに変換する
+                                        //    (target="_blank" を追加して新しいタブで開くようにする)
+                                        //    (http と https のみに対応する)
+                                        let htmlText = safeText.replace(
+                                            /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
+                                            '<a href="$2" target="_blank">$1</a>'
+                                        );
+
+                                        // 3. 最後に、改行を <br> に変換する
+                                        htmlText = htmlText.replace(/\n/g, '<br>');
+
+                                        // 4. innerHTML に設定する
+                                        botMessageContent.innerHTML = htmlText;
+                                        
+                                        // --- [ここまで修正] ---
+
                                         chatMessages.scrollTop = chatMessages.scrollHeight;
                                     }
                                 } catch (e) {

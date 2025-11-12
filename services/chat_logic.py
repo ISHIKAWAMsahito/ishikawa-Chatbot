@@ -142,7 +142,7 @@ async def _run_stage2_fallback(
     """
     Stage 2 (Q&Aベクトル検索) を実行し、結果をストリーミングする
     """
-    logging.info(f"Stage 2 (Q&Aベクトル検索) を実行します。")
+    logging.info(f"Stage 2 (Q&Aベクトル検索) を実行します。") # INFOのまま (Stage 2のログは通常不要なため)
     fallback_response = ""
 
     try:
@@ -233,21 +233,23 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 )
             
             # 3c. ログ出力 (フィルタリング前)
+            # ▼▼▼ [ここから変更] .info -> .critical に変更 ▼▼▼
             if search_results:
-                logging.info(f"--- Stage 1 検索候補 (上位 {len(search_results)}件) ---")
+                logging.critical(f"--- Stage 1 検索候補 (上位 {len(search_results)}件) ---")
                 for doc in search_results:
                     doc_id = doc.get('id', 'N/A')
                     doc_source = doc.get('metadata', {}).get('source', 'N/A')
                     doc_similarity = doc.get('similarity', 0)
                     doc_content_preview = doc.get('content', '')[:50].replace('\n', ' ') + "..."
-                    logging.info(f"  [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
+                    logging.critical(f"  [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
             else:
-                logging.info(f"--- Stage 1 検索候補 (0件) ---")
+                logging.critical(f"--- Stage 1 検索候補 (0件) ---")
+            # ▲▲▲ [ここまで変更] ▲▲▲
 
         except Exception as e:
             logging.error(f"ベクトル検索エラー: {e}", exc_info=True)
             search_results = []
-            logging.info(f"ベクトル化または検索に失敗したため、Stage 2へ移行します。")
+            logging.critical(f"ベクトル化または検索に失敗したため、Stage 2へ移行します。") # <-- 変更
 
         # 3d. 類似度によるフィルタリング
         strict_docs = [d for d in search_results if d.get('similarity', 0) >= STRICT_THRESHOLD]
@@ -255,10 +257,9 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         relevant_docs = strict_docs + related_docs # 類似度が高いものを優先
 
         # 3e. ログ出力 (フィルタリング後)
-        # 3e. ログ出力 (フィルタリング後)
-        # 3e. ログ出力 (フィルタリング後)
+        # ▼▼▼ [ここから変更] .info -> .critical に変更 ▼▼▼
         if relevant_docs:
-            logging.info(f"--- Stage 1 コンテキストに使用 (上記候補から {len(relevant_docs)}件を抽出) ---")
+            logging.critical(f"--- Stage 1 コンテキストに使用 (上記候補から {len(relevant_docs)}件を抽出) ---")
             
             for doc in relevant_docs:
                 doc_id = doc.get('id', 'N/A')
@@ -267,12 +268,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 content_to_log = doc.get('metadata', {}).get('parent_content', doc.get('content', ''))
                 doc_content_preview = content_to_log[:60].replace('\n', ' ') + "..."
                 
-                # ▼▼▼ [ここを .info から .critical に変更] ▼▼▼
                 logging.critical(f"  -> [使用] [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
-                # ▲▲▲ [変更] ▲▲▲
 
         else:
-            logging.info(f"--- Stage 1 関連文書なし (閾値 {RELATED_THRESHOLD} 未満)。Stage 2へ移行します。 ---")
+            logging.critical(f"--- Stage 1 関連文書なし (閾値 {RELATED_THRESHOLD} 未満)。Stage 2へ移行します。 ---")
+        # ▲▲▲ [ここまで変更] ▲▲▲
 
 
         # 4. 回答生成
@@ -297,7 +297,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             
             context = "\n\n".join(context_parts)
 
-            # 4b. プロンプトの構築
+            # 4b. プロンプトの構築 (修正済みのルール#7を含む)
             prompt = f"""あなたは札幌学院大学の学生サポートAIです。  
 以下のルールに従ってユーザーの質問に答えてください。
 
@@ -330,7 +330,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 [あなたの回答]
 回答:
 """
-            # 4c. 安全フィルターの無効化設定
+            # 4c. 安全フィルターの無効化設定 (修正済み)
             # ↓↓↓ [修正] HARM_CATEGORY_CIVIC_INTEGRITY の行を削除
             safety_settings = {
                 HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,

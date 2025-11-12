@@ -517,36 +517,56 @@ async function sendAiResponseFeedbackToSupabase(element, rating) {
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
-if (botMessageElement.dataset.logId) {
-    const feedbackContainer = document.createElement('div');
-    feedbackContainer.className = 'feedback-container';
-    // ボタンのテキストとonclickの呼び出し先を変更
-    feedbackContainer.innerHTML = `
-        <button class="feedback-btn">👍 良い回答です</button>
-        <button class="feedback-btn">👎 良くない回答です</button>
-    `;
-    feedbackContainer.querySelector('button:first-of-type').onclick = (e) => sendAiResponseFeedbackToSupabase(e.target, 'good');
-    feedbackContainer.querySelector('button:last-of-type').onclick = (e) => sendAiResponseFeedbackToSupabase(e.target, 'bad');
-    botMessageElement.appendChild(feedbackContainer);
-}
+                        if (botMessageElement.dataset.logId) {
+                            const feedbackContainer = document.createElement('div');
+                            feedbackContainer.className = 'feedback-container';
+                            // ボタンのテキストとonclickの呼び出し先を変更
+                            feedbackContainer.innerHTML = `
+                                <button class="feedback-btn">👍 良い回答です</button>
+                                <button class="feedback-btn">👎 良くない回答です</button>
+                            `;
+                            feedbackContainer.querySelector('button:first-of-type').onclick = (e) => sendAiResponseFeedbackToSupabase(e.target, 'good');
+                            feedbackContainer.querySelector('button:last-of-type').onclick = (e) => sendAiResponseFeedbackToSupabase(e.target, 'bad');
+                            botMessageElement.appendChild(feedbackContainer);
+                        }
                         break;
                     }
                     const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
-                  for (const line of lines) {
-    if (line.trim().startsWith('data: ')) {
-        try {
-            const data = JSON.parse(line.substring(6));
-            if (data.content) {
-                fullResponse += data.content;
-                botMessageContent.innerHTML = fullResponse;
-            }
-            // ここを修正！
-            if (data.log_id) botMessageElement.dataset.logId = data.log_id;
-            if (data.feedback_id) botMessageElement.dataset.logId = data.feedback_id; // ←追加
-        } catch (e) {}
-    }
-}
+                    for (const line of lines) {
+                        if (line.trim().startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+
+                                // ▼▼▼ [ここが修正箇所です] ▼▼▼
+                                if (data.content) {
+                                    fullResponse += data.content;
+
+                                    // 1. まず、安全のためにHTMLをエスケープする
+                                    let safeText = fullResponse
+                                        .replace(/</g, "&lt;")
+                                        .replace(/>/g, "&gt;");
+
+                                    // 2. 次に、Markdownのリンク形式 [text](url) を <a href...> タグに変換する
+                                    let htmlText = safeText.replace(
+                                        /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
+                                        '<a href="$2" target="_blank">$1</a>'
+                                    );
+
+                                    // 3. 最後に、改行を <br> に変換する
+                                    htmlText = htmlText.replace(/\n/g, '<br>');
+
+                                    // 4. innerHTML に設定する
+                                    botMessageContent.innerHTML = htmlText;
+                                }
+                                // ▲▲▲ [修正完了] ▲▲▲
+                                
+                                // ここを修正！
+                                if (data.log_id) botMessageElement.dataset.logId = data.log_id;
+                                if (data.feedback_id) botMessageElement.dataset.logId = data.feedback_id; // ←追加
+                            } catch (e) {}
+                        }
+                    }
                 }
             } catch (error) {
                 botMessageContent.innerHTML = `エラーが発生しました: ${error.message}`;
