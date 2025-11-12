@@ -20,7 +20,7 @@ from core import database
 from core import settings
 # ↑↑↑ [修正]
 from core.config import ACTIVE_COLLECTION_NAME
-from services.document_processor import simple_processor
+from services import document_processor
 
 router = APIRouter()
 
@@ -186,7 +186,7 @@ async def upload_document(
 ):
     """ファイルを受け取り、テキスト抽出・チャンキング・ベクトル化してDBに挿入"""
     # ↓↓↓ [修正] "database." と "settings." を追加
-    if not database.db_client or not settings.settings_manager or not simple_processor:
+    if not database.db_client or not settings.settings_manager or not document_processor.simple_processor: # <--- ★このように変更
         raise HTTPException(503, "システムが初期化されていません")
     # ↑↑↑ [修正]
     
