@@ -180,28 +180,51 @@ async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
         logging.error(f"ドキュメント削除エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/upload")
-async def upload_document(
-    file: UploadFile = File(...), 
-    category: str = Form("その他"), 
+@router.post("/scrape")
+async def scrape_website(
+    request: ScrapeRequest, 
     user: dict = Depends(require_auth)
 ):
-    """ファイルを受け取り、テキスト抽出・チャンキング・ベクトル化してDBに挿入"""
-    # ↓↓↓ [修正] "database." と "settings." と "document_processor." を追加
+    """URLからテキストを抽出し、(古いデータを削除後)、ベクトル化してDBに挿入"""
     if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
-    # ↑↑↑ [修正]
-    
-    try:
-        filename = file.filename
-        content = await file.read()
-        
-        logging.info(f"ファイルアップロード受信: {filename} (カテゴリ: {category})")
 
-        # ↓↓↓ [修正] "settings." を追加
-        collection_name = settings.settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
-        # ↓↓↓ [修正] "document_processor." を追加
-        docs_to_embed = document_processor.simple_processor.process_and_chunk(filename, content, category, collection_name)
+    logging.info(f"Scrapeリクエスト受信: {request.url} (Collection: {request.collection_name})")
+
+    try:
+        # ... (1. Webサイトからコンテンツを取得) ...
+        # ... (2. HTMLからテキストを抽出) ...
+        # ... (body_text = ... の行まで) ...
+
+        if not body_text:
+            raise HTTPException(status_code=400, detail="Webサイトからテキストを抽出できませんでした。")
+        
+        # 3. チャンキング (uploadのロジックを流用)
+        filename_from_url = request.url.split('/')[-1] or request.url
+        
+        # ▼▼▼ [修正] source_nameを変数として定義 ▼▼▼
+        source_name = f"scrape_{filename_from_url}.txt"
+
+        # ▼▼▼ [ここから追加] ▼▼▼
+        # 3b. 古いデータを削除
+        logging.info(f"古いチャンク (source: {source_name}) を削除しています...")
+        try:
+            delete_result = database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
+            if delete_result.data:
+                logging.info(f"{len(delete_result.data)} 件の古いチャンクを削除しました。")
+            else:
+                logging.info("削除対象の古いチャンクはありませんでした。")
+        except Exception as e:
+            logging.error(f"古いチャンクの削除中にエラー: {e}。処理を続行します。")
+        # ▲▲▲ [ここまで追加] ▲▲▲
+
+        # 3c. 新しいデータを処理
+        docs_to_embed = document_processor.simple_processor.process_and_chunk(
+            filename=source_name, # ⬅️ [修正] 変数を使う
+            content=body_text.encode('utf-8'), # process_and_chunk は bytes を期待
+            category="WebScrape", 
+            collection_name=request.collection_name
+        )
         
         if not docs_to_embed:
             raise HTTPException(status_code=400, detail="ファイルからテキストを抽出できませんでした。")
