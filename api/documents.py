@@ -7,8 +7,8 @@ import google.generativeai as genai
 import httpx  # Webアクセス用
 from bs4 import BeautifulSoup # HTML解析用
 from pydantic import BaseModel # リクエストの型定義用
-# [documents.py の import 文のすぐ下あたり]
 
+# [documents.py の import 文のすぐ下あたり]
 class ScrapeRequest(BaseModel):
     url: str
     collection_name: str
@@ -20,7 +20,9 @@ from core import database
 from core import settings
 # ↑↑↑ [修正]
 from core.config import ACTIVE_COLLECTION_NAME
+# ↓↓↓ [修正] モジュール本体をインポート
 from services import document_processor
+# ↑↑↑ [修正]
 
 router = APIRouter()
 
@@ -185,8 +187,8 @@ async def upload_document(
     user: dict = Depends(require_auth)
 ):
     """ファイルを受け取り、テキスト抽出・チャンキング・ベクトル化してDBに挿入"""
-    # ↓↓↓ [修正] "database." と "settings." を追加
-    if not database.db_client or not settings.settings_manager or not document_processor.simple_processor: # <--- ★このように変更
+    # ↓↓↓ [修正] "database." と "settings." と "document_processor." を追加
+    if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
     # ↑↑↑ [修正]
     
@@ -198,7 +200,8 @@ async def upload_document(
 
         # ↓↓↓ [修正] "settings." を追加
         collection_name = settings.settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
-        docs_to_embed = simple_processor.process_and_chunk(filename, content, category, collection_name)
+        # ↓↓↓ [修正] "document_processor." を追加
+        docs_to_embed = document_processor.simple_processor.process_and_chunk(filename, content, category, collection_name)
         
         if not docs_to_embed:
             raise HTTPException(status_code=400, detail="ファイルからテキストを抽出できませんでした。")
@@ -260,14 +263,17 @@ async def get_documents(collection_name: str):
         "documents": database.db_client.get_documents_by_collection(collection_name),
         "count": database.db_client.count_chunks_in_collection(collection_name)
     }
+
 @router.post("/scrape")
 async def scrape_website(
     request: ScrapeRequest, 
     user: dict = Depends(require_auth)
 ):
     """URLからテキストを抽出し、ベクトル化してDBに挿入"""
-    if not database.db_client or not settings.settings_manager or not simple_processor:
+    # ↓↓↓ [修正] "document_processor." を追加
+    if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
+    # ↑↑↑ [修正]
 
     logging.info(f"Scrapeリクエスト受信: {request.url} (Collection: {request.collection_name})")
 
@@ -282,7 +288,6 @@ async def scrape_website(
                 logging.error(f"URL取得エラー: {e}")
                 raise HTTPException(status_code=400, detail=f"URLの取得に失敗しました: {e}")
         
-        # 2. HTMLからテキストを抽出 (シンプルな例)
         # 2. HTMLからテキストを抽出 (堅牢性を向上)
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -290,7 +295,6 @@ async def scrape_website(
         for script_or_style in soup(["script", "style"]):
             script_or_style.decompose()
         
-        # ▼▼▼ [ここから修正] ▼▼▼
         # soup.body が存在するかチェックする
         target_element = soup.body
         if not target_element:
@@ -299,7 +303,6 @@ async def scrape_website(
             target_element = soup 
 
         body_text = target_element.get_text(separator=' ', strip=True)
-        # ▲▲▲ [ここまで修正] ▲▲▲
 
         if not body_text:
             raise HTTPException(status_code=400, detail="Webサイトからテキストを抽出できませんでした。")
@@ -307,12 +310,14 @@ async def scrape_website(
         # 3. チャンキング (uploadのロジックを流用)
         # ファイル名の代わりにURLを、カテゴリは"WebScrape"にする
         filename_from_url = request.url.split('/')[-1] or request.url
-        docs_to_embed = simple_processor.process_and_chunk(
+        # ↓↓↓ [修正] "document_processor." を追加
+        docs_to_embed = document_processor.simple_processor.process_and_chunk(
             filename=f"scrape_{filename_from_url}.txt", 
             content=body_text.encode('utf-8'), # process_and_chunk は bytes を期待
             category="WebScrape", 
             collection_name=request.collection_name
         )
+        # ↑↑↑ [修正]
         
         if not docs_to_embed:
             raise HTTPException(status_code=400, detail="テキストのチャンキングに失敗しました。")
@@ -362,4 +367,3 @@ async def scrape_website(
     except Exception as e:
         logging.error(f"スクレイプ処理エラー: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
-    # ↑↑↑ [修正]
