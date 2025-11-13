@@ -39,7 +39,6 @@ MAX_CONTEXT_CHAR_LENGTH = 15000
 MAX_HISTORY_LENGTH = 20
 
 # AIが「見つからない」と判断したときのマジックストリング
-# AIが「見つからない」と判断したときのマジックストリング
 AI_NOT_FOUND_MESSAGE = "ご質問いただいた内容については、関連する情報が見つかりませんでした。お手数ですが、大学の公式サイトをご確認いただくか、窓口までお問い合わせください。"
 
 # -----------------------------------------------
@@ -159,17 +158,26 @@ async def _run_stage2_fallback(
         if fallback_results:
             best_match = fallback_results[0]
             best_sim = best_match.get('similarity', 0)
+            # ▼▼▼ [ここから修正] ▼▼▼
+            best_content_preview = best_match.get('content', 'N/A')[:100].replace('\n', ' ') + "..."
+
+            # ログに「何を」マッチしたか出力する
+            logging.info(f"--- Stage 2 検索結果 (Top 1) ---")
+            logging.info(f"  [Sim: {best_sim:.4f}] Content: '{best_content_preview}'")
 
             if best_sim >= FALLBACK_SIMILARITY_THRESHOLD:
-                logging.info(f"Stage 2 RAG 成功。類似Q&Aを回答します (Similarity: {best_sim:.4f})")
+                logging.info(f"  -> [使用] 閾値 {FALLBACK_SIMILARITY_THRESHOLD} を超えたため、この回答を使用します。")
+            # ▲▲▲ [ここまで修正] ▲▲▲
                 fallback_response = f"""データベースに直接の情報は見つかりませんでしたが、関連する「よくあるご質問」がありましたのでご案内します。
 
 ---
 {best_match['content']}
 """
             else:
-                logging.info(f"Stage 2 RAG 失敗。類似Q&Aなし (Best Sim: {best_sim:.4f} < {FALLBACK_SIMILARITY_THRESHOLD})")
-                fallback_response = "申し訳ありませんが、ご質問に関連する情報がデータベース(Q&Aを含む)に見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。"
+                # ▼▼▼ [ここから修正] ▼▼▼
+                logging.info(f"  -> [不使用] 閾値 {FALLBACK_SIMILARITY_THRESHOLD} 未満のため、この回答は使用しません。")
+                # ▲▲▲ [ここまで修正] ▲▲▲
+                fallback_response = "申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。"
         else:
             logging.info("Stage 2 RAG 失敗。Q&Aデータベースが空か、検索エラーです。")
             fallback_response = "申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。"
