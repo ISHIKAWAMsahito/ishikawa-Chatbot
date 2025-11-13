@@ -367,10 +367,16 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             try:
                 stream = await safe_generate_content(model, prompt, stream=True)
                 async for chunk in stream:
-                    if chunk.text:
-                        response_text += chunk.text
-                        # ストリーミングでクライアントに送信
-                        yield f"data: {json.dumps({'content': chunk.text})}\n\n"
+                    # ▼▼▼ [ここから修正] ▼▼▼
+                    try:
+                        if chunk.text:
+                            response_text += chunk.text
+                            # ストリーミングでクライアントに送信
+                            yield f"data: {json.dumps({'content': chunk.text})}\n\n"
+                    except ValueError:
+                        # .text が存在しないチャンク (finish_reason=STOP の最後の空チャンクなど) は無視
+                        pass
+                    # ▲▲▲ [ここまで修正] ▲▲▲
                 
                 full_response = format_urls_as_links(response_text.strip() or "回答を生成できませんでした。")
 
