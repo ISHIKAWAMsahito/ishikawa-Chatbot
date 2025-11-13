@@ -234,22 +234,24 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             
             # 3c. ログ出力 (フィルタリング前)
             # ▼▼▼ [ここから変更] .info -> .critical に変更 ▼▼▼
+            # 3c. ログ出力 (フィルタリング前)
+            # ▼▼▼ [ここから変更] .info に変更 ▼▼▼
             if search_results:
-                logging.critical(f"--- Stage 1 検索候補 (上位 {len(search_results)}件) ---")
+                logging.info(f"--- Stage 1 検索候補 (上位 {len(search_results)}件) ---")
                 for doc in search_results:
                     doc_id = doc.get('id', 'N/A')
                     doc_source = doc.get('metadata', {}).get('source', 'N/A')
                     doc_similarity = doc.get('similarity', 0)
                     doc_content_preview = doc.get('content', '')[:50].replace('\n', ' ') + "..."
-                    logging.critical(f"  [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
+                    logging.info(f"  [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
             else:
-                logging.critical(f"--- Stage 1 検索候補 (0件) ---")
+                logging.info(f"--- Stage 1 検索候補 (0件) ---")
             # ▲▲▲ [ここまで変更] ▲▲▲
 
         except Exception as e:
             logging.error(f"ベクトル検索エラー: {e}", exc_info=True)
             search_results = []
-            logging.critical(f"ベクトル化または検索に失敗したため、Stage 2へ移行します。") # <-- 変更
+            logging.info(f"ベクトル化または検索に失敗したため、Stage 2へ移行します。") # <-- 変更# <-- 変更
 
         # 3d. 類似度によるフィルタリング
         strict_docs = [d for d in search_results if d.get('similarity', 0) >= STRICT_THRESHOLD]
@@ -258,8 +260,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         # 3e. ログ出力 (フィルタリング後)
         # ▼▼▼ [ここから変更] .info -> .critical に変更 ▼▼▼
+        # 3e. ログ出力 (フィルタリング後)
+        # ▼▼▼ [ここから変更] .info に変更 ▼▼▼
         if relevant_docs:
-            logging.critical(f"--- Stage 1 コンテキストに使用 (上記候補から {len(relevant_docs)}件を抽出) ---")
+            logging.info(f"--- Stage 1 コンテキストに使用 (上記候補から {len(relevant_docs)}件を抽出) ---")
             
             for doc in relevant_docs:
                 doc_id = doc.get('id', 'N/A')
@@ -268,10 +272,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 content_to_log = doc.get('metadata', {}).get('parent_content', doc.get('content', ''))
                 doc_content_preview = content_to_log[:60].replace('\n', ' ') + "..."
                 
-                logging.critical(f"  -> [使用] [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
+                logging.info(f"  -> [使用] [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
 
         else:
-            logging.critical(f"--- Stage 1 関連文書なし (閾値 {RELATED_THRESHOLD} 未満)。Stage 2へ移行します。 ---")
+            logging.info(f"--- Stage 1 関連文書なし (閾値 {RELATED_THRESHOLD} 未満)。Stage 2へ移行します。 ---")
+        # ▲▲▲ [ここまで変更] ▲▲▲
         # ▲▲▲ [ここまで変更] ▲▲▲
 
 
@@ -340,7 +345,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             }
             # ↑↑↑ [修正]
             
-            logging.critical(f"--- APIに送信するプロンプト (Stage 1 RAG) ---\n(Context文字数: {len(context)}) \n--- プロンプト終了 ---")
+            logging.info(f"--- APIに送信するプロンプト (Stage 1 RAG) ---\n(Context文字数: {len(context)}) \n--- プロンプト終了 ---")
             
             model = genai.GenerativeModel(
                 chat_req.model,
