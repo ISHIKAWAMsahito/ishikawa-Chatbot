@@ -1,6 +1,8 @@
 import os
 import logging
 import uvicorn
+# ログ設定
+logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
@@ -14,8 +16,7 @@ from services.document_processor import simple_processor, SimpleDocumentProcesso
 # APIルーターのインポート
 from api import auth, chat, documents, fallbacks, feedback, system
 
-# ログ設定
-logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
+
 
 # ライフサイクル管理
 @asynccontextmanager
