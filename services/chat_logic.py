@@ -110,7 +110,10 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
 
         except Exception as e:
             error_str = str(e)
-            if ("429" in error_str or "quota" in error_str.lower()) and attempt < max_retries - 1:
+            if (
+                ("429" in error_str or "quota" in error_str.lower()) or 
+                ("503" in error_str or "overloaded" in error_str.lower())
+            ) and attempt < max_retries - 1:
                 wait_time = 0
                 try:
                     match = re.search(r'retry in (\d+(?:\.\d+)?)s', error_str)
