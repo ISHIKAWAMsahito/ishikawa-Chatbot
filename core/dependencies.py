@@ -35,16 +35,6 @@ def require_auth_client(request: Request):
     allowed_emails_lower = [email.lower() for email in ALLOWED_CLIENT_EMAILS]
     super_admin_emails_lower = [email.lower() for email in SUPER_ADMIN_EMAILS]
 
-    # --- デバッグ用のprint文（安全な場所に移動） ---
-    # print("--- クライアント認証チェック ---")
-    # print(f"ログイン試行中のメアド (小文字化後): '[{user_email}]'")
-    # print(f"クライアント許可リスト: {allowed_emails_lower}")
-    # print(f"管理者許可リスト: {super_admin_emails_lower}")
-    # print(f"クライアントリストに含まれているか？: {user_email in allowed_emails_lower}")
-    # print(f"管理者リストに含まれているか？: {user_email in super_admin_emails_lower}")
-    # print("--------------------")
-    # -----------------------------------------------------------
-
     # 4. 認証チェックを実行します。
     # (クライアント許可リスト、または管理者許可リストのどちらかに含まれていればOK)
     if (user_email in allowed_emails_lower or

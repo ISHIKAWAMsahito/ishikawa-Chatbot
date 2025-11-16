@@ -1,80 +1,124 @@
 import os
-import json
 import logging
-from typing import List, Optional, Dict, Any
-from fastapi import WebSocket
-from core.config import ACTIVE_COLLECTION_NAME, BASE_DIR
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+import google.generativeai as genai
 
-class SettingsManager:
-    """設定管理クラス"""
-    def __init__(self):
-        self.settings = {
-            "model": "gemini-2.5-flash",
-            "collection": ACTIVE_COLLECTION_NAME,
-            "embedding_model": "text-embedding-004",
-            "top_k": 5
-        }
-        self.websocket_connections: List[WebSocket] = []
-        self.settings_file = os.path.join(BASE_DIR, "shared_settings.json")
-        self.load_settings()
+from core.config import GEMINI_API_KEY, ACTIVE_COLLECTION_NAME
+# ↓↓↓ [修正] モジュール本体をインポート
+from core import database
+# ↓↓↓ [修正] "as core_settings" という別名を付ける
+from core import settings as core_settings
+# ↑↑↑ [修正]
+from models.schemas import Settings
 
-    def load_settings(self):
-        try:
-            if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r', encoding='utf-8') as f:
-                    self.settings.update(json.load(f))
-        except Exception as e:
-            logging.error(f"設定ファイルの読み込みエラー: {e}")
+router = APIRouter()
 
-    def save_settings(self):
-        try:
-            with open(self.settings_file, 'w', encoding='utf-8') as f:
-                json.dump(self.settings, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logging.error(f"設定ファイルの保存エラー: {e}")
+@router.get("/health")
+async def health_check():
+    """ヘルスチェック"""
+    return {
+        "status": "ok",
+        # ↓↓↓ [修正] 
+        # db_client が存在する時点で "supabase" とわかるので、ハードコードする
+        "database": "supabase" if database.db_client else "uninitialized"
+        # ↑↑↑ [修正]
+    }
 
-    async def update_settings(self, new_settings: Dict[str, Any]):
-        self.settings.update(new_settings)
-        self.save_settings()
-        await self.broadcast_settings()
+@router.api_route("/healthz", methods=["GET", "HEAD"])
+def health_check_k8s():
+    """Kubernetes用ヘルスチェック"""
+    return {"status": "ok"}
 
-    async def add_websocket(self, websocket: WebSocket):
-        await websocket.accept()
-        self.websocket_connections.append(websocket)
+@router.get("/gemini/status")
+async def gemini_status():
+    """Gemini APIの接続状態を確認"""
+    if not GEMINI_API_KEY:
+        return {"connected": False, "detail": "API key not configured"}
+    try:
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        return {"connected": True, "models": models}
+    except Exception as e:
+        return {"connected": False, "detail": str(e)}
 
-    def remove_websocket(self, websocket: WebSocket):
-        if websocket in self.websocket_connections:
-            self.websocket_connections.remove(websocket)
+@router.get("/config")
+def get_config():
+    """フロントエンドが必要とする公開可能な設定(環境変数)を返す"""
+    return {
+        "supabase_url": os.getenv("SUPABASE_URL"),
+        "supabase_anon_key": os.getenv("SUPABASE_ANON_KEY")
+    }
 
-    async def broadcast_settings(self):
-        message = {"type": "settings_update", "data": self.settings}
-        disconnected = []
-        for conn in self.websocket_connections:
-            try:
-                await conn.send_json(message)
-            except:
-                disconnected.append(conn)
-        for conn in disconnected:
-            self.remove_websocket(conn)
+@router.get("/collections")
+async def get_collections():
+    """コレクション一覧を取得"""
+    return [{
+        "name": ACTIVE_COLLECTION_NAME, 
+        # ↓↓↓ [修正] "database." を追加
+        "count": database.db_client.count_chunks_in_collection(ACTIVE_COLLECTION_NAME) if database.db_client else 0
+        # ↑↑↑ [修正]
+    }]
 
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
+@router.post("/collections")
+async def create_collection(request: dict):
+    """コレクションを作成(既存のみ)"""
+    return {"message": f"コレクション「{ACTIVE_COLLECTION_NAME}」は既に存在しています"}
+
+@router.delete("/collections/{collection_name}")
+async def delete_collection(collection_name: str):
+    """コレクションを削除"""
+    if collection_name == ACTIVE_COLLECTION_NAME:
+        raise HTTPException(status_code=400, detail="このコレクションは削除できません")
+    return {"message": "コレクションが見つかりません"}
+
+@router.post("/settings")
+# ↓↓↓ [修正] 引数名を "settings_payload" に変更
+async def update_settings(settings_payload: Settings):
+    """設定を更新"""
+    # ↓↓↓ [修正] 別名を付けた "core_settings" を参照する
+    if not core_settings.settings_manager:
+        raise HTTPException(503, "設定マネージャーが初期化されていません")
+    try:
+        # ↓↓↓ [修正] "core_settings" を参照し、引数のPydanticモデルを渡す
+        await core_settings.settings_manager.update_settings(settings_payload.dict(exclude_none=True))
+        return {"message": "設定を更新しました"}
+    except Exception as e:
+        logging.error(f"設定更新エラー: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.websocket("/ws/settings")
+async def websocket_endpoint(websocket: WebSocket):
+    """設定変更通知用WebSocket"""
+    # ↓↓↓ [修正] 別名を付けた "core_settings" を参照する
+    if not core_settings.settings_manager:
+        await websocket.close(code=1011, reason="Settings manager not initialized")
+        return
     
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
+    await core_settings.settings_manager.add_websocket(websocket)
     
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-    
-    async def broadcast(self, message: str):
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(message)
-            except:
-                self.disconnect(connection)
+    # ▼▼▼ [ここから修正] ▼▼▼
+    # 接続直後に、現在の設定をこのクライアントに送信する
+    try:
+        # SettingsManagerから現在の設定を取得
+        # .get_settings() ではなく .settings プロパティを参照する
+        current_settings = core_settings.settings_manager.settings
+        
+        # admin.html が期待する形式 (settings_update) で送信
+        await websocket.send_json({
+            "type": "settings_update",
+            "data": current_settings
+        })
+        logging.info(f"WebSocketクライアントに初期設定を送信しました。")
+        
+    except Exception as e:
+        logging.error(f"WebSocketへの初期設定送信に失敗: {e}")
+        # (エラーが起きても接続は維持する)
+    # ▲▲▲ [ここまで修正] ▲▲▲
 
-# グローバルインスタンス
-settings_manager: Optional[SettingsManager] = None
+    try:
+        while True:
+            await websocket.receive_text()
+            # (クライアントからのメッセージは特に処理しない)
+    except WebSocketDisconnect:
+        # ↓↓↓ [修正] 別名を付けた "core_settings" を参照する
+        core_settings.settings_manager.remove_websocket(websocket)
+        logging.info("WebSocketクライアントが切断されました。")
