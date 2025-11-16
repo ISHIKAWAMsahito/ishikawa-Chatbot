@@ -205,6 +205,9 @@ async def _run_stage2_fallback(
 # -----------------------------------------------
 # メインのチャットロジック
 # -----------------------------------------------
+# -----------------------------------------------
+# メインのチャットロジック
+# -----------------------------------------------
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     """
     RAG + Q&Aフォールバック対応のチャット処理 (ストリーミング)
@@ -245,9 +248,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 )
             
             # 3c. ログ出力 (フィルタリング前)
-            # ▼▼▼ [ここから変更] .info -> .critical に変更 ▼▼▼
-            # 3c. ログ出力 (フィルタリング前)
-            # ▼▼▼ [ここから変更] .info に変更 ▼▼▼
             if search_results:
                 logging.info(f"--- Stage 1 検索候補 (上位 {len(search_results)}件) ---")
                 for doc in search_results:
@@ -258,12 +258,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     logging.info(f"  [ID: {doc_id}] [Sim: {doc_similarity:.4f}] (Source: {doc_source}) Content: '{doc_content_preview}'")
             else:
                 logging.info(f"--- Stage 1 検索候補 (0件) ---")
-            # ▲▲▲ [ここまで変更] ▲▲▲
 
         except Exception as e:
             logging.error(f"ベクトル検索エラー: {e}", exc_info=True)
             search_results = []
-            logging.info(f"ベクトル化または検索に失敗したため、Stage 2へ移行します。") # <-- 変更# <-- 変更
+            logging.info(f"ベクトル化または検索に失敗したため、Stage 2へ移行します。") 
 
         # 3d. 類似度によるフィルタリング
         strict_docs = [d for d in search_results if d.get('similarity', 0) >= STRICT_THRESHOLD]
@@ -271,9 +270,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         relevant_docs = strict_docs + related_docs # 類似度が高いものを優先
 
         # 3e. ログ出力 (フィルタリング後)
-        # ▼▼▼ [ここから変更] .info -> .critical に変更 ▼▼▼
-        # 3e. ログ出力 (フィルタリング後)
-        # ▼▼▼ [ここから変更] .info に変更 ▼▼▼
         if relevant_docs:
             logging.info(f"--- Stage 1 コンテキストに使用 (上記候補から {len(relevant_docs)}件を抽出) ---")
             
@@ -288,8 +284,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         else:
             logging.info(f"--- Stage 1 関連文書なし (閾値 {RELATED_THRESHOLD} 未満)。Stage 2へ移行します。 ---")
-        # ▲▲▲ [ここまで変更] ▲▲▲
-        # ▲▲▲ [ここまで変更] ▲▲▲
 
 
         # 4. 回答生成
@@ -325,7 +319,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
    「※これは関連情報であり、ご質問NのG]意と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
 4. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
 5. **大学固有の事実（学費、特定のゼミ、手続き、校舎の場所など）を推測して答えてはいけません。**
-6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「ご質問いただいた内容については、関連する情報が見つかりませんでした。お手数ですが、大学の公式サイトをご確認いただくか、窓口までお問い合わせください。」と回答しても構いません。
+6. **特に重要**: <context> 内の情報を使って回答することを最優先にしてください。ただし、<context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、「ご質問いただいた内容については、関連する情報が見つかりました。お手数ですが、大学の公式サイトをご確認いただくか、窓口までお問い合わせください。」と回答しても構いません。
 7. **一般知識の使用について**:
    - あなたの知識は、<context> の情報を**簡潔にまとめる（要約する）**ため**だけ**に使用してください。
    - <context> の情報を補足するために、<context> に書かれていない情報を付け加えてはいけません。
@@ -348,14 +342,12 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 回答:
 """
             # 4c. 安全フィルターの無効化設定 (修正済み)
-            # ↓↓↓ [修正] HARM_CATEGORY_CIVIC_INTEGRITY の行を削除
             safety_settings = {
                 HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
             }
-            # ↑↑↑ [修正]
             
             logging.info(f"--- APIに送信するプロンプト (Stage 1 RAG) ---\n(Context文字数: {len(context)}) \n--- プロンプト終了 ---")
             
@@ -374,8 +366,12 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     try:
                         if chunk.text:
                             response_text += chunk.text
-                            # ストリーミングでクライアントに送信
-                            yield f"data: {json.dumps({'content': chunk.text})}\n\n"
+                            # 
+                            # ここで yield すると、Stage 1 の「見つかりません」が送信され、
+                            # その後の Stage 2 の「見つかりません」も送信されてしまう。
+                            # 
+                            # yield f"data: {json.dumps({'content': chunk.text})}\n\n"  <-- この行を削除
+                            #
                     except ValueError:
                         # .text が存在しないチャンク (finish_reason=STOP の最後の空チャンクなど) は無視
                         pass
@@ -392,7 +388,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     full_response = AI_NOT_FOUND_MESSAGE 
                 else:
                     # 400 InvalidArgument など、その他のエラー
+                    # ▼▼▼ [ここから修正] ▼▼▼
+                    # ストリーミングが失敗した場合は、エラーメッセージを即時送信する
                     yield f"data: {json.dumps({'content': full_response})}\n\n"
+                    # ▲▲▲ [ここまで修正] ▲▲▲
             
             
             # -----------------------------------------------
@@ -402,12 +401,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             if "エラーが発生しました" not in full_response:
                 if AI_NOT_FOUND_MESSAGE in full_response:
                     logging.info("Stage 1 AIがコンテキスト内に回答を発見できませんでした。Stage 2 (Q&A) に移行します。")
-                    # Stage 2 を実行
+                    # Stage 2 を実行 (Stage 1の回答は送信しない)
                     async for fallback_chunk in _run_stage2_fallback(query_embedding, session_id, user_input, feedback_id):
                         yield fallback_chunk
                 
                 else:
                     # --- Stage 1 成功 ---
+                    
+                    # ▼▼▼ [ここから修正] ▼▼▼
+                    # バッファリングした Stage 1 の成功レスポンスをここで送信する
+                    # これにより、クライアント側での表示はストリーミングではなくなりますが、
+                    # 回答の重複バグを防ぐことができます。
+                    yield f"data: {json.dumps({'content': full_response})}\n\n"
+                    # ▲▲▲ [ここまで修正] ▲▲▲
+
                     # 履歴に追加
                     history_manager.add_to_history(session_id, "user", user_input)
                     history_manager.add_to_history(session_id, "assistant", full_response)
@@ -415,6 +422,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     # 5. 最終処理 (フィードバック表示トリガー)
                     yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
             else:
+                # "エラーが発生しました" が full_response に含まれる場合
+                # (except ブロックで既に対応済み（yield済み）のため、何もしない)
                 pass
 
 
