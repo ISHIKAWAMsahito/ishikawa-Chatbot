@@ -1,5 +1,5 @@
 import os
-import logging  # 修正: logging をインポート
+import logging
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 import google.generativeai as genai
 
@@ -99,7 +99,8 @@ async def websocket_endpoint(websocket: WebSocket):
     # 接続直後に、現在の設定をこのクライアントに送信する
     try:
         # SettingsManagerから現在の設定を取得
-        current_settings = core_settings.settings_manager.get_settings()
+        # .get_settings() ではなく .settings プロパティを参照する
+        current_settings = core_settings.settings_manager.settings
         
         # admin.html が期待する形式 (settings_update) で送信
         await websocket.send_json({
