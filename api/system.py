@@ -1,5 +1,5 @@
 import os
-import logging
+import logging  # 修正: logging をインポート
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 import google.generativeai as genai
 
@@ -92,10 +92,32 @@ async def websocket_endpoint(websocket: WebSocket):
     if not core_settings.settings_manager:
         await websocket.close(code=1011, reason="Settings manager not initialized")
         return
+    
     await core_settings.settings_manager.add_websocket(websocket)
+    
+    # ▼▼▼ [ここから修正] ▼▼▼
+    # 接続直後に、現在の設定をこのクライアントに送信する
+    try:
+        # SettingsManagerから現在の設定を取得
+        current_settings = core_settings.settings_manager.get_settings()
+        
+        # admin.html が期待する形式 (settings_update) で送信
+        await websocket.send_json({
+            "type": "settings_update",
+            "data": current_settings
+        })
+        logging.info(f"WebSocketクライアントに初期設定を送信しました。")
+        
+    except Exception as e:
+        logging.error(f"WebSocketへの初期設定送信に失敗: {e}")
+        # (エラーが起きても接続は維持する)
+    # ▲▲▲ [ここまで修正] ▲▲▲
+
     try:
         while True:
             await websocket.receive_text()
+            # (クライアントからのメッセージは特に処理しない)
     except WebSocketDisconnect:
         # ↓↓↓ [修正] 別名を付けた "core_settings" を参照する
         core_settings.settings_manager.remove_websocket(websocket)
+        logging.info("WebSocketクライアントが切断されました。")
