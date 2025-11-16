@@ -16,8 +16,10 @@ async def get_all_fallbacks(user: dict = Depends(require_auth)):
     if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     try:
-        # ★修正: question と answer を取得
-        result = database.db_client.client.table("category_fallbacks").select("id, question, answer, category_name").order("id", desc=True).execute()
+        # ▼▼▼ [ここから修正] ▼▼▼
+        # "embedding" カラムも select するように追加
+        result = database.db_client.client.table("category_fallbacks").select("id, question, answer, category_name, embedding").order("id", desc=True).execute()
+        # ▲▲▲ [ここまで修正] ▲▲▲
         return {"fallbacks": result.data or []}
     except Exception as e:
         logging.error(f"Q&A一覧取得エラー: {e}")
