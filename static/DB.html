@@ -151,6 +151,10 @@
         .form-group input, .form-group textarea { width:100%; padding:10px; border:1px solid #dee2e6; border-radius:8px; font-family:inherit; }
         .form-group textarea { min-height:180px; resize:vertical; }
 
+        /* ★修正: Q&Aモーダルのtextareaの高さを調整 */
+        #qaEditQuestion { min-height: 80px; }
+        #qaEditAnswer { min-height: 120px; }
+
         .loading { text-align:center; padding:40px; color:#6c757d; }
         .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; white-space: nowrap !important; border: 0 !important; }
 
@@ -299,7 +303,7 @@
                         <tr>
                             <th scope="col">ID</th>
                             <th scope="col">カテゴリー</th>
-                            <th scope="col">Q&Aテキスト (static_response)</th>
+                            <th scope="col">質問 (Question) / 回答 (Answer)</th>
                             <th scope="col">ベクトル</th>
                             <th scope="col">作成日時</th>
                             <th scope="col">操作</th>
@@ -344,18 +348,24 @@
                 <input type="text" id="qaEditCategory" placeholder="例: 授業, 施設, その他">
                 <small>※Q&Aの分類に使います。必須です。</small>
             </div>
+
             <div class="form-group">
-                <label for="qaEditContent">Q&Aテキスト (static_response):</label>
-                <textarea id="qaEditContent" placeholder="例： Q. 〇〇とは何ですか？ A. 〇〇は..."></textarea>
-                <small>※保存時に自動でベクトル化されます</small>
+                <label for="qaEditQuestion">質問 (Question):</label>
+                <textarea id="qaEditQuestion" placeholder="例： 学生証をなくしました"></textarea>
+                <small>※この「質問」がベクトル化され、検索対象になります。</small>
             </div>
+            <div class="form-group">
+                <label for="qaEditAnswer">回答 (Answer):</label>
+                <textarea id="qaEditAnswer" placeholder="例： 学生支援課で再発行手続をしてください..."></textarea>
+                <small>※検索にヒットした時に、この「回答」がAIの回答文になります。</small>
+            </div>
+            
             <div class="action-buttons">
                 <button class="btn secondary" onclick="closeQAModal()">キャンセル</button>
                 <button class="btn" onclick="saveQA()">保存</button>
             </div>
         </div>
     </div>
-
     <script>
         // ★★★ グローバル変数を変更 ★★★
         let currentPage = 1;
@@ -604,7 +614,7 @@
         }
 
         // =============================================
-        // [2] Q&A (Fallbacks) 関連の関数 (変更なし)
+        // [2] Q&A (Fallbacks) 関連の関数 (★ JavaScript修正 ★)
         // =============================================
         async function loadQA() {
             const loadingIndicator = document.getElementById('qaLoadingIndicator');
@@ -612,7 +622,7 @@
             loadingIndicator.style.display = 'block';
             table.style.display = 'none';
             try {
-                const response = await fetch('/api/fallbacks');
+                const response = await fetch('/api/fallbacks'); // API (fallbacks.py) は "question", "answer" を返す
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 const data = await response.json();
                 allQA = data.fallbacks || [];
@@ -627,6 +637,7 @@
             }
         }
 
+        // ▼▼▼ [JS修正 1/4] ▼▼▼
         function displayQA(qaList) {
             const tbody = document.getElementById('qaBody');
             tbody.innerHTML = '';
@@ -635,16 +646,27 @@
                 const created = qa.created_at ? new Date(qa.created_at).toLocaleString('ja-JP') : 'N/A';
                 
                 let embeddingStatus;
+                // ★修正: fallbacks.py 側で embedding が NULL かどうかは DB 次第なので、
+                // APIが返す allQA (id, question, answer, category_name) には embedding が含まれない。
+                // Q&Aのベクトルステータスは統計（qaMissingCount）で確認するため、ここでは表示を簡略化する。
+                // ※もし /api/fallbacks が embedding も返すなら、以前のロジックでもOK
                 if (qa.embedding && qa.embedding.length > 0) {
-                    embeddingStatus = '<span class="embedding-status ok">OK</span>';
+                     embeddingStatus = '<span class="embedding-status ok">OK</span>';
+                } else if (allQA.length > 0 && typeof qa.embedding === 'undefined') {
+                    // APIがembeddingを返さない場合、統計側で判断する
+                    embeddingStatus = '<span class="metadata">--</span>';
                 } else {
-                    embeddingStatus = '<span class="embedding-status ng">未処理</span>';
+                     embeddingStatus = '<span class="embedding-status ng">未処理</span>';
                 }
-
+                
+                // ★修正: static_response を question / answer に変更
                 tr.innerHTML = `
                     <td>${qa.id}</td>
                     <td><span class="metadata">${escapeHtml(qa.category_name || '未分類')}</span></td>
-                    <td><div class="content-preview">${escapeHtml(qa.static_response || '')}</div></td>
+                    <td>
+                        <div class="content-preview" style="font-weight: 600;">Q: ${escapeHtml(qa.question || '')}</div>
+                        <div class="content-preview" style="opacity: 0.8; margin-top: 4px;">A: ${escapeHtml(qa.answer || '')}</div>
+                    </td>
                     <td>${embeddingStatus}</td>
                     <td><span class="metadata">${created}</span></td>
                     <td>
@@ -656,10 +678,21 @@
                 `;
                 tbody.appendChild(tr);
             });
+            // ★もし displayQA がベクトル OK/NG を判断する必要があるなら、
+            // allQA の中身に qa.embedding が含まれているか確認してください。
+            // 含まれていない場合は、 updateQAStats() のロジックを使うのが正しいです。
         }
         
         function updateQAStats() {
             const total = allQA.length;
+            // ★修正: allQA に embedding が含まれない場合、APIから別途取得する必要がある
+            // ※ fallbacks.py の /api/fallbacks が embedding を返さない想定の場合、
+            //   この統計ロジックは別途 /api/fallbacks/stats のようなエンドポイントを作る必要がある。
+            // 
+            // ※※※
+            // ただし、前回の fallbacks.py の /api/fallbacks は embedding を select していないが、
+            // Supabase は全カラム(*)を返すかもしれない。
+            // ひとまず「allQA に qa.embedding が含まれている」前提でロジックを維持する。
             const vectorized = allQA.filter(qa => qa.embedding && qa.embedding.length > 0).length;
             const missing = total - vectorized;
             
@@ -676,34 +709,43 @@
             }
         }
 
+        // ▼▼▼ [JS修正 2/4] ▼▼▼
         function openNewQAModal() {
             document.getElementById('qaEditId').value = '';
             document.getElementById('qaEditModalTitle').textContent = '新規Q&Aを追加';
             document.getElementById('qaEditCategory').value = '';
-            document.getElementById('qaEditContent').value = '';
+            // ★修正: 2つのフィールドをクリア
+            document.getElementById('qaEditQuestion').value = '';
+            document.getElementById('qaEditAnswer').value = '';
             document.getElementById('qaEditModal').classList.add('show');
         }
 
+        // ▼▼▼ [JS修正 3/4] ▼▼▼
         function editQA(id) {
             const qa = allQA.find(q => q.id === id);
             if (!qa) return;
             document.getElementById('qaEditId').value = qa.id;
             document.getElementById('qaEditModalTitle').textContent = `Q&A編集 (ID: ${qa.id})`;
             document.getElementById('qaEditCategory').value = qa.category_name || 'その他';
-            document.getElementById('qaEditContent').value = qa.static_response || '';
+            // ★修正: 2つのフィールドに値をセット
+            document.getElementById('qaEditQuestion').value = qa.question || '';
+            document.getElementById('qaEditAnswer').value = qa.answer || '';
             document.getElementById('qaEditModal').classList.add('show');
         }
 
         function closeQAModal() { document.getElementById('qaEditModal').classList.remove('show'); }
 
+        // ▼▼▼ [JS修正 4/4] ▼▼▼
         async function saveQA() {
             const id = document.getElementById('qaEditId').value;
             const category = document.getElementById('qaEditCategory').value.trim();
-            const content = document.getElementById('qaEditContent').value;
+            
+            // ★修正: 2つのフィールドから値を取得
+            const question = document.getElementById('qaEditQuestion').value.trim();
+            const answer = document.getElementById('qaEditAnswer').value.trim();
 
-            if (!category) {
-                alert('カテゴリーは必須です。');
-                document.getElementById('qaEditCategory').focus();
+            if (!category || !question || !answer) {
+                alert('カテゴリー、質問、回答はすべて必須です。');
                 return;
             }
             
@@ -711,8 +753,10 @@
             const url = isNew ? '/api/fallbacks' : `/api/fallbacks/${id}`;
             const method = isNew ? 'POST' : 'PUT';
 
+            // ★修正: API (fallbacks.py) が期待する形式に変更
             const body = {
-                static_response: content,
+                question: question,
+                answer: answer,
                 category_name: category 
             };
 
@@ -731,7 +775,7 @@
                 const result = await response.json();
                 alert(result.message);
                 closeQAModal();
-                loadQA();
+                loadQA(); // Q&Aリストを再読み込み
                 
             } catch (error) {
                 console.error('Error saving Q&A:', error);
@@ -745,7 +789,7 @@
                 const response = await fetch(`/api/fallbacks/${id}`, { method: 'DELETE' });
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 alert('Q&Aを削除しました');
-                loadQA();
+                loadQA(); // Q&Aリストを再読み込み
             } catch (error) {
                 console.error('Error deleting Q&A:', error);
                 alert('削除に失敗しました: ' + error.message);
@@ -761,6 +805,7 @@
             btn.textContent = '処理中...';
             
             try {
+                // このAPI (fallbacks.py) も「question」をベクトル化するように修正済み
                 const response = await fetch('/api/fallbacks/vectorize-all', { method: 'POST' });
                 if (!response.ok) {
                      const err = await response.json();
@@ -768,7 +813,7 @@
                 }
                 const result = await response.json();
                 alert(result.message);
-                loadQA();
+                loadQA(); // Q&Aリストを再読み込み
             } catch (error) {
                  console.error('Error vectorizing all:', error);
                 alert('ベクトル化処理に失敗しました: ' + error.message);

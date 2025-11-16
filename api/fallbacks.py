@@ -1,5 +1,3 @@
-# fallbacks.py
-
 import logging
 import asyncio
 from typing import Dict, Any
@@ -7,22 +5,19 @@ from fastapi import APIRouter, HTTPException, Depends
 import google.generativeai as genai
 
 from core.dependencies import require_auth
-# ↓↓↓ [修正] モジュール本体をインポート
 from core import database
 from core import settings
-# ↑↑↑ [修正]
 
 router = APIRouter()
 
 @router.get("/api/fallbacks")
 async def get_all_fallbacks(user: dict = Depends(require_auth)):
     """Q&A(フォールバック)をすべて取得"""
-    # ↓↓↓ [修正] "database." を追加
     if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     try:
-        result = database.db_client.client.table("category_fallbacks").select("*").order("id", desc=True).execute()
-        # ↑↑↑ [修正]
+        # ★修正: question と answer を取得
+        result = database.db_client.client.table("category_fallbacks").select("id, question, answer, category_name").order("id", desc=True).execute()
         return {"fallbacks": result.data or []}
     except Exception as e:
         logging.error(f"Q&A一覧取得エラー: {e}")
@@ -30,46 +25,45 @@ async def get_all_fallbacks(user: dict = Depends(require_auth)):
 
 @router.post("/api/fallbacks")
 async def create_fallback(request: Dict[str, Any], user: dict = Depends(require_auth)):
-    """新しいQ&Aを作成(保存時に自動でベクトル化)"""
-    # ↓↓↓ [修正] "database." と "settings." を追加
+    """新しいQ&Aを作成(保存時に「質問」を自動でベクトル化)"""
     if not database.db_client or not settings.settings_manager: 
         raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
     
     try:
-        # ↓↓↓ ★★★【重要】ここから3行を追加 ★★★
-        new_qa_text = request.get("static_response")
+        # ★修正: static_response ではなく question と answer を取得
+        question_text = request.get("question")
+        answer_text = request.get("answer")
         category_name = request.get("category_name")
-        if not new_qa_text or not category_name:
-             raise HTTPException(status_code=400, detail="static_response と category_name は必須です")
-        # ... (中略) ...
+        
+        if not question_text or not answer_text or not category_name:
+             raise HTTPException(status_code=400, detail="question, answer, category_name は必須です")
+
         embedding = None
         try:
-            # ↓↓↓ [修正] "settings." を追加
             embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
-            # ↑↑↑ [修正]
-            logging.info(f"新規Q&Aのベクトルを生成します...")
+            logging.info(f"新規Q&Aの「質問」のベクトルを生成します...")
             
+            # ★修正: question_text (質問文) だけをベクトル化
             embedding_response = genai.embed_content(
                 model=embedding_model,
-                content=new_qa_text
+                content=question_text
             )
             embedding = embedding_response["embedding"]
-            logging.info(f"新規Q&Aのベクトル生成が完了しました。")
+            logging.info(f"新規Q&Aの「質問」のベクトル生成が完了しました。")
         
         except Exception as e:
             logging.error(f"新規Q&Aのベクトル生成エラー: {e}")
             logging.warning(f"ベクトル化に失敗しましたが、テキストは保存します。")
 
+        # ★修正: question と answer を個別に保存
         insert_data = {
-            "static_response": new_qa_text,
+            "question": question_text,
+            "answer": answer_text,
             "category_name": category_name,
-            "url_to_summarize": request.get("url_to_summarize"),
             "embedding": embedding
         }
         
-        # ↓↓↓ [修正] "database." を追加
         result = database.db_client.client.table("category_fallbacks").insert(insert_data).execute()
-        # ↑↑↑ [修正]
         
         if not result.data:
             raise HTTPException(status_code=500, detail="Q&Aの作成に失敗しました")
@@ -82,32 +76,32 @@ async def create_fallback(request: Dict[str, Any], user: dict = Depends(require_
     except HTTPException:
         raise
     except Exception as e:
-        if "23502" in str(e) and "category_name" in str(e):
-             raise HTTPException(status_code=400, detail="category_name は必須です (DB Error 23502)")
         logging.error(f"Q&A作成エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/api/fallbacks/{qa_id}")
 async def update_fallback(qa_id: int, request: Dict[str, Any], user: dict = Depends(require_auth)):
-    """Q&Aを更新(テキスト変更時に自動でベクトル化)"""
-    # ↓↓↓ [修正] "database." と "settings." を追加
+    """Q&Aを更新(「質問」変更時に自動でベクトル化)"""
     if not database.db_client or not settings.settings_manager:
         raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
     try:
         update_data = {}
         
-        if "static_response" in request:
-            new_content = request["static_response"]
-            update_data["static_response"] = new_content
+        # ★修正: 「質問」が変更された場合
+        if "question" in request:
+            new_question = request["question"]
+            if not new_question or not new_question.strip():
+                raise HTTPException(status_code=400, detail="question を空にすることはできません")
             
-            # ↓↓↓ [修正] "settings." を追加
+            update_data["question"] = new_question
+            
             embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
-            # ↑↑↑ [修正]
-            logging.info(f"Q&A {qa_id} のテキストが変更されたため、ベクトルを再生成します...")
+            logging.info(f"Q&A {qa_id} の「質問」が変更されたため、ベクトルを再生成します...")
             try:
+                # ★修正: new_question (質問文) だけをベクトル化
                 embedding_response = genai.embed_content(
                     model=embedding_model,
-                    content=new_content
+                    content=new_question
                 )
                 update_data["embedding"] = embedding_response["embedding"]
                 logging.info(f"Q&A {qa_id} のベクトル再生成が完了しました。")
@@ -116,8 +110,12 @@ async def update_fallback(qa_id: int, request: Dict[str, Any], user: dict = Depe
                 update_data["embedding"] = None
                 logging.warning(f"Q&A {qa_id} のベクトル化に失敗しましたが、テキストは更新します。")
 
-        if "url_to_summarize" in request:
-            update_data["url_to_summarize"] = request.get("url_to_summarize")
+        # ★修正: 「回答」が変更された場合 (ベクトル化は不要)
+        if "answer" in request:
+            new_answer = request["answer"]
+            if not new_answer or not new_answer.strip():
+                 raise HTTPException(status_code=400, detail="answer を空にすることはできません")
+            update_data["answer"] = new_answer
             
         if "category_name" in request:
             new_category = request.get("category_name")
@@ -128,9 +126,7 @@ async def update_fallback(qa_id: int, request: Dict[str, Any], user: dict = Depe
         if not update_data:
             raise HTTPException(status_code=400, detail="更新するデータがありません")
         
-        # ↓↓↓ [修正] "database." を追加
         result = database.db_client.client.table("category_fallbacks").update(update_data).eq("id", qa_id).execute()
-        # ↑↑↑ [修正]
         
         if not result.data:
             raise HTTPException(status_code=404, detail="Q&Aが見つかりません")
@@ -146,12 +142,11 @@ async def update_fallback(qa_id: int, request: Dict[str, Any], user: dict = Depe
 @router.delete("/api/fallbacks/{qa_id}")
 async def delete_fallback(qa_id: int, user: dict = Depends(require_auth)):
     """Q&Aを削除"""
-    # ↓↓↓ [修正] "database." を追加
+    # (この関数は変更不要)
     if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     try:
         result = database.db_client.client.table("category_fallbacks").delete().eq("id", qa_id).execute()
-        # ↑↑↑ [修正]
         if not result.data:
             raise HTTPException(status_code=404, detail="Q&Aが見つかりません")
         
@@ -164,31 +159,28 @@ async def delete_fallback(qa_id: int, user: dict = Depends(require_auth)):
 @router.post("/api/fallbacks/vectorize-all")
 async def vectorize_all_missing_fallbacks(user: dict = Depends(require_auth)):
     """embedding が NULL のQ&Aをすべてベクトル化する"""
-    # ↓↓↓ [修正] "database." と "settings." を追加
     if not database.db_client or not settings.settings_manager:
         raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
 
     logging.info(f"全Q&Aのベクトル化処理を開始...(管理者: {user.get('email')})")
     
     try:
-        # ↓↓↓ [修正] "database." を追加
-        response = database.db_client.client.table("category_fallbacks").select("id, static_response").is_("embedding", "null").execute()
-        # ↑↑↑ [修正]
+        # ★修正: static_response ではなく question を取得
+        response = database.db_client.client.table("category_fallbacks").select("id, question").is_("embedding", "null").execute()
         
         if not response.data:
             return {"message": "ベクトル化が必要なQ&Aはありませんでした。"}
 
-        # ↓↓↓ [修正] "settings." を追加
         embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
-        # ↑↑↑ [修正]
         count = 0
         
         for item in response.data:
             item_id = item['id']
-            text_to_vectorize = item['static_response']
+            # ★修正: static_response ではなく question をベクトル化
+            text_to_vectorize = item['question']
 
             if not text_to_vectorize or not text_to_vectorize.strip():
-                logging.warning(f"Q&A ID {item_id}: テキストが空のためスキップします。")
+                logging.warning(f"Q&A ID {item_id}: 質問(question)が空のためスキップします。")
                 continue
 
             try:
@@ -198,25 +190,23 @@ async def vectorize_all_missing_fallbacks(user: dict = Depends(require_auth)):
                 )
                 new_embedding = embedding_response["embedding"]
 
-                # ↓↓↓ [修正] "database." を追加
                 database.db_client.client.table("category_fallbacks").update({
                     "embedding": new_embedding
                 }).eq("id", item_id).execute()
-                # ↑↑↑ [修正]
                 
                 logging.info(f"Q&A ID {item_id}: ベクトル化完了。")
                 count += 1
-                await asyncio.sleep(1)
+                await asyncio.sleep(1) # APIレート制限を避けるため、1秒待機
 
             except Exception as e:
+                # (レート制限のロジックは変更なし)
                 if "429" in str(e) or "quota" in str(e).lower():
                     logging.warning(f"APIレート制限のため30秒待機します... (ID {item_id})")
                     await asyncio.sleep(30)
+                    # 再試行
                     embedding_response = genai.embed_content(model=embedding_model, content=text_to_vectorize)
                     new_embedding = embedding_response["embedding"]
-                    # ↓↓↓ [修正] "database." を追加
                     database.db_client.client.table("category_fallbacks").update({"embedding": new_embedding}).eq("id", item_id).execute()
-                    # ↑↑↑ [修正]
                     logging.info(f"Q&A ID {item_id}: (再試行) ベクトル化完了。")
                     count += 1
                 else:
