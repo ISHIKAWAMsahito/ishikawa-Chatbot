@@ -4,7 +4,7 @@ import re # 正規表現用
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 import google.generativeai as genai
-
+logging.info(f"全Q&Aのベクトル修復処理を開始...")
 from core.dependencies import require_auth
 from core import database
 from core import settings
