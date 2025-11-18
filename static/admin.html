@@ -774,6 +774,10 @@
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 botMessageContent.innerHTML = '';
+
+                // ★修正ポイント1: バッファ変数の初期化
+                let buffer = ''; 
+
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
@@ -790,53 +794,52 @@
                         break;
                     }
                     
-                    const chunk = decoder.decode(value, { stream: true });
-                    const lines = chunk.split('\n');
+                    // ★修正ポイント2: 受信したチャンクをバッファに追加
+                    buffer += decoder.decode(value, { stream: true });
                     
-for (const line of lines) {
+                    // ★修正ポイント3: 改行で分割
+                    const lines = buffer.split('\n');
+                    
+                    // ★修正ポイント4: 配列の最後の要素（途中かけの可能性がある行）をバッファに戻して次回に回す
+                    buffer = lines.pop(); 
+                    
+                    for (const line of lines) {
                         if (line.trim().startsWith('data: ')) {
-                            // data: 以降の文字列を取得し、念のため前後の空白を削除
                             const jsonString = line.substring(6).trim();
 
-                            // jsonString が空でない場合のみ、JSON.parseを実行する
                             if (jsonString) { 
+                                // ★修正ポイント5: try...catch でパースエラーを捕捉してシステム停止を防ぐ
                                 try {
-                                    const data = JSON.parse(jsonString); // <<< 安全にパース
-                                    if (data.feedback_id) { // 修正: log_id -> feedback_id に
-                                        botMessageElement.dataset.feedbackId = data.feedback_id; // 修正: log_id -> feedback_id
+                                    const data = JSON.parse(jsonString);
+                                    
+                                    if (data.feedback_id) {
+                                        botMessageElement.dataset.feedbackId = data.feedback_id; // log_id ではなく feedback_id を使用する場合に対応
+                                        botMessageElement.dataset.logId = data.feedback_id;      // 念のため log_id にもセット
                                     }
+                                    
                                     if (data.content) {
                                         fullResponse += data.content;
 
-                                        // --- [ここから修正] ---
-                                        
-                                        // 1. まず、Markdownのリンク形式 [text](url) を <a> タグに変換する
+                                        // MarkdownリンクをHTMLタグへ変換
                                         let htmlText = fullResponse.replace(
                                             /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
                                             '<a href="$2" target="_blank">$1</a>'
                                         );
 
-                                        // 2. 次に、改行を <br> に変換する
+                                        // 改行を <br> に変換
                                         htmlText = htmlText.replace(/\n/g, '<br>');
                                         
-                                        // 3. HTMLのエスケープ処理 (safeText) を削除し、
-                                        //    生成した htmlText をそのまま innerHTML に設定する
                                         botMessageContent.innerHTML = htmlText;
-                                        
-                                        // --- [ここまで修正] ---
-
                                         chatMessages.scrollTop = chatMessages.scrollHeight;
                                     }
                                 } catch (e) {
-                                    // エラー発生時は、どの文字列が原因だったかもログに出力するとデバッグしやすい
                                     console.error("Error parsing stream data:", e, "Raw data:", jsonString);
                                 }
                             }
-                            // else: jsonStringが空（例: "data: \n"）の場合は、何もせずスキップする
                         }
                     }
-                    } // while(true) ループを閉じる
-            } catch (error) { // fetchのtryブロックを閉じる
+                } 
+            } catch (error) {
                 console.error('メッセージ送信エラー:', error);
                 botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
             }
