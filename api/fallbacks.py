@@ -4,7 +4,6 @@ import re # 正規表現用
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 import google.generativeai as genai
-logging.info(f"全Q&Aのベクトル修復処理を開始...")
 from core.dependencies import require_auth
 from core import database
 from core import settings
@@ -129,7 +128,7 @@ async def vectorize_all_missing_fallbacks(user: dict = Depends(require_auth)):
     if not database.db_client or not settings.settings_manager:
         raise HTTPException(503, "DB not initialized")
 
-    logging.info(f"全Q&Aのベクトル修復処理を開始...")
+    logging.info(f"【バージョン確認: V999】全Q&Aのベクトル修復処理を開始...")
     
     try:
         # 全データを取得
