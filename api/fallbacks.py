@@ -3,13 +3,14 @@ import asyncio
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 import google.generativeai as genai
-
+from core.config import GEMINI_API_KEY
 from core.dependencies import require_auth
 from core import database
 from core import settings
 
 router = APIRouter()
-
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 @router.get("/api/fallbacks")
 async def get_all_fallbacks(user: dict = Depends(require_auth)):
     """Q&A(フォールバック)をすべて取得"""
