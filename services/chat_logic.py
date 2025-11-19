@@ -261,14 +261,14 @@ async def _run_stage2_fallback(
         if not query_embedding:
             raise ValueError("Q&A検索のためのクエリベクトルがありません。")
 
-        # ▼▼▼ [修正] 候補を5件取得する ▼▼▼
+        # 候補を5件取得する
         fallback_results = core_database.db_client.search_fallback_qa(
             embedding=query_embedding,
             match_count=5
         )
 
         if fallback_results:
-            # ▼▼▼ [修正] Geminiでリランクを行い、ベストな1件を選ぶ ▼▼▼
+            # Geminiでリランクを行い、ベストな1件を選ぶ
             reranked_results = await rerank_documents_with_gemini(
                 query=user_input,
                 documents=fallback_results,
@@ -279,7 +279,7 @@ async def _run_stage2_fallback(
             best_match = reranked_results[0] if reranked_results else fallback_results[0]
             
             best_sim = best_match.get('similarity', 0)
-            # ★重要: 数値比較のためにデフォルト値を 'N/A' ではなく None にします
+            # 数値比較のためにデフォルト値を None に
             rerank_score = best_match.get('rerank_score') 
             best_content_preview = best_match.get('content', 'N/A')[:100].replace('\n', ' ') + "..."
 
@@ -287,20 +287,20 @@ async def _run_stage2_fallback(
             logging.info(f"--- Stage 2 検索結果 (Top 1 after Rerank) ---")
             logging.info(f"  [Sim: {best_sim:.4f}] [Score: {rerank_score}] Content: '{best_content_preview}'")
 
-            # ★★★ 判定ロジックの修正 (AIのスコアを絶対優先にする) ★★★
+            # ★★★ 判定ロジック (AIのスコア優先) ★★★
             is_accepted = False
 
             if rerank_score is not None:
-                # リランクスコアがある場合: 10点満点中 3点未満なら即却下 (Simが高くても無視)
+                # リランクスコアがある場合: 3点未満なら即却下
                 if rerank_score >= 3:
                     is_accepted = True
                     logging.info(f"  -> [使用] リランクスコア {rerank_score} (>=3) なので採用します。")
                 else:
                     is_accepted = False
-                    logging.info(f"  -> [不使用] リランクスコア {rerank_score} が低いため却下します。(Sim: {best_sim:.4f} は無視)")
+                    logging.info(f"  -> [不使用] リランクスコア {rerank_score} が低いため却下します。")
             
             else:
-                # リランク失敗などでスコアがない場合: 従来の類似度判定
+                # リランク失敗時: 従来の類似度判定
                 if best_sim >= FALLBACK_SIMILARITY_THRESHOLD:
                     is_accepted = True
                     logging.info(f"  -> [使用] (リランクなし) 類似度 {best_sim:.4f} が閾値を超えたため採用します。")
@@ -325,6 +325,9 @@ async def _run_stage2_fallback(
     except Exception as e_fallback:
         logging.error(f"Stage 2 (Q&A検索) でエラーが発生: {e_fallback}", exc_info=True)
         fallback_response = "申し訳ありません。現在、関連情報の検索中にエラーが発生しました。時間をおいて再度お試しください。"
+
+    # ▼▼▼ これが消えていました！ ▼▼▼
+    full_response = format_urls_as_links(fallback_response)
     
     # 履歴に追加
     history_manager.add_to_history(session_id, "user", user_input)
