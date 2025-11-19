@@ -1,3 +1,4 @@
+from difflib import SequenceMatcher 
 import logging
 import uuid
 import json
@@ -13,7 +14,6 @@ from google.generativeai.types import (
     HarmCategory, 
     HarmBlockThreshold
 )
-
 # -----------------------------------------------
 # 外部モジュール・設定のインポート
 # -----------------------------------------------
@@ -23,6 +23,38 @@ from models.schemas import ChatQuery
 from services.utils import format_urls_as_links
 
 # -----------------------------------------------
+#  MMR風フィルタリング関数 (メインロジックの外に定義)
+# -----------------------------------------------
+def filter_results_by_diversity(results: List[Dict[str, Any]], threshold: float = 0.6) -> List[Dict[str, Any]]:
+    """
+    【MMR風フィルタ】
+    内容が酷似しているドキュメントを間引き、情報のバリエーションを確保する。
+    """
+    unique_results = []
+    
+    for doc in results:
+        content = doc.get('content', '')
+        is_duplicate = False
+        
+        # すでに選ばれたリスト(unique_results)の中身と比較
+        for selected_doc in unique_results:
+            selected_content = selected_doc.get('content', '')
+            
+            # 文章の類似度を計算 (0.0〜1.0)
+            similarity = SequenceMatcher(None, content, selected_content).ratio()
+            
+            # 閾値を超えたら重複とみなす
+            if similarity > threshold:
+                is_duplicate = True
+                break 
+        
+        # 重複じゃなければ採用リストに入れる
+        if not is_duplicate:
+            unique_results.append(doc)
+            
+    return unique_results
+
+# -----------------------------------------------
 # アプリケーション設定値
 # -----------------------------------------------
 # RAG (Stage 1) の類似度閾値
@@ -30,7 +62,7 @@ STRICT_THRESHOLD = 0.85
 RELATED_THRESHOLD = 0.80
 
 # フォールバック (Stage 2) の類似度閾値
-FALLBACK_SIMILARITY_THRESHOLD = 0.95
+FALLBACK_SIMILARITY_THRESHOLD = 0.90
 
 # RAGコンテキストの最大文字数 (トークン制限超過を避けるための簡易的な制限)
 MAX_CONTEXT_CHAR_LENGTH = 15000
@@ -205,9 +237,7 @@ async def _run_stage2_fallback(
 # -----------------------------------------------
 # メインのチャットロジック
 # -----------------------------------------------
-# -----------------------------------------------
-# メインのチャットロジック
-# -----------------------------------------------
+
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     """
     RAG + Q&Aフォールバック対応のチャット処理 (ストリーミング)
@@ -226,6 +256,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             logging.error("DBクライアントまたはAPIキーが設定されていません。")
             yield f"data: {json.dumps({'content': 'システムが利用できません。管理者にお問い合わせください。'})}\n\n"
             return
+            
 
         # 3. ベクトル検索 (Stage 1: ドキュメント検索)
         search_results: List[Dict[str, Any]] = []
@@ -241,11 +272,18 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
             # 3b. ベクトルDB検索
             if core_database.db_client:
-                search_results = core_database.db_client.search_documents_by_vector(
+                # ★ポイント: 多様性を出すために、まずは倍の量を取得する
+                raw_search_results = core_database.db_client.search_documents_by_vector(
                     collection_name=chat_req.collection,
                     embedding=query_embedding,
-                    match_count=chat_req.top_k
+                    match_count=chat_req.top_k * 2  
                 )
+                
+                # ★ここでMMR風フィルタを通す
+                search_results = filter_results_by_diversity(raw_search_results, threshold=0.6)
+                
+                # 最終的に必要な数(top_k)に絞る
+                search_results = search_results[:chat_req.top_k]
             
             # 3c. ログ出力 (フィルタリング前)
             if search_results:
