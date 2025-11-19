@@ -6,47 +6,36 @@
     <title>AI chatbot system</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-<script type="module"> // type="module" を推奨
-    // Supabaseライブラリをインポート
+<script type="module">
     import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
-    let supabaseClient;
+    // windowオブジェクトに紐付けることで、他のスクリプトからアクセス可能にする
+    window.supabaseClient = null;
 
-    // 非同期関数を定義して、APIから設定を読み込む
     async function initializeSupabase() {
         try {
-            // 1. サーバーに設定情報を問い合わせる
             const response = await fetch('/config');
-            if (!response.ok) {
-                throw new Error('設定の読み込みに失敗しました。');
-            }
+            if (!response.ok) throw new Error('設定の読み込みに失敗しました。');
+            
             const config = await response.json();
-
-            // 2. 受け取ったキーでSupabaseクライアントを作成
             const SUPABASE_URL = config.supabase_url;
             const SUPABASE_ANON_KEY = config.supabase_anon_key;
 
             if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-                console.error("SupabaseのURLまたはキーが取得できませんでした。");
+                console.error("Supabase設定エラー");
                 return;
             }
 
-            supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            
-            console.log('Supabaseクライアントの初期化が完了しました。');
-            
-            // --- ここから下に、Supabaseを使った他の処理を記述していく ---
-            // 例: await fetchSomeData();
+            // グローバル変数に代入
+            window.supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            console.log('Supabase初期化完了');
 
         } catch (error) {
-            console.error(error);
-            // エラー時の処理をここに書く
+            console.error("Supabase初期化失敗:", error);
         }
     }
 
-    // 関数を実行して初期化を開始
     initializeSupabase();
-
 </script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -289,22 +278,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const successMessage = document.getElementById('successMessage');
     const errorMessage = document.getElementById('errorMessage');
     
-    // ▼▼▼ ここから追加 ▼▼▼
-    // 評価ボタンの要素を取得
-
-
-    // コメントモーダルを開くときの処理を修正
+    // コメントモーダルを開くときの処理
     openCommentModalBtn.onclick = () => { 
         commentModal.style.display = 'block';
-        
-        // 以前の入力内容をすべてリセット
         commentTextarea.value = '';
-       
-        
         successMessage.style.display = 'none';
         errorMessage.style.display = 'none';
     }
-    // ▲▲▲ ここまで修正 ▲▲▲
 
     closeBtn.onclick = () => { commentModal.style.display = 'none'; }
     window.onclick = (event) => {
@@ -313,52 +293,52 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // ▼▼▼ ここから修正 ▼▼▼
-    // コメント送信ボタンのイベントを修正
-  sendCommentBtn.onclick = async () => {
-    const comment = commentTextarea.value.trim();
-    
-    // コメントが空の場合はアラート
-    if (comment === '') {
-        alert('コメントを入力してください。');
-        return;
-    }
+    // コメント送信ボタンのイベント
+    sendCommentBtn.onclick = async () => {
+        const comment = commentTextarea.value.trim();
+        
+        if (comment === '') {
+            alert('コメントを入力してください。');
+            return;
+        }
 
-    // ボタンを無効化
-    sendCommentBtn.disabled = true;
-    successMessage.style.display = 'none';
-    errorMessage.style.display = 'none';
+        sendCommentBtn.disabled = true;
+        successMessage.style.display = 'none';
+        errorMessage.style.display = 'none';
 
-    try {
-        // Supabaseにコメントのみを保存
-        const { data, error } = await supabaseClient
-            .from('anonymous_comments')
-            .insert([
-                {
-                    comment: comment, // コメントテキスト
-                    created_at: new Date().toISOString()
-                }
-            ]);
+        try {
+            // ★修正: window.supabaseClient を使う
+            if (!window.supabaseClient) {
+                alert("システム接続エラー: コメント機能は現在利用できません。");
+                return;
+            }
 
-        if (error) throw error;
+            const { data, error } = await window.supabaseClient
+                .from('anonymous_comments')
+                .insert([
+                    {
+                        comment: comment,
+                        created_at: new Date().toISOString()
+                    }
+                ]);
 
-        // 成功メッセージを表示
-        successMessage.style.display = 'block';
-        commentTextarea.value = ''; // テキストエリアをクリア
+            if (error) throw error;
 
-        // 2秒後にモーダルを閉じる
-        setTimeout(() => {
-            commentModal.style.display = 'none';
-            successMessage.style.display = 'none';
-        }, 2000);
+            successMessage.style.display = 'block';
+            commentTextarea.value = '';
 
-    } catch (error) {
-        console.error('コメント送信エラー:', error);
-        errorMessage.style.display = 'block';
-    } finally {
-        sendCommentBtn.disabled = false;
-    }
-};
+            setTimeout(() => {
+                commentModal.style.display = 'none';
+                successMessage.style.display = 'none';
+            }, 2000);
+
+        } catch (error) {
+            console.error('コメント送信エラー:', error);
+            errorMessage.style.display = 'block';
+        } finally {
+            sendCommentBtn.disabled = false;
+        }
+    };
 
         function connectSettingsWebSocket() {
             try {
@@ -497,7 +477,12 @@ async function sendAiResponseFeedbackToSupabase(element, rating) {
             chatInput.value = '';
             chatInput.style.height = 'auto';
             sendBtn.disabled = true;
+            
             const botMessageElement = addMessage('<div class="loading-indicator"></div>思考中...', 'bot');
+            
+            // ★追加: フィードバック用にユーザーの質問を保存しておく
+            botMessageElement.dataset.userQuestion = userInput; 
+
             const botMessageContent = botMessageElement.querySelector('.message-content');
             let fullResponse = '';
 
@@ -538,7 +523,6 @@ async function sendAiResponseFeedbackToSupabase(element, rating) {
                             try {
                                 const data = JSON.parse(line.substring(6));
 
-                                // ▼▼▼ [ここが修正箇所です] ▼▼▼
                                 if (data.content) {
                                     fullResponse += data.content;
 
@@ -559,11 +543,9 @@ async function sendAiResponseFeedbackToSupabase(element, rating) {
                                     // 4. innerHTML に設定する
                                     botMessageContent.innerHTML = htmlText;
                                 }
-                                // ▲▲▲ [修正完了] ▲▲▲
                                 
-                                // ここを修正！
                                 if (data.log_id) botMessageElement.dataset.logId = data.log_id;
-                                if (data.feedback_id) botMessageElement.dataset.logId = data.feedback_id; // ←追加
+                                if (data.feedback_id) botMessageElement.dataset.logId = data.feedback_id; 
                             } catch (e) {}
                         }
                     }

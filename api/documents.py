@@ -8,25 +8,19 @@ import httpx  # Webアクセス用
 from bs4 import BeautifulSoup # HTML解析用
 from pydantic import BaseModel # リクエストの型定義用
 
-# [documents.py の import 文のすぐ下あたり]
+# リクエストボディのモデル定義
 class ScrapeRequest(BaseModel):
     url: str
     collection_name: str
     embedding_model: str
 
 from core.dependencies import require_auth
-# ↓↓↓ [修正] モジュール本体をインポート
 from core import database
 from core import settings
-# ↑↑↑ [修正]
 from core.config import ACTIVE_COLLECTION_NAME
-# ↓↓↓ [修正] モジュール本体をインポート
 from services import document_processor
-# ↑↑↑ [修正]
 
 router = APIRouter()
-
-# [documents.py]
 
 @router.get("/api/documents/all")
 async def get_all_documents(
@@ -40,33 +34,27 @@ async def get_all_documents(
     if not database.db_client:
         raise HTTPException(503, "DB not initialized")
     try:
-        # 1. [修正] ベースクエリは .select() から開始する
+        # ベースクエリ
         query = database.db_client.client.table("documents").select("*")
-        
-        # 2. [修正] カウント用クエリも .select() から開始する
-        #    (count='exact' は select メソッド内で指定)
         count_query = database.db_client.client.table("documents").select("id", count='exact')
         
-        # 3. [順序変更] .select() の *後* で .eq() を適用
+        # フィルタ適用
         if category:
             query = query.eq("metadata->>category", category)
             count_query = count_query.eq("metadata->>category", category)
 
-        # 4. [順序変更 & 修正] .select() の *後* で .ilike() を適用
         if search:
             safe_search = search.replace('"', '""')
-            # [修正] SQLのワイルドカードは * ではなく %
             search_term = f"%{safe_search}%"
             
-            # [これが正しい .ilike() の使い方]
             query = query.ilike("content", search_term)
             count_query = count_query.ilike("content", search_term)
 
-        # 5. [修正] 既に .select() 済みなので、ここでは .execute() のみ
+        # カウント実行
         count_response = count_query.execute()
         total_records = count_response.count or 0
 
-        # 6. [修正] 既に .select() 済みなので、ここではチェーンを続ける
+        # データ取得実行
         offset = (page - 1) * limit
         data_response = query.order("id", desc=True).range(offset, offset + limit - 1).execute()
 
@@ -79,7 +67,6 @@ async def get_all_documents(
 
     except Exception as e:
         logging.error(f"ドキュメント一覧取得エラー: {e}")
-        # エラーの詳細をログに出力
         logging.error(traceback.format_exc()) 
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -111,6 +98,7 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
             new_content = request["content"]
             update_data["content"] = new_content
             
+            # ★注意: ここもモデル不一致の原因になり得るので、必要なら固定モデルに変更してください
             embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
             
             logging.info(f"ドキュメント {doc_id} のコンテンツが変更されたため、ベクトルを再生成します...")
@@ -172,9 +160,6 @@ async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
         logging.error(f"ドキュメント削除エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-#
-# --- ★★★ /upload 関数 (これが欠落していました) ★★★ ---
-#
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...), 
@@ -209,6 +194,7 @@ async def upload_document(
         if not docs_to_embed:
             raise HTTPException(status_code=400, detail="ファイルからテキストを抽出できませんでした。")
 
+        # ★注意: ここもモデル不一致の原因になり得ます
         embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
         
         total_chunks = len(docs_to_embed)
@@ -261,9 +247,9 @@ async def get_documents(collection_name: str):
         "count": database.db_client.count_chunks_in_collection(collection_name)
     }
 
-#
-# --- ★★★ /scrape 関数 (これが重複していました) ★★★ ---
-#
+# ---------------------------------------------------------
+#  ▼▼▼ 修正箇所: scrape_website ▼▼▼
+# ---------------------------------------------------------
 @router.post("/scrape")
 async def scrape_website(
     request: ScrapeRequest, 
@@ -276,13 +262,10 @@ async def scrape_website(
     logging.info(f"Scrapeリクエスト受信: {request.url} (Collection: {request.collection_name})")
 
     try:
-        # 1. Webサイトからコンテンツを取得
-        # ▼▼▼ [修正] verify=False を ( ) の中（コンストラクタ）に移動 ▼▼▼
+        # 1. Webサイトからコンテンツを取得 (SSLエラー対策済み)
         async with httpx.AsyncClient(verify=False) as client:
-        # ▲▲▲ [修正] ▲▲▲
             try:
-                # タイムアウトとリダイレクトを許可
-                response = await client.get(request.url, follow_redirects=True, timeout=10.0) # <--- ★ここから verify=False を削除
+                response = await client.get(request.url, follow_redirects=True, timeout=10.0)
                 response.raise_for_status() # 200 OK以外はエラー
             except httpx.RequestError as e:
                 logging.error(f"URL取得エラー: {e}")
@@ -331,6 +314,7 @@ async def scrape_website(
             raise HTTPException(status_code=400, detail="テキストのチャンキングに失敗しました。")
 
         # 4. ベクトル化 & DB挿入
+        # ★注意: request.embedding_model が検索側と一致しているか要確認
         embedding_model = request.embedding_model
         total_chunks = len(docs_to_embed)
         logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します...")

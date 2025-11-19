@@ -10,13 +10,13 @@ from langchain_core.documents import Document as LangChainDocument
 class SimpleDocumentProcessor:
     """
     メモリを消費しない、単純なテキスト抽出とチャンキングを行うクラス。
-    unstructured や 親子チャンキング は使用しない。
     """
     def __init__(self, chunk_size=1000, chunk_overlap=200):
+        # 改行で優先的に切る設定を生かすため、前処理で改行を消さないように注意する
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
-            separators=["\n\n", "\n", "。", "、", " "]
+            separators=["\n\n", "\n", "。", "、", " ", ""]
         )
         logging.info(f"SimpleDocumentProcessor (Chunk: {chunk_size}/{chunk_overlap}) が初期化されました。")
 
@@ -27,12 +27,16 @@ class SimpleDocumentProcessor:
             if filename.endswith(".pdf"):
                 pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
                 for page in pdf_reader.pages:
-                    text += page.extract_text()
+                    page_text = page.extract_text()
+                    if page_text:
+                        # ★修正: ページごとの結合部分に改行を入れる
+                        text += page_text + "\n\n"
                 logging.info(f".pdf から {len(text)} 文字を抽出 (PyPDF2)")
             
             elif filename.endswith(".docx"):
                 doc = DocxDocument(io.BytesIO(content))
                 for para in doc.paragraphs:
+                    # docxはパラグラフごとに改行が入るのでそのままでOK
                     text += para.text + "\n"
                 logging.info(f".docx から {len(text)} 文字を抽出 (python-docx)")
             
@@ -43,16 +47,30 @@ class SimpleDocumentProcessor:
             else:
                 logging.warning(f"未対応のファイル形式: {filename}")
                 
-            return re.sub(r'\s+', ' ', text).strip()
+            return self._clean_text(text)
         
         except Exception as e:
             logging.error(f"テキスト抽出エラー ({filename}): {e}")
             return ""
 
+    def _clean_text(self, text: str) -> str:
+        """
+        ★修正: 改行を完全に消さず、整形する
+        """
+        # 1. 連続する「空白・タブ」を1つのスペースに (改行は含めない)
+        text = re.sub(r'[ \t\u3000]+', ' ', text)
+        
+        # 2. 連続する改行を最大2つまでにする（3つ以上あれば2つに縮める）
+        #    これにより「段落」の意味を残せる
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        # 3. 前後の空白削除
+        return text.strip()
+
     def process_and_chunk(self, filename: str, content: bytes, category: str, collection_name: str) -> List[LangChainDocument]:
         """
         1. テキストを抽出
-        2. 1000/200 でチャンキング
+        2. チャンキング
         3. メタデータを付与
         """
         # 1. テキスト抽出
@@ -61,6 +79,7 @@ class SimpleDocumentProcessor:
             return []
 
         # 2. チャンキング
+        # 改行が残っているので、セパレーターが正しく機能する
         chunks = self.splitter.split_text(full_text)
         
         # 3. メタデータ付与

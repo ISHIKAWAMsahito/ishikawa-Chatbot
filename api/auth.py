@@ -37,8 +37,7 @@ async def auth(request: Request):
         if user_email in super_admin_emails_lower:
             return RedirectResponse(url='/admin')
         # クライアントは / にリダイレクト
-        # 修正後：リスト内のいずれかの文字列（ドメインなど）で終わっていれば許可
-        elif any(user_email.endswith(allowed) for allowed in allowed_emails_lower):
+        elif user_email in allowed_emails_lower:
             return RedirectResponse(url='/')
         # 許可されていないユーザーはログアウト
         else:
