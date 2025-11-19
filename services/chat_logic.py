@@ -279,26 +279,45 @@ async def _run_stage2_fallback(
             best_match = reranked_results[0] if reranked_results else fallback_results[0]
             
             best_sim = best_match.get('similarity', 0)
-            rerank_score = best_match.get('rerank_score', 'N/A')
+            # ★重要: 数値比較のためにデフォルト値を 'N/A' ではなく None にします
+            rerank_score = best_match.get('rerank_score') 
             best_content_preview = best_match.get('content', 'N/A')[:100].replace('\n', ' ') + "..."
 
             # ログ出力
             logging.info(f"--- Stage 2 検索結果 (Top 1 after Rerank) ---")
             logging.info(f"  [Sim: {best_sim:.4f}] [Score: {rerank_score}] Content: '{best_content_preview}'")
 
-            # 判定ロジック:
-            # リランクを経てもなお、類似度(Sim)が低すぎる場合は採用しない安全策を残す
-            if best_sim >= FALLBACK_SIMILARITY_THRESHOLD:
-                logging.info(f"  -> [使用] 閾値 {FALLBACK_SIMILARITY_THRESHOLD} を超えたため、この回答を使用します。")
-                
+            # ★★★ 判定ロジックの修正 (AIのスコアを絶対優先にする) ★★★
+            is_accepted = False
+
+            if rerank_score is not None:
+                # リランクスコアがある場合: 10点満点中 3点未満なら即却下 (Simが高くても無視)
+                if rerank_score >= 3:
+                    is_accepted = True
+                    logging.info(f"  -> [使用] リランクスコア {rerank_score} (>=3) なので採用します。")
+                else:
+                    is_accepted = False
+                    logging.info(f"  -> [不使用] リランクスコア {rerank_score} が低いため却下します。(Sim: {best_sim:.4f} は無視)")
+            
+            else:
+                # リランク失敗などでスコアがない場合: 従来の類似度判定
+                if best_sim >= FALLBACK_SIMILARITY_THRESHOLD:
+                    is_accepted = True
+                    logging.info(f"  -> [使用] (リランクなし) 類似度 {best_sim:.4f} が閾値を超えたため採用します。")
+                else:
+                    is_accepted = False
+                    logging.info(f"  -> [不使用] (リランクなし) 類似度 {best_sim:.4f} が足りないため却下します。")
+
+            # 採用/不採用に応じたレスポンス設定
+            if is_accepted:
                 fallback_response = f"""データベースに直接の情報は見つかりませんでしたが、関連する「よくあるご質問」がありましたのでご案内します。
 
 ---
 {best_match['content']}
 """
             else:
-                logging.info(f"  -> [不使用] 閾値 {FALLBACK_SIMILARITY_THRESHOLD} 未満のため、この回答は使用しません。")
                 fallback_response = "申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。"
+        
         else:
             logging.info("Stage 2 RAG 失敗。Q&Aデータベースが空か、検索エラーです。")
             fallback_response = "申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。"
@@ -306,8 +325,6 @@ async def _run_stage2_fallback(
     except Exception as e_fallback:
         logging.error(f"Stage 2 (Q&A検索) でエラーが発生: {e_fallback}", exc_info=True)
         fallback_response = "申し訳ありません。現在、関連情報の検索中にエラーが発生しました。時間をおいて再度お試しください。"
-
-    full_response = format_urls_as_links(fallback_response)
     
     # 履歴に追加
     history_manager.add_to_history(session_id, "user", user_input)
