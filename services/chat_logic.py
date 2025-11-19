@@ -55,6 +55,82 @@ def filter_results_by_diversity(results: List[Dict[str, Any]], threshold: float 
     return unique_results
 
 # -----------------------------------------------
+#  Geminiを使ったリランク関数 (追加)
+# -----------------------------------------------
+async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any]], top_k: int = 3) -> List[Dict[str, Any]]:
+    """
+    検索されたドキュメントを、Geminiを使って「質問との関連度」で採点し、並べ替える。
+    """
+    if not documents:
+        return []
+
+    # 候補が少なければそのまま返す（並べ替える意味がないため）
+    if len(documents) <= top_k:
+        return documents
+
+    logging.info(f"--- リランク開始: {len(documents)}件の候補をGeminiで精査します ---")
+
+    # 1. AIに渡すためのリストテキストを作成
+    candidates_text = ""
+    for i, doc in enumerate(documents):
+        # コンテンツを少し短くしてトークン節約（先頭300文字程度で判断させる）
+        content_snippet = doc.get('content', '')[:300].replace('\n', ' ')
+        source = doc.get('metadata', {}).get('source', 'unknown')
+        candidates_text += f"ID:{i} Source:{source} Content:{content_snippet}\n\n"
+
+    # 2. リランク用のプロンプト（採点係）
+    prompt = f"""
+あなたは検索システムの「再採点担当者（Re-ranker）」です。
+以下のユーザーの質問に対して、提示されたドキュメント候補がどれくらい適切か評価してください。
+
+# ユーザーの質問
+{query}
+
+# ドキュメント候補
+{candidates_text}
+
+# 指示
+1. 各ドキュメントが質問の意図（特に学部名、単語、文脈）に合致しているか分析してください。
+2. **質問と異なる学部や条件のドキュメントは、内容が似ていても「0点」にしてください。**
+3. JSON形式で、最も関連性が高い順に並べ替えたIDリストを出力してください。
+
+# 出力フォーマット (JSONのみ)
+[
+  {{"id": ドキュメントID(数字), "score": 関連度(0-10)}},
+  ...
+]
+"""
+
+    # 3. Geminiに問い合わせ
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash") # 高速なモデル推奨
+        response = await model.generate_content_async(
+            prompt, 
+            generation_config={"response_mime_type": "application/json"}
+        )
+        
+        # JSONをパース
+        ranked_results = json.loads(response.text)
+        
+        # 4. 結果に基づいてドキュメントを並べ替え
+        reranked_docs = []
+        for result in ranked_results:
+            original_index = int(result.get("id"))
+            if 0 <= original_index < len(documents):
+                doc = documents[original_index]
+                # スコアをログに出して確認できるようにする
+                doc['rerank_score'] = result.get("score")
+                reranked_docs.append(doc)
+        
+        # 指定数だけ返す
+        return reranked_docs[:top_k]
+
+    except Exception as e:
+        logging.error(f"リランク処理でエラーが発生しました: {e}")
+        # エラー時は元の順序のまま上位を返す（フェイルセーフ）
+        return documents[:top_k]
+
+# -----------------------------------------------
 # アプリケーション設定値
 # -----------------------------------------------
 # RAG (Stage 1) の類似度閾値
@@ -175,9 +251,9 @@ async def _run_stage2_fallback(
     feedback_id: str
 ) -> AsyncGenerator[str, None]:
     """
-    Stage 2 (Q&Aベクトル検索) を実行し、結果をストリーミングする
+    Stage 2 (Q&Aベクトル検索) を実行し、リランクを経て結果をストリーミングする
     """
-    logging.info(f"Stage 2 (Q&Aベクトル検索) を実行します。") # INFOのまま (Stage 2のログは通常不要なため)
+    logging.info(f"Stage 2 (Q&Aベクトル検索) を実行します。")
     fallback_response = ""
 
     try:
@@ -185,33 +261,43 @@ async def _run_stage2_fallback(
         if not query_embedding:
             raise ValueError("Q&A検索のためのクエリベクトルがありません。")
 
+        # ▼▼▼ [修正] 候補を5件取得する ▼▼▼
         fallback_results = core_database.db_client.search_fallback_qa(
             embedding=query_embedding,
-            match_count=1
+            match_count=5
         )
 
         if fallback_results:
-            best_match = fallback_results[0]
+            # ▼▼▼ [修正] Geminiでリランクを行い、ベストな1件を選ぶ ▼▼▼
+            reranked_results = await rerank_documents_with_gemini(
+                query=user_input,
+                documents=fallback_results,
+                top_k=1
+            )
+            
+            # リランク結果があればそれを、なければ元のトップを使用
+            best_match = reranked_results[0] if reranked_results else fallback_results[0]
+            
             best_sim = best_match.get('similarity', 0)
-            # ▼▼▼ [ここから修正] ▼▼▼
+            rerank_score = best_match.get('rerank_score', 'N/A')
             best_content_preview = best_match.get('content', 'N/A')[:100].replace('\n', ' ') + "..."
 
-            # ログに「何を」マッチしたか出力する
-            logging.info(f"--- Stage 2 検索結果 (Top 1) ---")
-            logging.info(f"  [Sim: {best_sim:.4f}] Content: '{best_content_preview}'")
+            # ログ出力
+            logging.info(f"--- Stage 2 検索結果 (Top 1 after Rerank) ---")
+            logging.info(f"  [Sim: {best_sim:.4f}] [Score: {rerank_score}] Content: '{best_content_preview}'")
 
+            # 判定ロジック:
+            # リランクを経てもなお、類似度(Sim)が低すぎる場合は採用しない安全策を残す
             if best_sim >= FALLBACK_SIMILARITY_THRESHOLD:
                 logging.info(f"  -> [使用] 閾値 {FALLBACK_SIMILARITY_THRESHOLD} を超えたため、この回答を使用します。")
-            # ▲▲▲ [ここまで修正] ▲▲▲
+                
                 fallback_response = f"""データベースに直接の情報は見つかりませんでしたが、関連する「よくあるご質問」がありましたのでご案内します。
 
 ---
 {best_match['content']}
 """
             else:
-                # ▼▼▼ [ここから修正] ▼▼▼
                 logging.info(f"  -> [不使用] 閾値 {FALLBACK_SIMILARITY_THRESHOLD} 未満のため、この回答は使用しません。")
-                # ▲▲▲ [ここまで修正] ▲▲▲
                 fallback_response = "申し訳ありませんが、ご質問に関連する情報が見つかりませんでした。大学公式サイトをご確認いただくか、大学の窓口までお問い合わせください。"
         else:
             logging.info("Stage 2 RAG 失敗。Q&Aデータベースが空か、検索エラーです。")
@@ -272,11 +358,24 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
             # 3b. ベクトルDB検索
             if core_database.db_client:
-                # ★ポイント: 多様性を出すために、まずは倍の量を取得する
+                # 【変更】リランク用に、最初はかなり多め(Top_k * 3 〜 4)に取得する
+                initial_fetch_count = chat_req.top_k * 4 
+                
                 raw_search_results = core_database.db_client.search_documents_by_vector(
                     collection_name=chat_req.collection,
                     embedding=query_embedding,
-                    match_count=chat_req.top_k * 2  
+                    match_count=initial_fetch_count
+                )
+                
+                # 1. まず重複排除 (MMR風フィルタ)
+                unique_results = filter_results_by_diversity(raw_search_results, threshold=0.7)
+                
+                # 2. ★ここに追加: Geminiによるリランク (Re-ranking)
+                # 上位10件くらいをAIに読ませて、ベストな top_k (例:3〜5件) を選ばせる
+                search_results = await rerank_documents_with_gemini(
+                    query=user_input,
+                    documents=unique_results[:5], # AIに読ませるのは上位10件程度に制限(速度対策)
+                    top_k=chat_req.top_k
                 )
                 
                 # ★ここでMMR風フィルタを通す
