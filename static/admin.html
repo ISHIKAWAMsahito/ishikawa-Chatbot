@@ -6,6 +6,7 @@
     <title>AI chatbot system【管理者画面】</title>
     
 <style>
+    /* ... (CSSスタイルは変更なしのため省略。元のCSSをそのまま使用してください) ... */
     /* --- 基本設定 --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -527,17 +528,13 @@
         let backendConnected = false;
         let settingsSocket = null;
 
-        // openDocumentManager を定義（実行ホストに応じて動的に DB.html を開く）
+        // openDocumentManager を定義
         function openDocumentManager() {
-            // 実行中のオリジン（プロトコル+ホスト+ポート）を使う方法
             const url = `${window.location.origin}/DB.html`;
-            // あるいは、ルートからの絶対パスで良ければ: const url = '/DB.html';
             window.open(url, '_blank');
         }
-        // onclick 属性から確実に参照できるようグローバルに割り当て
         window.openDocumentManager = openDocumentManager;
 
-        /* 以下既存の WebSocket 等の処理は変更無し */
         function connectSettingsWebSocket() {
             try {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -696,7 +693,8 @@
                 return;
             }
             try {
-                const res = await fetch(`/feedback`, {
+                // 修正: /api/client/feedback
+                const res = await fetch(`/api/client/feedback`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ log_id: logId, rating: rating })
@@ -706,7 +704,6 @@
                     throw new Error(errorData.detail || "Failed to send feedback.");
                 }
                 const feedbackContainer = element.parentElement;
-                // ★修正点4: style属性を使わず、class属性を使用するように変更
                 feedbackContainer.innerHTML = '<span class="feedback-thanks">フィードバックありがとうございます！</span>';
             } catch(error) {
                 console.error("Error sending feedback:", error);
@@ -715,16 +712,26 @@
         }
 
         async function initializeSystem() {
-            document.getElementById('backendUrl').textContent = window.location.origin;
+            // バックエンドURLの表示更新
+            const backendUrlEl = document.getElementById('backendUrl');
+            if (backendUrlEl) {
+                backendUrlEl.textContent = window.location.origin;
+            }
             
+            // バックエンド接続確認
             const dbType = await checkBackendConnection();
+            
             if (backendConnected) {
                 checkDbConnection(dbType);
                 await checkGeminiConnection();
                 await refreshCollections();
-                connectSettingsWebSocket();
+                connectSettingsWebSocket(); // WebSocket接続開始
             }
         }
+        
+        // =========================================
+        // ★★★ 修正箇所: 不足していた関数群を追加 ★★★
+        // =========================================
 
         async function checkBackendConnection() {
             try {
@@ -777,6 +784,9 @@
                 updateStatus('geminiStatus', 'geminiStatusText', false, 'Gemini API');
             }
         }
+        // =========================================
+        // ★★★ 修正完了 ★★★
+        // =========================================
 
         async function sendMessage() {
             const userInput = chatInput.value.trim();
@@ -817,7 +827,7 @@
                 const decoder = new TextDecoder();
                 botMessageContent.innerHTML = '';
 
-                // ★修正ポイント1: バッファ変数の初期化
+                // バッファ変数の初期化
                 let buffer = ''; 
 
                 while (true) {
@@ -836,13 +846,13 @@
                         break;
                     }
                     
-                    // ★修正ポイント2: 受信したチャンクをバッファに追加
+                    // 受信したチャンクをバッファに追加
                     buffer += decoder.decode(value, { stream: true });
                     
-                    // ★修正ポイント3: 改行で分割
+                    // 改行で分割
                     const lines = buffer.split('\n');
                     
-                    // ★修正ポイント4: 配列の最後の要素（途中かけの可能性がある行）をバッファに戻して次回に回す
+                    // 配列の最後の要素（途中かけの可能性がある行）をバッファに戻して次回に回す
                     buffer = lines.pop(); 
                     
                     for (const line of lines) {
@@ -850,13 +860,12 @@
                             const jsonString = line.substring(6).trim();
 
                             if (jsonString) { 
-                                // ★修正ポイント5: try...catch でパースエラーを捕捉してシステム停止を防ぐ
                                 try {
                                     const data = JSON.parse(jsonString);
                                     
                                     if (data.feedback_id) {
-                                        botMessageElement.dataset.feedbackId = data.feedback_id; // log_id ではなく feedback_id を使用する場合に対応
-                                        botMessageElement.dataset.logId = data.feedback_id;      // 念のため log_id にもセット
+                                        botMessageElement.dataset.feedbackId = data.feedback_id; 
+                                        botMessageElement.dataset.logId = data.feedback_id;     
                                     }
                                     
                                     if (data.content) {
