@@ -2,7 +2,8 @@ import os
 import logging
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
+# ↓↓↓ WebSocket関連をインポート
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
@@ -13,10 +14,10 @@ from core.config import APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY
 from core.database import SupabaseClientManager
 from core.settings import SettingsManager
 from services.document_processor import SimpleDocumentProcessor
-# 認証関数
 from core.dependencies import require_auth, require_auth_client
-# DB変数を格納するモジュールそのものをインポート
 from core import database
+# ↓↓↓ 設定モジュールをインポート（WebSocketで使用）
+from core import settings as core_settings
 
 # APIルーター
 from api import auth, chat, documents, fallbacks, feedback, system
@@ -72,21 +73,55 @@ app.add_middleware(
 Instrumentator().instrument(app).expose(app)
 
 # =========================================================
-# ★重要: グローバルヘルスチェック (認証なし)
-# 他のルーターより先に定義することで、干渉を防ぎます
+# グローバルヘルスチェック (認証なし)
 # =========================================================
 @app.get("/health")
 def global_health_check():
-    # database.db_client を参照することで、最新の状態を確認できます
     status = "supabase" if database.db_client else "uninitialized"
     return {"status": "ok", "database": status}
+
+@app.get("/healthz")
+def healthz_check():
+    return {"status": "ok"}
 
 @app.get("/config")
 def get_config():
     return {
         "supabase_url": SUPABASE_URL,
-        "supabase_anon_key": "YOUR_ANON_KEY_HERE" # 必要に応じて環境変数を使用
+        "supabase_anon_key": "YOUR_ANON_KEY_HERE" 
     }
+
+# =========================================================
+# ★ WebSocketエンドポイント (認証なし・ルート直下)
+# =========================================================
+@app.websocket("/ws/settings")
+async def websocket_endpoint(websocket: WebSocket):
+    """設定変更通知用WebSocket"""
+    if not core_settings.settings_manager:
+        await websocket.close(code=1011, reason="Settings manager not initialized")
+        return
+    
+    await core_settings.settings_manager.add_websocket(websocket)
+    
+    try:
+        # 接続直後に、現在の設定をこのクライアントに送信する
+        current_settings = core_settings.settings_manager.settings
+        await websocket.send_json({
+            "type": "settings_update",
+            "data": current_settings
+        })
+        logging.info(f"WebSocketクライアントに初期設定を送信しました。")
+        
+    except Exception as e:
+        logging.error(f"WebSocketへの初期設定送信に失敗: {e}")
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        core_settings.settings_manager.remove_websocket(websocket)
+        logging.info("WebSocketクライアントが切断されました。")
+
 
 # ---------------------------------------------------------
 # ルーター登録
@@ -107,7 +142,7 @@ app.include_router(
     tags=["Client Feedback"]
 )
 
-# 3. 管理者用 API (Admin) - ここには require_auth (認証) がかかります
+# 3. 管理者用 API (Admin)
 app.include_router(
     documents.router,
     prefix="/api/admin/documents", 
