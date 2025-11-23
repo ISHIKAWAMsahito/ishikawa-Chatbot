@@ -1,21 +1,21 @@
-# prometheus.remote.yml
-# This Prometheus configuration sends metrics to a remote storage (like Grafana Cloud).
+# prometheus.yml (修正版)
 
 global:
-  scrape_interval: 15s
+  scrape_interval: 1m # 無料プランを考慮し、少し長めの1分間隔に
 
 scrape_configs:
-  - job_name: 'fastapi'
+  - job_name: 'fastapi-app'
+    # ▼▼▼ 修正点 ▼▼▼
+    # 内部ホスト名ではなく、公開されているRenderのURLを指定します
     static_configs:
-      - targets: ['fastapi-chatbot:10000']
-    # Add a label to distinguish this environment
-    labels:
-      environment: 'render'
+      - targets: ['ishikawa-chatbot.onrender.com']
+    # httpsでアクセスするため、schemeを追加します
+    scheme: https
 
-# This section sends all collected metrics to the configured remote endpoint.
+# このセクションはGrafana Cloudにデータを送るための設定です
+# この部分は変更不要です
 remote_write:
-  - url: "${GC_REMOTE_WRITE_URL}" # Comes from environment variable
+  - url: "${GC_https://prometheus-prod-49-prod-ap-northeast-0.grafana.net/api/prom/push}" 
     basic_auth:
-      username: "${GC_REMOTE_WRITE_USER}" # Comes from environment variable
-      password: "${GC_API_KEY}" # Comes from environment variable
-
+      username: "$GC_{2622033}"
+      password: "${GC_glc_eyJvIjoiMTUxMDQ4OSIsIm4iOiJzdGFjay0xMzQ4ODk5LWhtLXJlYWQtaXNoaWthd2EtY2hhdGJvdC1tZXRyaWNzIiwiayI6IjZoQXg5OTJkNzNDUjQydjVmNm90b210RCIsIm0iOnsiciI6InByb2QtYXAtbm9ydGhlYXN0LTAifX0=}"
