@@ -484,106 +484,106 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        // ========================================
+        // 【修正】admin.html内のチャット送信機能
+        // ========================================
+        // 行番号 約807-866 付近を置き換え
+
         async function sendMessage() {
             const userInput = chatInput.value.trim();
             if (!userInput) return;
+            if (!currentCollection) {
+                addMessage('❌ コレクションが選択されていません。', 'bot');
+                return;
+            }
 
-            addMessage(userInput.replace(/</g, "&lt;").replace(/>/g, "&gt;"), 'user');
-            
+            addMessage(userInput, 'user');
             chatInput.value = '';
             chatInput.style.height = 'auto';
-            sendBtn.disabled = true;
-            
-            const botMessageElement = addMessage('<div class="loading-indicator"></div>考え中...', 'bot');
-            botMessageElement.dataset.userQuestion = userInput; 
 
+            const botMessageElement = addMessage('考え中...', 'bot');
             const botMessageContent = botMessageElement.querySelector('.message-content');
             let fullResponse = '';
 
             try {
-                const response = await fetch(`${BACKEND_API_BASE_URL}/api/client/chat/client`, {
+                // 【修正】正しいエンドポイント: /api/admin/chat (/ は削除)
+                const response = await fetch(`/api/admin/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: userInput })
+                    body: JSON.stringify({
+                        query: userInput,
+                        model: modelSelect.value,
+                        collection: currentCollection,
+                        embedding_model: embeddingModelSelect.value,
+                        top_k: parseInt(topKSelect.value, 10)
+                    })
                 });
 
                 if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({ detail: `サーバーエラー: ${response.statusText}` }));
+                    const errorData = await response.json().catch(() => ({ detail: `APIエラー: ${response.statusText}` }));
                     throw new Error(errorData.detail);
                 }
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 botMessageContent.innerHTML = '';
+                let buffer = ''; 
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
-                        if (botMessageElement.dataset.logId || botMessageElement.dataset.feedbackId) {
+                        if (botMessageElement.dataset.logId) {
                             const feedbackContainer = document.createElement('div');
                             feedbackContainer.className = 'feedback-container';
                             feedbackContainer.innerHTML = `
-                                <button class="feedback-btn">👍 良い回答です</button>
-                                <button class="feedback-btn">👎 良くない回答です</button>
+                                <span>この回答は役に立ちましたか？</span>
+                                <button class="feedback-btn" data-rating="good">👍</button>
+                                <button class="feedback-btn" data-rating="bad">👎</button>
                             `;
-                            feedbackContainer.querySelector('button:first-of-type').onclick = (e) => sendFeedback(e.target, 'good');
-                            feedbackContainer.querySelector('button:last-of-type').onclick = (e) => sendFeedback(e.target, 'bad');
-                            
                             botMessageElement.appendChild(feedbackContainer);
                         }
                         break;
                     }
-
-                    const chunk = decoder.decode(value, { stream: true });
-                    const lines = chunk.split('\n');
-
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); 
+                    
                     for (const line of lines) {
                         if (line.trim().startsWith('data: ')) {
-                            try {
-                                const jsonStr = line.substring(6).trim();
-                                if (!jsonStr) continue;
-                                
-                                const data = JSON.parse(jsonStr);
+                            const jsonString = line.substring(6).trim();
 
-                                                                if (data.content) {
-                                                                    fullResponse += data.content;
-                                
-                                                                    let safeText = fullResponse
-                                                                        .replace(/</g, "&lt;")
-                                                                        .replace(/>/g, "&gt;");
-                                
-                                                                    let htmlText = safeText.replace(
-                                                                        /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
-                                                                        '<a href="$2" target="_blank">$1</a>'
-                                                                    );
-                                
-                                                                    htmlText = htmlText.replace(/\n/g, '<br>');
-                                
-                                                                    botMessageContent.innerHTML = htmlText;
-                                                                    chatMessages.scrollTop = chatMessages.scrollHeight;
-                                                                }
-                                                                
-                                                                if (data.log_id) botMessageElement.dataset.logId = data.log_id;
-                                                                if (data.feedback_id) {
-                                                                    botMessageElement.dataset.feedbackId = data.feedback_id;
-                                                                }
-                                                            } catch (e) {
-                                                                console.error('Stream JSON parse error:', e);
-                                                            }
-                                                        }
-                                                    }
-                                
-                                                    // continue reading stream
-                                                }
-                                
-                                                // finished reading stream
-                                            } catch (error) {
-                                                console.error('チャット送信エラー:', error);
-                                                botMessageContent.innerHTML = '<span style="color: red;">エラーが発生しました。</span>';
-                                            } finally {
-                                                sendBtn.disabled = false;
-                                            }
-                                        }
+                            if (jsonString) { 
+                                try {
+                                    const data = JSON.parse(jsonString);
+                                    
+                                    if (data.feedback_id) {
+                                        botMessageElement.dataset.feedbackId = data.feedback_id; 
+                                        botMessageElement.dataset.logId = data.feedback_id;     
+                                    }
+                                    
+                                    if (data.content) {
+                                        fullResponse += data.content;
+                                        let htmlText = fullResponse.replace(
+                                            /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
+                                            '<a href="$2" target="_blank">$1</a>'
+                                        );
+                                        htmlText = htmlText.replace(/\n/g, '<br>');
+                                        botMessageContent.innerHTML = htmlText;
+                                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    }
+                                } catch (e) {
+                                    console.error("Error parsing stream data:", e);
+                                }
+                            }
+                        }
+                    }
+                } 
+            } catch (error) {
+                console.error('メッセージ送信エラー:', error);
+                botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
+            }
+        }
                                 
                                         // Set up UI event listeners
                                         sendBtn.addEventListener('click', sendMessage);

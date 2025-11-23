@@ -790,7 +790,8 @@
             let fullResponse = '';
 
             try {
-                const response = await fetch(`/api/admin/chat/chat`, {
+                // ▼▼▼ 修正箇所: /chat を1つ削除しました ▼▼▼
+                const response = await fetch(`/api/admin/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
