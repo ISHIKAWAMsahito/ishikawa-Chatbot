@@ -2,10 +2,11 @@ import os
 import logging
 import uvicorn
 from contextlib import asynccontextmanager
-# ↓↓↓ WebSocket関連をインポート
-from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
+
+# ↓↓↓ FileResponse, Request, status を追加インポート
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, Request, status
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -16,7 +17,6 @@ from core.settings import SettingsManager
 from services.document_processor import SimpleDocumentProcessor
 from core.dependencies import require_auth, require_auth_client
 from core import database
-# ↓↓↓ 設定モジュールをインポート（WebSocketで使用）
 from core import settings as core_settings
 
 # APIルーター
@@ -57,17 +57,19 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=True, # クッキーを含めるために必須
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# セッション設定
+# セッション設定（★修正: Brave対策）
+# same_site='lax' にすることで、通常のリンク遷移でのCookie送信を許可しつつ、
+# クロスサイトのトラッキング防止機能に引っかかりにくくします。
 app.add_middleware(
     SessionMiddleware, 
     secret_key=APP_SECRET_KEY,
-    https_only=True,
-    same_site='none'
+    https_only=True, # RenderなどはHTTPSなのでTrueでOK
+    same_site='lax'  # 'none' から 'lax' に変更推奨
 )
 
 Instrumentator().instrument(app).expose(app)
@@ -104,7 +106,6 @@ async def websocket_endpoint(websocket: WebSocket):
     await core_settings.settings_manager.add_websocket(websocket)
     
     try:
-        # 接続直後に、現在の設定をこのクライアントに送信する
         current_settings = core_settings.settings_manager.settings
         await websocket.send_json({
             "type": "settings_update",
@@ -127,10 +128,8 @@ async def websocket_endpoint(websocket: WebSocket):
 # ルーター登録
 # ---------------------------------------------------------
 
-# 1. 認証 (Auth)
 app.include_router(auth.router, tags=["Auth"])
 
-# 2. 学生用 API (Client)
 app.include_router(
     chat.router,
     prefix="/api/client/chat", 
@@ -142,7 +141,7 @@ app.include_router(
     tags=["Client Feedback"]
 )
 
-# 3. 管理者用 API (Admin)
+# 管理者用 API (CookieチェックはDependencies内で行われる)
 app.include_router(
     documents.router,
     prefix="/api/admin/documents", 
@@ -178,17 +177,42 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 async def root():
     return RedirectResponse(url="/client.html")
 
+# ★追加: ログインページへのルート
+@app.get("/login")
+async def login_page():
+    # もし static/login.html があるならそれを返す
+    # なければ RedirectResponse(url="/static/login.html") でも可
+    return FileResponse("static/login.html")
+
 @app.get("/client.html")
 async def client_page():
-    return RedirectResponse(url="/static/client.html")
+    return FileResponse("static/client.html")
 
+# ★修正: 管理者ページへのアクセス制御
+@app.get("/admin")
 @app.get("/admin.html")
-async def admin_page():
-    return RedirectResponse(url="/static/admin.html")
+async def admin_page(request: Request):
+    """
+    管理者ページへのアクセス。
+    Cookieにトークンがなければログインページへリダイレクトする。
+    """
+    # auth.py で設定しているCookie名を確認してください（通常 "access_token" や "session_id"）
+    token = request.cookies.get("access_token") 
+
+    if not token:
+        # トークンがない場合はログインページへ飛ばす
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    
+    # トークンがある場合はページを表示
+    return FileResponse("static/admin.html")
 
 @app.get("/DB.html")
-async def db_page():
-    return RedirectResponse(url="/static/DB.html")
+async def db_page(request: Request):
+    """DB管理画面も同様に保護"""
+    token = request.cookies.get("access_token") 
+    if not token:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return FileResponse("static/DB.html")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
