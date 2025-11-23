@@ -96,7 +96,7 @@
         .settings-update-notification .close-btn { background: none; border: none; color: white; font-size: 18px; margin-left: 10px; cursor: pointer; }
         
         /* コメント機能用のCSS */
-       .comment-btn { 
+        .comment-btn { 
     position: absolute; 
     top: 15px; 
     left: 15px; 
@@ -500,150 +500,180 @@ document.addEventListener('DOMContentLoaded', function() {
         async function sendFeedback(element, rating) {
             const messageWrapper = element.closest('.message');
             const logId = messageWrapper.dataset.logId;
-            if (!logId) return;
+            
+            // logIdがない場合は処理を中断
+            if (!logId) {
+                console.error("Log ID not found for feedback.");
+                return;
+            }
+
             try {
-                await fetch(`${BACKEND_API_BASE_URL}/feedback`, {
+                // 修正: /api/client/feedback (末尾の "/" は feedback.py の定義に合わせて削除)
+                const res = await fetch(`${BACKEND_API_BASE_URL}/api/client/feedback`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ log_id: logId, rating: rating })
                 });
-                element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
-            } catch (error) { console.error("Error sending feedback:", error); }
-        }
-        
-        async function initializeSystem() {
-            try {
-                const healthResponse = await fetch(`${BACKEND_API_BASE_URL}/health`);
-                if (!healthResponse.ok) {
-                    addMessage('⚠️ システムが準備中です。しばらくお待ちください。', 'bot');
-                    return;
+
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    throw new Error(errorData.detail || "Failed to send feedback.");
                 }
-                connectSettingsWebSocket();
-            } catch (error) {
-                addMessage('❌ システムに接続できません。サーバーが起動していることを確認してください。', 'bot');
-                updateSyncIndicator(false, '接続エラー');
+
+                const feedbackContainer = element.parentElement;
+                feedbackContainer.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
+                
+            } catch(error) {
+                console.error("Error sending feedback:", error);
+                // エラー時はユーザーに通知しても良いですが、UIを崩さないようコンソール出力に留めるか、簡易表示にします
             }
         }
 
-        
-async function sendAiResponseFeedbackToSupabase(element, rating) {
-    const messageWrapper = element.closest('.message');
-    const aiResponseText = messageWrapper.querySelector('.message-content').innerText;
-    const userQuestion = messageWrapper.dataset.userQuestion || '';
-    
-    // ボタンを無効化して二重送信を防ぐ
-    const buttons = messageWrapper.querySelectorAll('.feedback-btn');
-    buttons.forEach(btn => btn.disabled = true);
+        async function sendAiResponseFeedbackToSupabase(element, rating) {
+            const messageWrapper = element.closest('.message');
+            const aiResponseText = messageWrapper.querySelector('.message-content').innerText;
+            const userQuestion = messageWrapper.dataset.userQuestion || '';
+            
+            // ボタンを無効化して二重送信を防ぐ
+            const buttons = messageWrapper.querySelectorAll('.feedback-btn');
+            buttons.forEach(btn => btn.disabled = true);
 
-    try {
-        // バックエンド経由でSupabaseに保存
-        const response = await fetch(`${BACKEND_API_BASE_URL}/feedback/ai-response`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                user_question: userQuestion,
-                ai_response: aiResponseText,
-                rating: rating
-            })
-        });
+            try {
+                // 修正: /api/client/feedback/ai-response
+                const response = await fetch(`${BACKEND_API_BASE_URL}/api/client/feedback/ai-response`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_question: userQuestion,
+                        ai_response: aiResponseText,
+                        rating: rating
+                    })
+                });
 
-        if (!response.ok) {
-            throw new Error('フィードバック送信に失敗しました');
+                if (!response.ok) {
+                    throw new Error('フィードバック送信に失敗しました');
+                }
+
+                // 成功したら感謝メッセージを表示
+                element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
+
+            } catch (error) {
+                console.error("フィードバック送信エラー:", error);
+                // エラー表示後にボタンを再有効化するか、エラーメッセージを残す
+                element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #dc3545;">送信エラーが発生しました。</span>';
+            }
         }
-
-        const result = await response.json();
-        
-        // 成功したら感謝メッセージを表示
-        element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
-
-    } catch (error) {
-        console.error("フィードバック送信エラー:", error);
-        element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #dc3545;">エラーが発生しました。</span>';
-    }
-}
 
         async function sendMessage() {
             const userInput = chatInput.value.trim();
             if (!userInput) return;
+
+            // ユーザーメッセージを表示（HTMLエスケープ処理）
             addMessage(userInput.replace(/</g, "&lt;").replace(/>/g, "&gt;"), 'user');
+            
+            // 入力欄をクリア
             chatInput.value = '';
             chatInput.style.height = 'auto';
             sendBtn.disabled = true;
             
+            // ボットの応答プレースホルダーを表示
             const botMessageElement = addMessage('<div class="loading-indicator"></div>思考中...', 'bot');
             
-            // ★追加: フィードバック用にユーザーの質問を保存しておく
+            // フィードバック用にユーザーの質問を保存しておく
             botMessageElement.dataset.userQuestion = userInput; 
 
             const botMessageContent = botMessageElement.querySelector('.message-content');
             let fullResponse = '';
 
             try {
-                const response = await fetch(`${BACKEND_API_BASE_URL}/chat_for_client`, {
+                // 修正: /api/client/chat/client
+                // (main.py で prefix="/api/client/chat"、chat.py で @router.post("/client") としているため)
+                const response = await fetch(`${BACKEND_API_BASE_URL}/api/client/chat/client`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: userInput })
                 });
+
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({ detail: `サーバーエラー: ${response.statusText}` }));
                     throw new Error(errorData.detail);
                 }
+
+                // ストリーミングレスポンスの処理
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
-                botMessageContent.innerHTML = '';
+                botMessageContent.innerHTML = ''; // "思考中..." を消去
+
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
-                        if (botMessageElement.dataset.logId) {
+                        // 完了時、フィードバックボタンを表示（logIdまたはfeedbackIdがある場合）
+                        if (botMessageElement.dataset.logId || botMessageElement.dataset.feedbackId) {
                             const feedbackContainer = document.createElement('div');
                             feedbackContainer.className = 'feedback-container';
-                            // ボタンのテキストとonclickの呼び出し先を変更
                             feedbackContainer.innerHTML = `
                                 <button class="feedback-btn">👍 良い回答です</button>
                                 <button class="feedback-btn">👎 良くない回答です</button>
                             `;
+                            // クリックイベントを設定
                             feedbackContainer.querySelector('button:first-of-type').onclick = (e) => sendAiResponseFeedbackToSupabase(e.target, 'good');
                             feedbackContainer.querySelector('button:last-of-type').onclick = (e) => sendAiResponseFeedbackToSupabase(e.target, 'bad');
+                            
                             botMessageElement.appendChild(feedbackContainer);
                         }
                         break;
                     }
+
+                    // ストリームデータのデコード
                     const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
+
                     for (const line of lines) {
                         if (line.trim().startsWith('data: ')) {
                             try {
-                                const data = JSON.parse(line.substring(6));
+                                const jsonStr = line.substring(6).trim();
+                                if (!jsonStr) continue;
+                                
+                                const data = JSON.parse(jsonStr);
 
                                 if (data.content) {
                                     fullResponse += data.content;
 
-                                    // 1. まず、安全のためにHTMLをエスケープする
+                                    // 1. HTMLエスケープ
                                     let safeText = fullResponse
                                         .replace(/</g, "&lt;")
                                         .replace(/>/g, "&gt;");
 
-                                    // 2. 次に、Markdownのリンク形式 [text](url) を <a href...> タグに変換する
+                                    // 2. Markdownリンク変換
                                     let htmlText = safeText.replace(
                                         /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
                                         '<a href="$2" target="_blank">$1</a>'
                                     );
 
-                                    // 3. 最後に、改行を <br> に変換する
+                                    // 3. 改行変換
                                     htmlText = htmlText.replace(/\n/g, '<br>');
 
-                                    // 4. innerHTML に設定する
+                                    // 4. 表示更新
                                     botMessageContent.innerHTML = htmlText;
+                                    chatMessages.scrollTop = chatMessages.scrollHeight;
                                 }
                                 
+                                // IDの保存（backendによってキー名が異なる場合の対応）
                                 if (data.log_id) botMessageElement.dataset.logId = data.log_id;
-                                if (data.feedback_id) botMessageElement.dataset.logId = data.feedback_id; 
-                            } catch (e) {}
+                                if (data.feedback_id) {
+                                    botMessageElement.dataset.feedbackId = data.feedback_id; 
+                                    botMessageElement.dataset.logId = data.feedback_id; // 互換性のため両方にセット
+                                }
+
+                            } catch (e) {
+                                console.error("Stream parse error:", e);
+                            }
                         }
                     }
                 }
             } catch (error) {
-                botMessageContent.innerHTML = `エラーが発生しました: ${error.message}`;
+                console.error("Message send error:", error);
+                botMessageContent.innerHTML = `<span style="color: #dc3545;">エラーが発生しました: ${error.message}</span>`;
             } finally {
                 sendBtn.disabled = false;
             }
