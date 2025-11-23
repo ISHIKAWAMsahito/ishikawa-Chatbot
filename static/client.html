@@ -9,12 +9,11 @@
 <script type="module">
     import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
-    // windowオブジェクトに紐付けることで、他のスクリプトからアクセス可能にする
     window.supabaseClient = null;
 
     async function initializeSupabase() {
         try {
-            const response = await fetch('/config');
+            const response = await fetch('/api/admin/system/config');
             if (!response.ok) throw new Error('設定の読み込みに失敗しました。');
             
             const config = await response.json();
@@ -26,7 +25,6 @@
                 return;
             }
 
-            // グローバル変数に代入
             window.supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
             console.log('Supabase初期化完了');
 
@@ -45,26 +43,21 @@
         .header h1 { font-size: 2rem; margin-bottom: 10px; text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3); }
         .header .subtitle { font-size: 1rem; opacity: 0.9; }
         .settings-indicator { 
-    position: absolute; 
-    /* ログアウトボタンと重ならないよう 15px → 60px に変更 */
-    top: 60px !important; 
-    right: 15px; 
-    display: flex; 
-    align-items: center; 
-    gap: 10px; 
-    font-size: 0.85rem; 
-    
-    /* ↓↓↓ デザイン変更箇所（白背景・黒文字） ↓↓↓ */
-    background-color: #ffffff; 
-    color: #333333; 
-    border: 1px solid #e0e0e0; /* 薄い枠線を追加 */
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* 影を追加 */
-    /* ↑↑↑ デザイン変更箇所 ここまで ↑↑↑ */
-
-    padding: 8px 12px; 
-    border-radius: 15px;
-    z-index: 9;
-}
+            position: absolute; 
+            top: 60px !important; 
+            right: 15px; 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+            font-size: 0.85rem; 
+            background-color: #ffffff; 
+            color: #333333; 
+            border: 1px solid #e0e0e0; 
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); 
+            padding: 8px 12px; 
+            border-radius: 15px;
+            z-index: 9;
+        }
         .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #28a745; animation: pulse-dot 2s infinite; }
         .sync-dot.disconnected { background: #dc3545; animation: none; }
         @keyframes pulse-dot { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
@@ -95,35 +88,28 @@
         .settings-update-notification.show { transform: translateX(0); }
         .settings-update-notification .close-btn { background: none; border: none; color: white; font-size: 18px; margin-left: 10px; cursor: pointer; }
         
-        /* コメント機能用のCSS */
         .comment-btn { 
-    position: absolute; 
-    top: 15px; 
-    left: 15px; 
-    
-    /* ↓↓↓ デザイン変更箇所（白背景・黒文字） ↓↓↓ */
-    background-color: #ffffff; 
-    color: #333333; 
-    border: 1px solid #e0e0e0;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    /* ↑↑↑ デザイン変更箇所 ここまで ↑↑↑ */
+            position: absolute; 
+            top: 15px; 
+            left: 15px; 
+            background-color: #ffffff; 
+            color: #333333; 
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            border-radius: 15px; 
+            padding: 8px 12px; 
+            cursor: pointer; 
+            font-size: 0.85rem; 
+            font-weight: bold;
+            transition: all 0.2s ease;
+            z-index: 10;
+        }
 
-    border-radius: 15px; 
-    padding: 8px 12px; 
-    cursor: pointer; 
-    font-size: 0.85rem; 
-    font-weight: bold; /* 文字を太く */
-    transition: all 0.2s ease;
-    z-index: 10;
-}
-
-/* ホバー時の動き（追加） */
-.comment-btn:hover { 
-    background-color: #f2f2f2;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-}
-        .comment-btn:hover { background: rgba(255, 255, 255, 0.3); }
+        .comment-btn:hover { 
+            background-color: #f2f2f2;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
         .modal { display: none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); animation: fadeIn 0.3s; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         .modal-content { background-color: #fefefe; margin: 15% auto; padding: 25px; border: 1px solid #888; width: 90%; max-width: 500px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); position: relative; animation: slideDown 0.3s; }
@@ -169,34 +155,27 @@
             box-shadow: 0 4px 10px rgba(0,0,0,0.3);
         }
 
-        /* 各ボタンの色を設定 */
         .theme-btn[data-theme="default"] { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
         .theme-btn[data-theme="green"] { background: linear-gradient(135deg, #2AF598 0%, #009EFD 100%); }
         .theme-btn[data-theme="orange"] { background: linear-gradient(135deg, #F6D365 0%, #FDA085 100%); }
         .theme-btn[data-theme="pink"] { background: linear-gradient(135deg, #F093FB 0%, #F5576C 100%); }
         
-        /* ---------------------------------------------------- */
-        /* ★ 追加: ログアウトボタン（白背景・黒文字）のスタイル */
-        /* ---------------------------------------------------- */
         .logout-btn {
             position: absolute;
             top: 15px;
             right: 15px;
             z-index: 10;
 
-            /* 色の設定 */
             background-color: #ffffff;
             color: #333333;
             border: 1px solid #e0e0e0;
 
-            /* 形と配置 */
             border-radius: 20px;
             padding: 8px 16px;
             text-decoration: none;
             font-size: 0.85rem;
             font-weight: bold;
             
-            /* 影とアニメーション */
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
             transition: all 0.2s ease;
             display: flex;
@@ -209,18 +188,12 @@
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
         }
 
-        /* 既存の同期インジケーターの位置調整（ログアウトボタンと被らないように下へ） */
-        .settings-indicator {
-            top: 60px !important; 
-        }
-
         @media (max-width: 480px) {
             body { padding: 5px; }
             .container { height: calc(100vh - 10px); }
             .header { padding: 20px; display: flex; flex-direction: column; align-items: center; }
             .header h1 { font-size: 1.6rem; }
             .header .subtitle { font-size: 0.9rem; }
-            /* スマホでのログアウトボタン調整 */
             .logout-btn {
                 position: static;
                 display: inline-flex;
@@ -232,34 +205,6 @@
             .send-btn { justify-content: center; padding: 12px; }
             .settings-update-notification { position: fixed; top: auto; bottom: 20px; right: 20px; left: 20px; }
             .comment-btn { position: static; margin-top: 15px; }
-            
-            .rating-container {
-                margin-bottom: 15px;
-                text-align: center;
-            }
-            .rating-container p {
-                margin-bottom: 10px;
-                font-size: 0.9rem;
-                color: #555;
-            }
-            .rating-btn {
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 20px;
-                padding: 8px 15px;
-                margin: 0 5px;
-                cursor: pointer;
-                transition: all 0.2s ease;
-            }
-            .rating-btn:hover {
-                background-color: #e0e0e0;
-            }
-            .rating-btn.selected {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                border-color: #667eea;
-                font-weight: bold;
-            }
         }
     </style>
 </head>
@@ -272,7 +217,7 @@
             <div class="sync-dot disconnected" id="syncDot"></div>
             <span id="syncText">設定同期準備中...</span>
         </div>
-        <h1>🔍 AI chatbot system</h1>
+        <h1>📚 AI chatbot system</h1>
         <p class="subtitle">学生生活に関する様々な質問にお答えします！</p>
         
         <div class="theme-selector">
@@ -290,8 +235,8 @@
         <div class="chat-messages" id="chatMessages">
             <div class="message bot">
                 <div class="message-content">
-                    私は学生支援チャットボットです。🚀<br>
-                    - 学生証を紛失・盗難・汚損したときは？<br>
+                    私は学生支援チャットボットです。🤖<br>
+                    - 学生証をなくした・盗難・汚してしまったときは？<br>
                     - 新しいサークルを作るには？<br>
                     - 休学・復学・退学の手続きをしたいときは？<br>
                     様々な質問にお答えします！
@@ -308,7 +253,7 @@
                 <textarea id="chatInput" class="chat-input" placeholder="質問を入力してください..." rows="1"></textarea>
                 <button id="sendBtn" class="send-btn">
                     <span>送信</span>
-                    <span>🔍</span>
+                    <span>📤</span>
                 </button>
             </div>
         </div>
@@ -332,123 +277,136 @@
     </div>
     <script>
 document.addEventListener('DOMContentLoaded', function() {
+        const BACKEND_API_BASE_URL = window.location.origin;
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+        let settingsSocket = null;
+
+        // テーマ変更機能
         const themeButtons = document.querySelectorAll('.theme-btn');
-    const bodyElement = document.body;
+        const bodyElement = document.body;
 
-    // 各テーマに対応する背景のグラデーションを定義
-    const themes = {
-        default: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-        green: 'linear-gradient(135deg, #2AF598 0%, #009EFD 100%)',
-        orange: 'linear-gradient(135deg, #F6D365 0%, #FDA085 100%)',
-        pink: 'linear-gradient(135deg, #F093FB 0%, #F5576C 100%)'
-    };
+        const themes = {
+            default: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            green: 'linear-gradient(135deg, #2AF598 0%, #009EFD 100%)',
+            orange: 'linear-gradient(135deg, #F6D365 0%, #FDA085 100%)',
+            pink: 'linear-gradient(135deg, #F093FB 0%, #F5576C 100%)'
+        };
 
-    // 各ボタンにクリックイベントを追加
-    themeButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            // ボタンのdata-theme属性からテーマ名を取得
-            const themeName = button.dataset.theme;
-            
-            // 対応するテーマが存在すれば背景スタイルを更新
-            if (themes[themeName]) {
-                bodyElement.style.background = themes[themeName];
-            }
+        themeButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                const themeName = button.dataset.theme;
+                if (themes[themeName]) {
+                    bodyElement.style.background = themes[themeName];
+                }
+            });
         });
-    });
-    const BACKEND_API_BASE_URL = window.location.origin;
-    const chatMessages = document.getElementById('chatMessages');
-    const chatInput = document.getElementById('chatInput');
-    const sendBtn = document.getElementById('sendBtn');
-    let settingsSocket = null;
 
-    // コメント機能用の要素を取得
-    const openCommentModalBtn = document.getElementById('openCommentModalBtn');
-    const commentModal = document.getElementById('commentModal');
-    const closeBtn = document.querySelector('.modal-close-btn');
-    const sendCommentBtn = document.getElementById('sendCommentBtn');
-    const commentTextarea = document.getElementById('commentTextarea');
-    const successMessage = document.getElementById('successMessage');
-    const errorMessage = document.getElementById('errorMessage');
-    
-    // コメントモーダルを開くときの処理
-    openCommentModalBtn.onclick = () => { 
-        commentModal.style.display = 'block';
-        commentTextarea.value = '';
-        successMessage.style.display = 'none';
-        errorMessage.style.display = 'none';
-    }
-
-    closeBtn.onclick = () => { commentModal.style.display = 'none'; }
-    window.onclick = (event) => {
-        if (event.target == commentModal) {
-            commentModal.style.display = 'none';
-        }
-    }
-    
-    // コメント送信ボタンのイベント
-    sendCommentBtn.onclick = async () => {
-        const comment = commentTextarea.value.trim();
+        const openCommentModalBtn = document.getElementById('openCommentModalBtn');
+        const commentModal = document.getElementById('commentModal');
+        const closeBtn = document.querySelector('.modal-close-btn');
+        const sendCommentBtn = document.getElementById('sendCommentBtn');
+        const commentTextarea = document.getElementById('commentTextarea');
+        const successMessage = document.getElementById('successMessage');
+        const errorMessage = document.getElementById('errorMessage');
         
-        if (comment === '') {
-            alert('コメントを入力してください。');
-            return;
+        openCommentModalBtn.onclick = () => { 
+            commentModal.style.display = 'block';
+            commentTextarea.value = '';
+            successMessage.style.display = 'none';
+            errorMessage.style.display = 'none';
         }
 
-        sendCommentBtn.disabled = true;
-        successMessage.style.display = 'none';
-        errorMessage.style.display = 'none';
-
-        try {
-            // ★修正: window.supabaseClient を使う
-            if (!window.supabaseClient) {
-                alert("システム接続エラー: コメント機能は現在利用できません。");
+        closeBtn.onclick = () => { commentModal.style.display = 'none'; }
+        window.onclick = (event) => {
+            if (event.target == commentModal) {
+                commentModal.style.display = 'none';
+            }
+        }
+        
+        sendCommentBtn.onclick = async () => {
+            const comment = commentTextarea.value.trim();
+            
+            if (comment === '') {
+                alert('コメントを入力してください。');
                 return;
             }
 
-            const { data, error } = await window.supabaseClient
-                .from('anonymous_comments')
-                .insert([
-                    {
-                        comment: comment,
-                        created_at: new Date().toISOString()
-                    }
-                ]);
+            sendCommentBtn.disabled = true;
+            successMessage.style.display = 'none';
+            errorMessage.style.display = 'none';
 
-            if (error) throw error;
+            try {
+                if (!window.supabaseClient) {
+                    alert("システム接続エラー: コメント機能は現在利用できません。");
+                    return;
+                }
 
-            successMessage.style.display = 'block';
-            commentTextarea.value = '';
+                const { data, error } = await window.supabaseClient
+                    .from('anonymous_comments')
+                    .insert([
+                        {
+                            comment: comment,
+                            created_at: new Date().toISOString()
+                        }
+                    ]);
 
-            setTimeout(() => {
-                commentModal.style.display = 'none';
-                successMessage.style.display = 'none';
-            }, 2000);
+                if (error) throw error;
 
-        } catch (error) {
-            console.error('コメント送信エラー:', error);
-            errorMessage.style.display = 'block';
-        } finally {
-            sendCommentBtn.disabled = false;
-        }
-    };
+                successMessage.style.display = 'block';
+                commentTextarea.value = '';
+
+                setTimeout(() => {
+                    commentModal.style.display = 'none';
+                    successMessage.style.display = 'none';
+                }, 2000);
+
+            } catch (error) {
+                console.error('コメント送信エラー:', error);
+                errorMessage.style.display = 'block';
+            } finally {
+                sendCommentBtn.disabled = false;
+            }
+        };
 
         function connectSettingsWebSocket() {
             try {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
                 settingsSocket = new WebSocket(wsUrl);
-                settingsSocket.onopen = () => updateSyncIndicator(true, '設定同期中');
-                settingsSocket.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    if (data.type === 'settings_update') showSettingsUpdateNotification();
+                
+                settingsSocket.onopen = () => {
+                    console.log('設定同期WebSocket接続完了');
+                    updateSyncIndicator(true, '設定同期接続中');
                 };
+                
+                settingsSocket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'settings_update') {
+                            console.log('設定更新を受信:', data.data);
+                            showSettingsUpdateNotification();
+                        }
+                    } catch (e) {
+                        console.error('WebSocketメッセージ解析エラー:', e);
+                    }
+                };
+                
                 settingsSocket.onclose = () => {
+                    console.log('設定同期WebSocket切断');
                     updateSyncIndicator(false, '設定同期切断');
                     setTimeout(connectSettingsWebSocket, 5000);
                 };
-                settingsSocket.onerror = () => updateSyncIndicator(false, '設定同期エラー');
+                
+                settingsSocket.onerror = (error) => {
+                    console.error('設定同期WebSocketエラー:', error);
+                    updateSyncIndicator(false, '設定同期エラー');
+                };
             } catch (error) {
+                console.error('WebSocket接続エラー:', error);
                 updateSyncIndicator(false, '設定同期接続失敗');
+                setTimeout(connectSettingsWebSocket, 5000);
             }
         }
 
@@ -501,14 +459,12 @@ document.addEventListener('DOMContentLoaded', function() {
             const messageWrapper = element.closest('.message');
             const logId = messageWrapper.dataset.logId;
             
-            // logIdがない場合は処理を中断
             if (!logId) {
                 console.error("Log ID not found for feedback.");
                 return;
             }
 
             try {
-                // 修正: /api/client/feedback (末尾の "/" は feedback.py の定義に合わせて削除)
                 const res = await fetch(`${BACKEND_API_BASE_URL}/api/client/feedback`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -525,42 +481,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 
             } catch(error) {
                 console.error("Error sending feedback:", error);
-                // エラー時はユーザーに通知しても良いですが、UIを崩さないようコンソール出力に留めるか、簡易表示にします
-            }
-        }
-
-        async function sendAiResponseFeedbackToSupabase(element, rating) {
-            const messageWrapper = element.closest('.message');
-            const aiResponseText = messageWrapper.querySelector('.message-content').innerText;
-            const userQuestion = messageWrapper.dataset.userQuestion || '';
-            
-            // ボタンを無効化して二重送信を防ぐ
-            const buttons = messageWrapper.querySelectorAll('.feedback-btn');
-            buttons.forEach(btn => btn.disabled = true);
-
-            try {
-                // 修正: /api/client/feedback/ai-response
-                const response = await fetch(`${BACKEND_API_BASE_URL}/api/client/feedback/ai-response`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        user_question: userQuestion,
-                        ai_response: aiResponseText,
-                        rating: rating
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error('フィードバック送信に失敗しました');
-                }
-
-                // 成功したら感謝メッセージを表示
-                element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
-
-            } catch (error) {
-                console.error("フィードバック送信エラー:", error);
-                // エラー表示後にボタンを再有効化するか、エラーメッセージを残す
-                element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #dc3545;">送信エラーが発生しました。</span>';
             }
         }
 
@@ -568,26 +488,19 @@ document.addEventListener('DOMContentLoaded', function() {
             const userInput = chatInput.value.trim();
             if (!userInput) return;
 
-            // ユーザーメッセージを表示（HTMLエスケープ処理）
             addMessage(userInput.replace(/</g, "&lt;").replace(/>/g, "&gt;"), 'user');
             
-            // 入力欄をクリア
             chatInput.value = '';
             chatInput.style.height = 'auto';
             sendBtn.disabled = true;
             
-            // ボットの応答プレースホルダーを表示
-            const botMessageElement = addMessage('<div class="loading-indicator"></div>思考中...', 'bot');
-            
-            // フィードバック用にユーザーの質問を保存しておく
+            const botMessageElement = addMessage('<div class="loading-indicator"></div>考え中...', 'bot');
             botMessageElement.dataset.userQuestion = userInput; 
 
             const botMessageContent = botMessageElement.querySelector('.message-content');
             let fullResponse = '';
 
             try {
-                // 修正: /api/client/chat/client
-                // (main.py で prefix="/api/client/chat"、chat.py で @router.post("/client") としているため)
                 const response = await fetch(`${BACKEND_API_BASE_URL}/api/client/chat/client`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -599,15 +512,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     throw new Error(errorData.detail);
                 }
 
-                // ストリーミングレスポンスの処理
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
-                botMessageContent.innerHTML = ''; // "思考中..." を消去
+                botMessageContent.innerHTML = '';
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
-                        // 完了時、フィードバックボタンを表示（logIdまたはfeedbackIdがある場合）
                         if (botMessageElement.dataset.logId || botMessageElement.dataset.feedbackId) {
                             const feedbackContainer = document.createElement('div');
                             feedbackContainer.className = 'feedback-container';
@@ -615,16 +526,14 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <button class="feedback-btn">👍 良い回答です</button>
                                 <button class="feedback-btn">👎 良くない回答です</button>
                             `;
-                            // クリックイベントを設定
-                            feedbackContainer.querySelector('button:first-of-type').onclick = (e) => sendAiResponseFeedbackToSupabase(e.target, 'good');
-                            feedbackContainer.querySelector('button:last-of-type').onclick = (e) => sendAiResponseFeedbackToSupabase(e.target, 'bad');
+                            feedbackContainer.querySelector('button:first-of-type').onclick = (e) => sendFeedback(e.target, 'good');
+                            feedbackContainer.querySelector('button:last-of-type').onclick = (e) => sendFeedback(e.target, 'bad');
                             
                             botMessageElement.appendChild(feedbackContainer);
                         }
                         break;
                     }
 
-                    // ストリームデータのデコード
                     const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
 
@@ -636,58 +545,65 @@ document.addEventListener('DOMContentLoaded', function() {
                                 
                                 const data = JSON.parse(jsonStr);
 
-                                if (data.content) {
-                                    fullResponse += data.content;
-
-                                    // 1. HTMLエスケープ
-                                    let safeText = fullResponse
-                                        .replace(/</g, "&lt;")
-                                        .replace(/>/g, "&gt;");
-
-                                    // 2. Markdownリンク変換
-                                    let htmlText = safeText.replace(
-                                        /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
-                                        '<a href="$2" target="_blank">$1</a>'
-                                    );
-
-                                    // 3. 改行変換
-                                    htmlText = htmlText.replace(/\n/g, '<br>');
-
-                                    // 4. 表示更新
-                                    botMessageContent.innerHTML = htmlText;
-                                    chatMessages.scrollTop = chatMessages.scrollHeight;
-                                }
+                                                                if (data.content) {
+                                                                    fullResponse += data.content;
                                 
-                                // IDの保存（backendによってキー名が異なる場合の対応）
-                                if (data.log_id) botMessageElement.dataset.logId = data.log_id;
-                                if (data.feedback_id) {
-                                    botMessageElement.dataset.feedbackId = data.feedback_id; 
-                                    botMessageElement.dataset.logId = data.feedback_id; // 互換性のため両方にセット
-                                }
-
-                            } catch (e) {
-                                console.error("Stream parse error:", e);
-                            }
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error("Message send error:", error);
-                botMessageContent.innerHTML = `<span style="color: #dc3545;">エラーが発生しました: ${error.message}</span>`;
-            } finally {
-                sendBtn.disabled = false;
-            }
-        }
-
-        chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-        chatInput.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = (this.scrollHeight) + 'px';
-        });
-        sendBtn.addEventListener('click', sendMessage);
-        
-        initializeSystem();
-    });
-</script>
-</body>
-</html>
+                                                                    let safeText = fullResponse
+                                                                        .replace(/</g, "&lt;")
+                                                                        .replace(/>/g, "&gt;");
+                                
+                                                                    let htmlText = safeText.replace(
+                                                                        /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
+                                                                        '<a href="$2" target="_blank">$1</a>'
+                                                                    );
+                                
+                                                                    htmlText = htmlText.replace(/\n/g, '<br>');
+                                
+                                                                    botMessageContent.innerHTML = htmlText;
+                                                                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                                                                }
+                                                                
+                                                                if (data.log_id) botMessageElement.dataset.logId = data.log_id;
+                                                                if (data.feedback_id) {
+                                                                    botMessageElement.dataset.feedbackId = data.feedback_id;
+                                                                }
+                                                            } catch (e) {
+                                                                console.error('Stream JSON parse error:', e);
+                                                            }
+                                                        }
+                                                    }
+                                
+                                                    // continue reading stream
+                                                }
+                                
+                                                // finished reading stream
+                                            } catch (error) {
+                                                console.error('チャット送信エラー:', error);
+                                                botMessageContent.innerHTML = '<span style="color: red;">エラーが発生しました。</span>';
+                                            } finally {
+                                                sendBtn.disabled = false;
+                                            }
+                                        }
+                                
+                                        // Set up UI event listeners
+                                        sendBtn.addEventListener('click', sendMessage);
+                                
+                                        chatInput.addEventListener('input', () => {
+                                            chatInput.style.height = 'auto';
+                                            chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+                                        });
+                                
+                                        chatInput.addEventListener('keydown', (e) => {
+                                            if (e.key === 'Enter' && !e.shiftKey) {
+                                                e.preventDefault();
+                                                sendMessage();
+                                            }
+                                        });
+                                
+                                        // Start settings websocket
+                                        connectSettingsWebSocket();
+                                
+                                    });
+                                    </script>
+                                </body>
+                                </html>
