@@ -2,8 +2,11 @@ import os
 import logging
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
+# ↓↓↓ 【修正】Depends をここに追加しました
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, Request, status
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse, FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -122,14 +125,12 @@ app.include_router(chat.router, prefix="/api/client/chat", tags=["Client Chat"])
 app.include_router(feedback.router, prefix="/api/client/feedback", tags=["Client Feedback"])
 
 # 管理者API (auth.router内の認証ロジックとは別に、APIレベルでもDependsで保護)
+# ↓↓↓ ここで Depends を使っているため、インポートが必須でした
 from core.dependencies import require_auth
 app.include_router(documents.router, prefix="/api/admin/documents", tags=["Admin Documents"], dependencies=[Depends(require_auth)])
 app.include_router(fallbacks.router, prefix="/api/admin/fallbacks", tags=["Admin Fallbacks"], dependencies=[Depends(require_auth)])
 app.include_router(system.router, prefix="/api/admin/system", tags=["Admin System"], dependencies=[Depends(require_auth)])
 app.include_router(chat.router, prefix="/api/admin/chat", tags=["Admin Chat"], dependencies=[Depends(require_auth)])
-
-# 注意: main.py内にあった @app.get("/") や @app.get("/admin.html") は
-# auth.py と競合するため削除しました。すべて auth.py で制御します。
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
