@@ -53,6 +53,39 @@
         position: relative;
         z-index: 1;
     }
+    
+    /* ---------------------------------------------------- */
+    /* ★ 追加: 管理者用ログアウトボタン（白背景・黒文字） */
+    /* ---------------------------------------------------- */
+    .logout-btn {
+        position: absolute;
+        top: 25px;
+        right: 25px;
+        z-index: 100;
+
+        /* 色の設定 */
+        background-color: #ffffff;
+        color: #333333;
+        border: none;
+
+        /* 形と配置 */
+        padding: 10px 24px;
+        border-radius: 30px;
+        text-decoration: none;
+        font-weight: bold;
+        font-size: 0.95rem;
+
+        /* 影とアニメーション */
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    .logout-btn:hover {
+        background-color: #f8f9fa;   /* ホバー時は明るいグレー */
+        color: #000000;              /* 文字を完全な黒に */
+        box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+        transform: translateY(-2px);
+    }
+    
     .main-content {
         display: grid;
         grid-template-columns: 1fr 300px;
@@ -114,7 +147,6 @@
     .message-content a:hover { color: #0056b3; }
     .message-time { font-size: 0.8rem; opacity: 0.7; margin-top: 8px; /* 統一 */ }
     
-    /* ★修正点1のCSSを追加 */
     .important-note {
         color: red;
         font-weight: bold;
@@ -168,7 +200,7 @@
     @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(79, 172, 254, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(79, 172, 254, 0); } 100% { box-shadow: 0 0 0 0 rgba(79, 172, 254, 0); } }
     .status-connected { background-color: #28a745; }
     .status-disconnected { background-color: #dc3545; }
-    .margin-top-10 { margin-top: 8px; /* 統一 */ } /* クラス名はそのまま */
+    .margin-top-10 { margin-top: 8px; /* 統一 */ }
     .db-info { font-size: 0.9rem; color: #666; margin-top: 8px; /* 統一 */ }
 
     /* --- フォーム要素 --- */
@@ -180,7 +212,6 @@
         border-radius: 5px;
         margin-top: 10px;
     }
-    /* ★修正点2のCSSを追加 */
     .model-select {
         flex: 1;
     }
@@ -202,7 +233,6 @@
     }
     .upload-btn.danger { background: #dc3545; }
     .upload-btn.danger:hover { background: #c82333; }
-    /* ★修正点3のCSSを追加 */
     .upload-note {
         font-size: 0.8rem;
         color: #666;
@@ -242,7 +272,6 @@
     .feedback-container { margin-top: 12px; padding-top: 8px; /* 統一 */ border-top: 1px solid #ddd; }
     .feedback-btn { background: none; border: 1px solid #ccc; border-radius: 16px; /* 統一 */ padding: 4px 8px; /* 統一 */ margin-left: 8px; /* 統一 */ cursor: pointer; transition: all 0.2s ease; }
     .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
-    /* ★修正点4のCSSを追加 */
     .feedback-thanks {
         font-size: 0.8rem;
         color: #28a745;
@@ -331,12 +360,21 @@
         .chat-input-box { flex-direction: column; align-items: stretch; }
         .send-btn { justify-content: center; padding: 12px; /* 統一 */ }
         .panel-section { padding: 16px; /* 統一 */ }
+        /* スマホ用ログアウトボタン調整 */
+        .logout-btn {
+            position: static;
+            display: block;
+            width: fit-content;
+            margin: 10px auto;
+        }
     }
 </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
+            <a href="/logout" class="logout-btn">🚪 ログアウト</a>
+            
             <h1>🔍 AI chatbot system【管理者】</h1>
             <p>学生支援のためのAIチャットボット (Gemini API版)</p>
         </div>

@@ -96,7 +96,7 @@
             color: red;
             font-weight: bold;
         }
-                .theme-selector {
+        .theme-selector {
             margin-top: 20px;
             color: rgba(255, 255, 255, 0.9);
             font-size: 0.9rem;
@@ -128,96 +128,142 @@
         .theme-btn[data-theme="green"] { background: linear-gradient(135deg, #2AF598 0%, #009EFD 100%); }
         .theme-btn[data-theme="orange"] { background: linear-gradient(135deg, #F6D365 0%, #FDA085 100%); }
         .theme-btn[data-theme="pink"] { background: linear-gradient(135deg, #F093FB 0%, #F5576C 100%); }
+        
+        /* ---------------------------------------------------- */
+        /* ★ 追加: ログアウトボタン（白背景・黒文字）のスタイル */
+        /* ---------------------------------------------------- */
+        .logout-btn {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            z-index: 10;
+
+            /* 色の設定 */
+            background-color: #ffffff;
+            color: #333333;
+            border: 1px solid #e0e0e0;
+
+            /* 形と配置 */
+            border-radius: 20px;
+            padding: 8px 16px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: bold;
+            
+            /* 影とアニメーション */
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .logout-btn:hover {
+            background-color: #f2f2f2;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        /* 既存の同期インジケーターの位置調整（ログアウトボタンと被らないように下へ） */
+        .settings-indicator {
+            top: 60px !important; 
+        }
+
         @media (max-width: 480px) {
             body { padding: 5px; }
             .container { height: calc(100vh - 10px); }
-            .header { padding: 20px; }
+            .header { padding: 20px; display: flex; flex-direction: column; align-items: center; }
             .header h1 { font-size: 1.6rem; }
             .header .subtitle { font-size: 0.9rem; }
+            /* スマホでのログアウトボタン調整 */
+            .logout-btn {
+                position: static;
+                display: inline-flex;
+                margin: 10px auto;
+            }
             .settings-indicator { position: static; margin-top: 10px; justify-content: center; }
             .chat-input-container { padding: 15px; }
             .chat-input-box { flex-direction: column; align-items: stretch; }
             .send-btn { justify-content: center; padding: 12px; }
             .settings-update-notification { position: fixed; top: auto; bottom: 20px; right: 20px; left: 20px; }
             .comment-btn { position: static; margin-top: 15px; }
-            /* 既存のCSSルールセットの下に追加 */
-
-        .rating-container {
-            margin-bottom: 15px;
-            text-align: center;
-        }
-        .rating-container p {
-            margin-bottom: 10px;
-            font-size: 0.9rem;
-            color: #555;
-        }
-        .rating-btn {
-            background-color: #f0f0f0;
-            border: 1px solid #ccc;
-            border-radius: 20px;
-            padding: 8px 15px;
-            margin: 0 5px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        .rating-btn:hover {
-            background-color: #e0e0e0;
-        }
-        .rating-btn.selected {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-color: #667eea;
-            font-weight: bold;
-        }
+            
+            .rating-container {
+                margin-bottom: 15px;
+                text-align: center;
+            }
+            .rating-container p {
+                margin-bottom: 10px;
+                font-size: 0.9rem;
+                color: #555;
+            }
+            .rating-btn {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 20px;
+                padding: 8px 15px;
+                margin: 0 5px;
+                cursor: pointer;
+                transition: all 0.2s ease;
+            }
+            .rating-btn:hover {
+                background-color: #e0e0e0;
+            }
+            .rating-btn.selected {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border-color: #667eea;
+                font-weight: bold;
+            }
         }
     </style>
 </head>
 <body>
-<div class="header">
-            <button id="openCommentModalBtn" class="comment-btn">✉️ 回答への意見・要望</button>
-            <div class="settings-indicator" id="settingsIndicator">
-                <div class="sync-dot disconnected" id="syncDot"></div>
-                <span id="syncText">設定同期準備中...</span>
+    <div class="header">
+        <a href="/logout" class="logout-btn">🚪 ログアウト</a>
+        
+        <button id="openCommentModalBtn" class="comment-btn">✉️ 回答への意見・要望</button>
+        <div class="settings-indicator" id="settingsIndicator">
+            <div class="sync-dot disconnected" id="syncDot"></div>
+            <span id="syncText">設定同期準備中...</span>
+        </div>
+        <h1>🔍 AI chatbot system</h1>
+        <p class="subtitle">学生生活に関する様々な質問にお答えします！</p>
+        
+        <div class="theme-selector">
+            <p>背景テーマを変更</p>
+            <div>
+                <button class="theme-btn" data-theme="default" title="デフォルト"></button>
+                <button class="theme-btn" data-theme="green" title="グリーン"></button>
+                <button class="theme-btn" data-theme="orange" title="オレンジ"></button>
+                <button class="theme-btn" data-theme="pink" title="ピンク"></button>
             </div>
-            <h1>🔍 AI chatbot system</h1>
-            <p class="subtitle">学生生活に関する様々な質問にお答えします！</p>
-            
-            <div class="theme-selector">
-                <p>背景テーマを変更</p>
-                <div>
-                    <button class="theme-btn" data-theme="default" title="デフォルト"></button>
-                    <button class="theme-btn" data-theme="green" title="グリーン"></button>
-                    <button class="theme-btn" data-theme="orange" title="オレンジ"></button>
-                    <button class="theme-btn" data-theme="pink" title="ピンク"></button>
+        </div>
+    </div>
+    <div class="chat-container">
+        <div class="chat-header">💬 AIチャット</div>
+        <div class="chat-messages" id="chatMessages">
+            <div class="message bot">
+                <div class="message-content">
+                    私は学生支援チャットボットです。🚀<br>
+                    - 学生証を紛失・盗難・汚損したときは？<br>
+                    - 新しいサークルを作るには？<br>
+                    - 休学・復学・退学の手続きをしたいときは？<br>
+                    様々な質問にお答えします！
+                    <span class="warning-text">
+            ※氏名・住所・学籍番号などの個人情報は入力しないでください。
+                    重要な決定をする前に、必ず公式情報を確認してください。
+                    </span>
                 </div>
+                <div class="message-time">システム起動時刻</div>
             </div>
-            </div>
-        <div class="chat-container">
-            <div class="chat-header">💬 AIチャット</div>
-            <div class="chat-messages" id="chatMessages">
-                <div class="message bot">
-                    <div class="message-content">
-                        私は学生支援チャットボットです。🚀<br>
-                        - 学生証を紛失・盗難・汚損したときは？<br>
-                        - 新しいサークルを作るには？<br>
-                        - 休学・復学・退学の手続きをしたいときは？<br>
-                        様々な質問にお答えします！
-                        <span class="warning-text">
-                ※氏名・住所・学籍番号などの個人情報は入力しないでください。
-                        重要な決定をする前に、必ず公式情報を確認してください。
-                        </span>
-                    </div>
-                    <div class="message-time">システム起動時刻</div>
-                </div>
-            </div>
-            <div class="chat-input-container">
-                <div class="chat-input-box">
-                    <textarea id="chatInput" class="chat-input" placeholder="質問を入力してください..." rows="1"></textarea>
-                    <button id="sendBtn" class="send-btn">
-                        <span>送信</span>
-                        <span>🔍</span>
-                    </button>
-                </div>
+        </div>
+        <div class="chat-input-container">
+            <div class="chat-input-box">
+                <textarea id="chatInput" class="chat-input" placeholder="質問を入力してください..." rows="1"></textarea>
+                <button id="sendBtn" class="send-btn">
+                    <span>送信</span>
+                    <span>🔍</span>
+                </button>
             </div>
         </div>
     </div>
