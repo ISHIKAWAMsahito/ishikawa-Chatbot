@@ -1,11 +1,13 @@
 # ---------------------------------
-# 環境変数 (★最重要★)
+# 環境変数・キー情報 (★最重要★)
 # ---------------------------------
 .env
 *.env
 ishikawa-Chatbot.env 
 GrafanaAPIKEY.env
 SBIpw .txt
+# ▼ 追加: ログに出ていた危険なファイル
+Auth0key.txt
 
 # ---------------------------------
 # Python 関連
@@ -16,26 +18,32 @@ __pycache__/
 oct_env/ 
 packages.txt
 requirements_local.txt
+# ▼ 追加: 一般的な仮想環境フォルダ
+venv/
+env/
 
 # ---------------------------------
-# ライブラリ・モデルキャッシュ
+# システム・バイナリ・ライブラリ (★重要)
 # ---------------------------------
-model_cache/ 
-st_models/ 
-
-# ---------------------------------
-# Node.js 関連
-# ---------------------------------
-node_modules/ 
-package-lock.json 
-
-# ---------------------------------
-# ビルド・ツール
-# ---------------------------------
+# ▼ 追加: 誤ってコミットされていたDLLやexe
+*.dll
+*.so
 *.exe 
 *.zip 
 *.7z 
-prometheus-3.6.0-rc.1.windows-amd64/ 
+python3.dll
+poppler/
+prometheus-3.6.0-rc.1.windows-amd64/
+Release-25.07.0-0/
+python-01-login/
+
+# ---------------------------------
+# モデルキャッシュ・Node.js
+# ---------------------------------
+model_cache/ 
+st_models/ 
+node_modules/ 
+package-lock.json 
 
 # ---------------------------------
 # Replit 関連
@@ -46,25 +54,39 @@ replit.nix
 # ---------------------------------
 # ローカルデータ・ドキュメント
 # ---------------------------------
+# ▼ 追加: リポジトリを重くするPDFやWordを除外
+*.pdf
+*.docx
+
 grafana_data/ 
 ProgPython/ 
 諸資格過程/ 
 チャットボットdb/ 
 チャットボットドキュメント/ 
 コマンド集/ 
+
+# 出力結果のテキストファイル
 output_gakubu.txt
 output_shokitei.txt
 test_output.txt
+# ▼ 追加: ログに出ていた出力ファイル
+output_kouza.txt
+output_teikan.txt
+"[札幌学院大学生協主催 学内講座約款].txt"
 
 # ---------------------------------
-# 競合していたファイル
+# 競合していたファイル・ゴミファイル
 # ---------------------------------
 "GeminiAPIのポリシー,supabace,RAGの調査.docx" 
 c.html 
 
 # ---------------------------------
-# スクリプト
+# スクリプト (ユーティリティ・一時ファイル)
 # ---------------------------------
-# ⚠️ 注意: このファイルはリポジトリに含めなくて本当に大丈夫ですか？
+# プロジェクト本体に不要なら除外推奨
 migrate.py  
 upload_script.py
+# ▼ 追加: ログに出ていたスクリプト群
+pdf_to_jpg.py
+update_vectors_gemini.py
+upload_images.py
