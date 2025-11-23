@@ -86,7 +86,19 @@ def healthz_check():
 
 @app.get("/DB.html", dependencies=[Depends(require_auth)])
 async def get_db_page():
-    return FileResponse("DB.html")
+    # main.py の場所を基準に、DB.html の絶対パスを計算
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(base_dir, "DB.html")
+    
+    # ログにパスを出力しておくと、デバッグ時に役立ちます（Renderのログで確認できます）
+    logging.info(f"Trying to serve file from: {file_path}")
+
+    if not os.path.exists(file_path):
+        # ファイルがない場合は明確にエラーを出す
+        logging.error(f"File NOT found at: {file_path}")
+        raise RuntimeError(f"File at path {file_path} does not exist.")
+        
+    return FileResponse(file_path)
 # =========================================================
 # WebSocketエンドポイント
 # =========================================================
