@@ -3,7 +3,6 @@ import logging
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import RedirectResponse, FileResponse, Response
 from core.config import oauth, AUTH0_DOMAIN, AUTH0_CLIENT_ID, SUPER_ADMIN_EMAILS, ALLOWED_CLIENT_EMAILS, BASE_DIR
-# require_auth, require_auth_client はAPI保護用には残しますが、HTML配信では使いません
 
 router = APIRouter()
 
@@ -57,35 +56,30 @@ async def logout(request: Request):
     return RedirectResponse(f"https://{AUTH0_DOMAIN}/v2/logout?returnTo={request.url_for('serve_client')}&client_id={AUTH0_CLIENT_ID}")
 
 # ---------------------------------------------------------
-# HTMLファイル提供 (認証ガード付き)
+# HTMLファイル提供 (手動セッションチェックでリダイレクト制御)
 # ---------------------------------------------------------
 
 @router.get("/", response_class=FileResponse)
 async def serve_client(request: Request):
-    # クライアント認証チェック: セッションがない場合はログインへ
+    # クライアント認証チェック
     user = request.session.get('user')
     if not user:
         return RedirectResponse(url='/login')
-    
-    # 権限チェックが必要ならここで行う (例: user['email'] in ALLOWED_CLIENT_EMAILS)
     
     return FileResponse(os.path.join(BASE_DIR, "static", "client.html"))
 
 @router.get("/admin")
-@router.get("/admin.html") # admin.htmlへの直接アクセスもカバー
+@router.get("/admin.html")
 async def serve_admin(request: Request):
     # 管理者認証チェック
     user = request.session.get('user')
     if not user:
-        # セッションがない -> ログイン画面へリダイレクト
         return RedirectResponse(url='/login')
     
-    # メールアドレスによる管理者チェック
     user_email = user.get('email', '').lower()
     super_admin_emails_lower = [email.lower() for email in SUPER_ADMIN_EMAILS]
     
     if user_email not in super_admin_emails_lower:
-        # ログインしてるけど管理者じゃない -> クライアント画面またはログアウトへ
         return RedirectResponse(url='/')
 
     return FileResponse(os.path.join(BASE_DIR, "static", "admin.html"))
