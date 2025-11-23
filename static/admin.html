@@ -528,7 +528,6 @@
         let backendConnected = false;
         let settingsSocket = null;
 
-        // openDocumentManager を定義
         function openDocumentManager() {
             const url = `${window.location.origin}/DB.html`;
             window.open(url, '_blank');
@@ -645,7 +644,6 @@
                 top_k: parseInt(topKSelect.value, 10)
             };
             try {
-                // 修正: /api/admin/system/settings
                 const response = await fetch('/api/admin/system/settings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -663,17 +661,14 @@
             messageWrapper.className = `message ${type}`;
             const messageContent = document.createElement('div');
             messageContent.className = 'message-content';
-             // HTMLとして解釈されるようにinnerHTMLを使用
-            messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
-            // リンクが含まれる場合はHTMLとして処理、そうでなければエスケープ
+            
             if (text.includes('<a href=')) {
-                // リンクタグ以外のHTMLをエスケープ
                 let processedText = text.replace(/\n/g, '<br>');
                 messageContent.innerHTML = processedText;
             } else {
-                // 通常のテキストはエスケープしてから改行を<br>に変換
                 messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
             }
+            
             messageWrapper.appendChild(messageContent);
             const messageTime = document.createElement('div');
             messageTime.className = 'message-time';
@@ -684,6 +679,7 @@
             return messageWrapper;
         }
 
+        // --- フィードバック送信機能 ---
         async function sendFeedback(element, rating) {
             const messageWrapper = element.closest('.message');
             const logId = messageWrapper.dataset.logId;
@@ -693,7 +689,6 @@
                 return;
             }
             try {
-                // 修正: /api/client/feedback
                 const res = await fetch(`/api/client/feedback`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -708,39 +703,17 @@
             } catch(error) {
                 console.error("Error sending feedback:", error);
                 addMessage(`フィードバックの送信中にエラーが発生しました: ${error.message}`, 'bot');
-            };
-        }
-
-        async function initializeSystem() {
-            // バックエンドURLの表示更新
-            const backendUrlEl = document.getElementById('backendUrl');
-            if (backendUrlEl) {
-                backendUrlEl.textContent = window.location.origin;
-            }
-            
-            // バックエンド接続確認
-            const dbType = await checkBackendConnection();
-            
-            if (backendConnected) {
-                checkDbConnection(dbType);
-                await checkGeminiConnection();
-                await refreshCollections();
-                connectSettingsWebSocket(); // WebSocket接続開始
             }
         }
-        
-        // =========================================
-        // ★★★ 修正箇所: 不足していた関数群を追加 ★★★
-        // =========================================
 
+        // --- 接続チェック関連 ---
         async function checkBackendConnection() {
             try {
-                // 修正: 共通の /health
                 const response = await fetch(`/health`);
                 const data = await response.json();
                 backendConnected = response.ok;
                 if (!backendConnected) addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
-                return data.database; // 'supabase' or 'chromadb'
+                return data.database; 
             } catch (error) {
                 backendConnected = false;
                 addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
@@ -760,9 +733,7 @@
         function checkDbConnection(dbType) {
             const dbName = dbType || '不明';
             const dbNameCapitalized = dbName.charAt(0).toUpperCase() + dbName.slice(1);
-            
             updateStatus('dbStatusIndicator', 'dbStatusText', backendConnected, dbNameCapitalized);
-
             const collectionTitle = document.getElementById('collectionTitle');
             if(collectionTitle){
                 collectionTitle.innerHTML = `🗃️ ${dbNameCapitalized} コレクション`;
@@ -771,7 +742,6 @@
 
         async function checkGeminiConnection() {
             try {
-                // 修正: /api/admin/system/gemini/status
                 const response = await fetch(`/api/admin/system/gemini/status`);
                 const data = await response.json();
                 updateStatus('geminiStatus', 'geminiStatusText', response.ok && data.connected, 'Gemini API');
@@ -784,10 +754,25 @@
                 updateStatus('geminiStatus', 'geminiStatusText', false, 'Gemini API');
             }
         }
-        // =========================================
-        // ★★★ 修正完了 ★★★
-        // =========================================
 
+        // --- システム初期化 ---
+        async function initializeSystem() {
+            const backendUrlEl = document.getElementById('backendUrl');
+            if (backendUrlEl) {
+                backendUrlEl.textContent = window.location.origin;
+            }
+            
+            const dbType = await checkBackendConnection();
+            
+            if (backendConnected) {
+                checkDbConnection(dbType);
+                await checkGeminiConnection();
+                await refreshCollections();
+                connectSettingsWebSocket(); 
+            }
+        }
+
+        // --- チャット機能 ---
         async function sendMessage() {
             const userInput = chatInput.value.trim();
             if (!userInput) return;
@@ -805,7 +790,6 @@
             let fullResponse = '';
 
             try {
-                // 修正: /api/admin/chat/chat
                 const response = await fetch(`/api/admin/chat/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -826,8 +810,6 @@
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 botMessageContent.innerHTML = '';
-
-                // バッファ変数の初期化
                 let buffer = ''; 
 
                 while (true) {
@@ -846,13 +828,8 @@
                         break;
                     }
                     
-                    // 受信したチャンクをバッファに追加
                     buffer += decoder.decode(value, { stream: true });
-                    
-                    // 改行で分割
                     const lines = buffer.split('\n');
-                    
-                    // 配列の最後の要素（途中かけの可能性がある行）をバッファに戻して次回に回す
                     buffer = lines.pop(); 
                     
                     for (const line of lines) {
@@ -870,21 +847,16 @@
                                     
                                     if (data.content) {
                                         fullResponse += data.content;
-
-                                        // MarkdownリンクをHTMLタグへ変換
                                         let htmlText = fullResponse.replace(
                                             /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
                                             '<a href="$2" target="_blank">$1</a>'
                                         );
-
-                                        // 改行を <br> に変換
                                         htmlText = htmlText.replace(/\n/g, '<br>');
-                                        
                                         botMessageContent.innerHTML = htmlText;
                                         chatMessages.scrollTop = chatMessages.scrollHeight;
                                     }
                                 } catch (e) {
-                                    console.error("Error parsing stream data:", e, "Raw data:", jsonString);
+                                    console.error("Error parsing stream data:", e);
                                 }
                             }
                         }
@@ -909,7 +881,6 @@
                 formData.append('collection_name', currentCollection);
                 formData.append('embedding_model', embeddingModelSelect.value);
                 try {
-                    // 修正: /api/admin/documents/upload
                     const response = await fetch(`/api/admin/documents/upload`, { method: 'POST', body: formData });
                     const result = await response.json();
                     if (response.ok) {
@@ -932,7 +903,6 @@
                 return;
             }
             try {
-                // 修正: /api/admin/system/collections
                 const response = await fetch(`/api/admin/system/collections`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -942,7 +912,6 @@
                 addMessage(response.ok ? `✅ コレクション「${collectionName}」を作成しました` : `❌ 作成失敗: ${result.detail}`, 'bot');
                 if (response.ok) {
                     document.getElementById('newCollectionName').value = '';
-                    
                     await new Promise(resolve => setTimeout(resolve, 500));
                     await refreshCollections();
                 }
@@ -957,7 +926,6 @@
             const confirmed = await showConfirm(`コレクション「${collectionName}」を本当に削除しますか？`);
             if (!confirmed) return;
             try {
-                // 修正: /api/admin/system/collections/{name}
                 const response = await fetch(`/api/admin/system/collections/${collectionName}`, { method: 'DELETE' });
                 const result = await response.json();
                 addMessage(response.ok ? `✅ ${result.message}` : `❌ 削除失敗: ${result.detail}`, 'bot');
@@ -971,7 +939,6 @@
 
         async function refreshCollections() {
             try {
-                // 修正: /api/admin/system/collections
                 const response = await fetch(`/api/admin/system/collections`);
                 if (response.ok) {
                     const collections = await response.json();
@@ -993,7 +960,6 @@
             }
             documentList.innerHTML = '読み込み中...';
             try {
-                // 修正: /api/admin/documents/collections/{name}/documents
                 const response = await fetch(`/api/admin/documents/collections/${currentCollection}/documents`);
                 const data = await response.json();
                 documentList.innerHTML = '';
@@ -1004,10 +970,10 @@
                         item.textContent = doc.id;
                         documentList.appendChild(item);
                     });
-                   const totalItem = document.createElement('div');
-totalItem.className = 'total-chunks-info'; // この一行でスタイルを適用します
-totalItem.innerHTML = `<strong>合計: ${data.count} チャンク</strong>`;
-documentList.appendChild(totalItem);
+                    const totalItem = document.createElement('div');
+                    totalItem.className = 'total-chunks-info'; 
+                    totalItem.innerHTML = `<strong>合計: ${data.count} チャンク</strong>`;
+                    documentList.appendChild(totalItem);
 
                 } else {
                     documentList.innerHTML = '<span>ドキュメントはありません</span>';
@@ -1054,7 +1020,6 @@ documentList.appendChild(totalItem);
             scrapeBtn.textContent = '取得中...';
             addMessage(`⏳ URLから情報を取得中...\n${url}`, 'bot');
             try {
-                // 修正: /api/admin/documents/scrape
                 const response = await fetch(`/api/admin/documents/scrape`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1134,6 +1099,7 @@ documentList.appendChild(totalItem);
             }
         });
 
+        // 最後に初期化関数を実行
         initializeSystem();
     });
 </script>
