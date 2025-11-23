@@ -88,7 +88,7 @@ def healthz_check():
 async def get_db_page():
     # main.py の場所を基準に、DB.html の絶対パスを計算
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(base_dir, "DB.html")
+    file_path = os.path.join(base_dir, "static", "DB.html")
     
     # ログにパスを出力しておくと、デバッグ時に役立ちます（Renderのログで確認できます）
     logging.info(f"Trying to serve file from: {file_path}")
