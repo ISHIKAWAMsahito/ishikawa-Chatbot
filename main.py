@@ -2,11 +2,8 @@ import os
 import logging
 import uvicorn
 from contextlib import asynccontextmanager
-
-# ↓↓↓ FileResponse, Request, status を追加インポート
-from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, Request, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse, FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -15,7 +12,6 @@ from core.config import APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY
 from core.database import SupabaseClientManager
 from core.settings import SettingsManager
 from services.document_processor import SimpleDocumentProcessor
-from core.dependencies import require_auth, require_auth_client
 from core import database
 from core import settings as core_settings
 
@@ -57,19 +53,17 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True, # クッキーを含めるために必須
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# セッション設定（★修正: Brave対策）
-# same_site='lax' にすることで、通常のリンク遷移でのCookie送信を許可しつつ、
-# クロスサイトのトラッキング防止機能に引っかかりにくくします。
+# セッション設定 (Brave対策: same_site='lax'に変更)
 app.add_middleware(
     SessionMiddleware, 
     secret_key=APP_SECRET_KEY,
-    https_only=True, # RenderなどはHTTPSなのでTrueでOK
-    same_site='lax'  # 'none' から 'lax' に変更推奨
+    https_only=True,
+    same_site='lax'  # 'none' から 'lax' に変更
 )
 
 Instrumentator().instrument(app).expose(app)
@@ -86,15 +80,8 @@ def global_health_check():
 def healthz_check():
     return {"status": "ok"}
 
-@app.get("/config")
-def get_config():
-    return {
-        "supabase_url": SUPABASE_URL,
-        "supabase_anon_key": "YOUR_ANON_KEY_HERE" 
-    }
-
 # =========================================================
-# ★ WebSocketエンドポイント (認証なし・ルート直下)
+# WebSocketエンドポイント
 # =========================================================
 @app.websocket("/ws/settings")
 async def websocket_endpoint(websocket: WebSocket):
@@ -111,8 +98,6 @@ async def websocket_endpoint(websocket: WebSocket):
             "type": "settings_update",
             "data": current_settings
         })
-        logging.info(f"WebSocketクライアントに初期設定を送信しました。")
-        
     except Exception as e:
         logging.error(f"WebSocketへの初期設定送信に失敗: {e}")
 
@@ -121,98 +106,30 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         core_settings.settings_manager.remove_websocket(websocket)
-        logging.info("WebSocketクライアントが切断されました。")
-
 
 # ---------------------------------------------------------
 # ルーター登録
 # ---------------------------------------------------------
 
-app.include_router(auth.router, tags=["Auth"])
-
-app.include_router(
-    chat.router,
-    prefix="/api/client/chat", 
-    tags=["Client Chat"]
-)
-app.include_router(
-    feedback.router,
-    prefix="/api/client/feedback",
-    tags=["Client Feedback"]
-)
-
-# 管理者用 API (CookieチェックはDependencies内で行われる)
-app.include_router(
-    documents.router,
-    prefix="/api/admin/documents", 
-    tags=["Admin Documents"],
-    dependencies=[Depends(require_auth)] 
-)
-app.include_router(
-    fallbacks.router,
-    prefix="/api/admin/fallbacks", 
-    tags=["Admin Fallbacks"],
-    dependencies=[Depends(require_auth)]
-)
-app.include_router(
-    system.router,
-    prefix="/api/admin/system",
-    tags=["Admin System"],
-    dependencies=[Depends(require_auth)]
-)
-app.include_router(
-    chat.router,
-    prefix="/api/admin/chat",
-    tags=["Admin Chat"],
-    dependencies=[Depends(require_auth)]
-)
-
-# ---------------------------------------------------------
-# 静的ファイルとルート設定
-# ---------------------------------------------------------
-
+# 静的ファイルのmountはAPIルーターより前に行う
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-@app.get("/")
-async def root():
-    return RedirectResponse(url="/client.html")
+# Authルーター (HTML配信もここで担当)
+app.include_router(auth.router, tags=["Auth"])
 
-# ★追加: ログインページへのルート
-@app.get("/login")
-async def login_page():
-    # もし static/login.html があるならそれを返す
-    # なければ RedirectResponse(url="/static/login.html") でも可
-    return FileResponse("static/login.html")
+# APIルーター群
+app.include_router(chat.router, prefix="/api/client/chat", tags=["Client Chat"])
+app.include_router(feedback.router, prefix="/api/client/feedback", tags=["Client Feedback"])
 
-@app.get("/client.html")
-async def client_page():
-    return FileResponse("static/client.html")
+# 管理者API (auth.router内の認証ロジックとは別に、APIレベルでもDependsで保護)
+from core.dependencies import require_auth
+app.include_router(documents.router, prefix="/api/admin/documents", tags=["Admin Documents"], dependencies=[Depends(require_auth)])
+app.include_router(fallbacks.router, prefix="/api/admin/fallbacks", tags=["Admin Fallbacks"], dependencies=[Depends(require_auth)])
+app.include_router(system.router, prefix="/api/admin/system", tags=["Admin System"], dependencies=[Depends(require_auth)])
+app.include_router(chat.router, prefix="/api/admin/chat", tags=["Admin Chat"], dependencies=[Depends(require_auth)])
 
-# ★修正: 管理者ページへのアクセス制御
-@app.get("/admin")
-@app.get("/admin.html")
-async def admin_page(request: Request):
-    """
-    管理者ページへのアクセス。
-    Cookieにトークンがなければログインページへリダイレクトする。
-    """
-    # auth.py で設定しているCookie名を確認してください（通常 "access_token" や "session_id"）
-    token = request.cookies.get("access_token") 
-
-    if not token:
-        # トークンがない場合はログインページへ飛ばす
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    
-    # トークンがある場合はページを表示
-    return FileResponse("static/admin.html")
-
-@app.get("/DB.html")
-async def db_page(request: Request):
-    """DB管理画面も同様に保護"""
-    token = request.cookies.get("access_token") 
-    if not token:
-        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    return FileResponse("static/DB.html")
+# 注意: main.py内にあった @app.get("/") や @app.get("/admin.html") は
+# auth.py と競合するため削除しました。すべて auth.py で制御します。
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
