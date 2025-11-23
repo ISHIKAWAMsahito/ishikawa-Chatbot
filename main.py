@@ -84,6 +84,9 @@ def global_health_check():
 def healthz_check():
     return {"status": "ok"}
 
+@app.get("/DB.html", dependencies=[Depends(require_auth)])
+async def get_db_page():
+    return FileResponse("DB.html")
 # =========================================================
 # WebSocketエンドポイント
 # =========================================================
