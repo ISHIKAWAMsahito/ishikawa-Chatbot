@@ -4,9 +4,9 @@ import traceback
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 import google.generativeai as genai
-import httpx  # Webアクセス用
-from bs4 import BeautifulSoup # HTML解析用
-from pydantic import BaseModel # リクエストの型定義用
+import httpx
+from bs4 import BeautifulSoup
+from pydantic import BaseModel
 
 # リクエストボディのモデル定義
 class ScrapeRequest(BaseModel):
@@ -22,7 +22,8 @@ from services import document_processor
 
 router = APIRouter()
 
-@router.get("/api/documents/all")
+# 修正: /api/documents/all -> /all
+@router.get("/all")
 async def get_all_documents(
     user: dict = Depends(require_auth),
     page: int = Query(1, ge=1),
@@ -70,7 +71,8 @@ async def get_all_documents(
         logging.error(traceback.format_exc()) 
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/api/documents/{doc_id}")
+# 修正: /api/documents/{doc_id} -> /{doc_id}
+@router.get("/{doc_id}")
 async def get_document_by_id(doc_id: int, user: dict = Depends(require_auth)):
     """特定のドキュメントを取得"""
     if not database.db_client:
@@ -86,7 +88,8 @@ async def get_document_by_id(doc_id: int, user: dict = Depends(require_auth)):
         logging.error(f"ドキュメント取得エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.put("/api/documents/{doc_id}")
+# 修正: /api/documents/{doc_id} -> /{doc_id}
+@router.put("/{doc_id}")
 async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Depends(require_auth)):
     """ドキュメントを更新。content更新時にベクトルも再生成する。"""
     if not database.db_client or not settings.settings_manager:
@@ -98,7 +101,6 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
             new_content = request["content"]
             update_data["content"] = new_content
             
-            # ★注意: ここもモデル不一致の原因になり得るので、必要なら固定モデルに変更してください
             embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
             
             logging.info(f"ドキュメント {doc_id} のコンテンツが変更されたため、ベクトルを再生成します...")
@@ -141,7 +143,8 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
         logging.error(f"ドキュメント更新エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/api/documents/{doc_id}")
+# 修正: /api/documents/{doc_id} -> /{doc_id}
+@router.delete("/{doc_id}")
 async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
     """ドキュメントを削除"""
     if not database.db_client:
@@ -160,6 +163,7 @@ async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
         logging.error(f"ドキュメント削除エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# 修正: main.pyのprefix配下になるため変更なし (URL: /api/admin/documents/upload)
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...), 
@@ -194,7 +198,6 @@ async def upload_document(
         if not docs_to_embed:
             raise HTTPException(status_code=400, detail="ファイルからテキストを抽出できませんでした。")
 
-        # ★注意: ここもモデル不一致の原因になり得ます
         embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
         
         total_chunks = len(docs_to_embed)
@@ -238,6 +241,7 @@ async def upload_document(
         logging.error(f"ファイルアップロード処理エラー: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# 修正: main.pyのprefix配下になる (URL: /api/admin/documents/collections/...)
 @router.get("/collections/{collection_name}/documents")
 async def get_documents(collection_name: str):
     if not database.db_client:
@@ -247,9 +251,7 @@ async def get_documents(collection_name: str):
         "count": database.db_client.count_chunks_in_collection(collection_name)
     }
 
-# ---------------------------------------------------------
-#  ▼▼▼ 修正箇所: scrape_website ▼▼▼
-# ---------------------------------------------------------
+# 修正: main.pyのprefix配下になる (URL: /api/admin/documents/scrape)
 @router.post("/scrape")
 async def scrape_website(
     request: ScrapeRequest, 
@@ -262,7 +264,7 @@ async def scrape_website(
     logging.info(f"Scrapeリクエスト受信: {request.url} (Collection: {request.collection_name})")
 
     try:
-        # 1. Webサイトからコンテンツを取得 (SSLエラー対策済み)
+        # 1. Webサイトからコンテンツを取得
         async with httpx.AsyncClient(verify=False) as client:
             try:
                 response = await client.get(request.url, follow_redirects=True, timeout=10.0)
@@ -314,7 +316,6 @@ async def scrape_website(
             raise HTTPException(status_code=400, detail="テキストのチャンキングに失敗しました。")
 
         # 4. ベクトル化 & DB挿入
-        # ★注意: request.embedding_model が検索側と一致しているか要確認
         embedding_model = request.embedding_model
         total_chunks = len(docs_to_embed)
         logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します...")

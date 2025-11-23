@@ -648,7 +648,8 @@
                 top_k: parseInt(topKSelect.value, 10)
             };
             try {
-                const response = await fetch('/settings', {
+                // 修正: /api/admin/system/settings
+                const response = await fetch('/api/admin/system/settings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(settings)
@@ -727,6 +728,7 @@
 
         async function checkBackendConnection() {
             try {
+                // 修正: 共通の /health
                 const response = await fetch(`/health`);
                 const data = await response.json();
                 backendConnected = response.ok;
@@ -762,7 +764,8 @@
 
         async function checkGeminiConnection() {
             try {
-                const response = await fetch(`/gemini/status`);
+                // 修正: /api/admin/system/gemini/status
+                const response = await fetch(`/api/admin/system/gemini/status`);
                 const data = await response.json();
                 updateStatus('geminiStatus', 'geminiStatusText', response.ok && data.connected, 'Gemini API');
                 if (response.ok && data.connected && data.models) {
@@ -792,7 +795,8 @@
             let fullResponse = '';
 
             try {
-                const response = await fetch(`/chat`, {
+                // 修正: /api/admin/chat/chat
+                const response = await fetch(`/api/admin/chat/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -896,7 +900,8 @@
                 formData.append('collection_name', currentCollection);
                 formData.append('embedding_model', embeddingModelSelect.value);
                 try {
-                    const response = await fetch(`/upload`, { method: 'POST', body: formData });
+                    // 修正: /api/admin/documents/upload
+                    const response = await fetch(`/api/admin/documents/upload`, { method: 'POST', body: formData });
                     const result = await response.json();
                     if (response.ok) {
                         botMsg.querySelector('.message-content').textContent = `✅「${file.name}」をコレクション「${currentCollection}」に追加しました（${result.chunks}チャンク）`;
@@ -918,7 +923,8 @@
                 return;
             }
             try {
-                const response = await fetch(`/collections`, {
+                // 修正: /api/admin/system/collections
+                const response = await fetch(`/api/admin/system/collections`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: collectionName })
@@ -942,7 +948,8 @@
             const confirmed = await showConfirm(`コレクション「${collectionName}」を本当に削除しますか？`);
             if (!confirmed) return;
             try {
-                const response = await fetch(`/collections/${collectionName}`, { method: 'DELETE' });
+                // 修正: /api/admin/system/collections/{name}
+                const response = await fetch(`/api/admin/system/collections/${collectionName}`, { method: 'DELETE' });
                 const result = await response.json();
                 addMessage(response.ok ? `✅ ${result.message}` : `❌ 削除失敗: ${result.detail}`, 'bot');
                 if (response.ok) {
@@ -955,7 +962,8 @@
 
         async function refreshCollections() {
             try {
-                const response = await fetch(`/collections`);
+                // 修正: /api/admin/system/collections
+                const response = await fetch(`/api/admin/system/collections`);
                 if (response.ok) {
                     const collections = await response.json();
                     updateCollectionList(collections);
@@ -976,7 +984,8 @@
             }
             documentList.innerHTML = '読み込み中...';
             try {
-                const response = await fetch(`/collections/${currentCollection}/documents`);
+                // 修正: /api/admin/documents/collections/{name}/documents
+                const response = await fetch(`/api/admin/documents/collections/${currentCollection}/documents`);
                 const data = await response.json();
                 documentList.innerHTML = '';
                 if (response.ok && data.documents && data.documents.length > 0) {
@@ -1036,7 +1045,8 @@ documentList.appendChild(totalItem);
             scrapeBtn.textContent = '取得中...';
             addMessage(`⏳ URLから情報を取得中...\n${url}`, 'bot');
             try {
-                const response = await fetch(`/scrape`, {
+                // 修正: /api/admin/documents/scrape
+                const response = await fetch(`/api/admin/documents/scrape`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
