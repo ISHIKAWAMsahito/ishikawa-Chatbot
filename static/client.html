@@ -492,30 +492,25 @@ document.addEventListener('DOMContentLoaded', function() {
         async function sendMessage() {
             const userInput = chatInput.value.trim();
             if (!userInput) return;
-            if (!currentCollection) {
-                addMessage('❌ コレクションが選択されていません。', 'bot');
-                return;
-            }
 
+            // ユーザーのメッセージを表示
             addMessage(userInput, 'user');
             chatInput.value = '';
             chatInput.style.height = 'auto';
 
+            // ボットの応答準備
             const botMessageElement = addMessage('考え中...', 'bot');
             const botMessageContent = botMessageElement.querySelector('.message-content');
             let fullResponse = '';
 
             try {
-                // 【修正】正しいエンドポイント: /api/admin/chat (/ は削除)
-                const response = await fetch(`/api/admin/chat`, {
+                // ★修正箇所: 学生用エンドポイント (/api/client/chat) を使用
+                // 管理者用パラメータ（model, collectionなど）は送らない
+                const response = await fetch(`${BACKEND_API_BASE_URL}/api/client/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        query: userInput,
-                        model: modelSelect.value,
-                        collection: currentCollection,
-                        embedding_model: embeddingModelSelect.value,
-                        top_k: parseInt(topKSelect.value, 10)
+                        query: userInput
                     })
                 });
 
@@ -524,14 +519,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     throw new Error(errorData.detail);
                 }
 
+                // レスポンスの読み込み（ストリーミング）
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 botMessageContent.innerHTML = '';
-                let buffer = ''; 
+                let buffer = '';
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
+                        // 回答完了時にフィードバックボタンを表示
                         if (botMessageElement.dataset.logId) {
                             const feedbackContainer = document.createElement('div');
                             feedbackContainer.className = 'feedback-container';
@@ -544,26 +541,28 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                         break;
                     }
-                    
+
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split('\n');
-                    buffer = lines.pop(); 
-                    
+                    buffer = lines.pop();
+
                     for (const line of lines) {
                         if (line.trim().startsWith('data: ')) {
                             const jsonString = line.substring(6).trim();
-
-                            if (jsonString) { 
+                            if (jsonString) {
                                 try {
                                     const data = JSON.parse(jsonString);
                                     
+                                    // フィードバックID（ログID）の保存
                                     if (data.feedback_id) {
-                                        botMessageElement.dataset.feedbackId = data.feedback_id; 
-                                        botMessageElement.dataset.logId = data.feedback_id;     
+                                        botMessageElement.dataset.feedbackId = data.feedback_id;
+                                        botMessageElement.dataset.logId = data.feedback_id;
                                     }
-                                    
+
+                                    // テキストコンテンツの追記
                                     if (data.content) {
                                         fullResponse += data.content;
+                                        // リンクの自動変換処理
                                         let htmlText = fullResponse.replace(
                                             /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
                                             '<a href="$2" target="_blank">$1</a>'
@@ -578,7 +577,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             }
                         }
                     }
-                } 
+                }
             } catch (error) {
                 console.error('メッセージ送信エラー:', error);
                 botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
