@@ -60,7 +60,7 @@ async def logout(request: Request):
     # 現在のホストを取得（http/https を自動判定）
     scheme = request.url.scheme
     host = request.url.netloc
-    return_to = f"{scheme}://{host}/"
+    return_to = f"{scheme}://{host}/login"
     
     logout_url = (
         f"https://{AUTH0_DOMAIN}/v2/logout?"
