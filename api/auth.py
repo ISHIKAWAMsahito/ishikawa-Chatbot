@@ -13,7 +13,15 @@ router = APIRouter()
 async def login_auth0(request: Request):
     if 'auth0' not in oauth._clients:
         raise HTTPException(status_code=500, detail="Auth0 is not configured.")
-    return await oauth.auth0.authorize_redirect(request, request.url_for('auth'))
+    
+    # ★修正: コールバックURLも強制的に HTTPS にする
+    redirect_uri = str(request.url_for('auth'))
+    
+    # Render上であれば http を https に置換
+    if "onrender.com" in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://")
+    
+    return await oauth.auth0.authorize_redirect(request, redirect_uri)
 
 @router.get('/auth')
 async def auth(request: Request):

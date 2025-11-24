@@ -84,21 +84,7 @@ def global_health_check():
 def healthz_check():
     return {"status": "ok"}
 
-@app.get("/DB.html", dependencies=[Depends(require_auth)])
-async def get_db_page():
-    # main.py の場所を基準に、DB.html の絶対パスを計算
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(base_dir, "static", "DB.html")
-    
-    # ログにパスを出力しておくと、デバッグ時に役立ちます（Renderのログで確認できます）
-    logging.info(f"Trying to serve file from: {file_path}")
 
-    if not os.path.exists(file_path):
-        # ファイルがない場合は明確にエラーを出す
-        logging.error(f"File NOT found at: {file_path}")
-        raise RuntimeError(f"File at path {file_path} does not exist.")
-        
-    return FileResponse(file_path)
 # =========================================================
 # WebSocketエンドポイント
 # =========================================================
@@ -148,4 +134,5 @@ app.include_router(chat.router, prefix="/api/admin/chat", tags=["Admin Chat"], d
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
+    # proxy_headers=True, forwarded_allow_ips="*" を追加すると、Render等のプロキシ下で正しくhttpsを認識します
+    uvicorn.run("main:app", host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
