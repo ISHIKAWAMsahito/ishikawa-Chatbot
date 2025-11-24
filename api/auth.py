@@ -1,5 +1,6 @@
 import os
 import logging
+from urllib.parse import quote_plus  # ★追加: URLエンコード用
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import RedirectResponse, FileResponse, Response
 from core.config import oauth, AUTH0_DOMAIN, AUTH0_CLIENT_ID, SUPER_ADMIN_EMAILS, ALLOWED_CLIENT_EMAILS, BASE_DIR
@@ -7,18 +8,11 @@ from core.config import oauth, AUTH0_DOMAIN, AUTH0_CLIENT_ID, SUPER_ADMIN_EMAILS
 router = APIRouter()
 
 # =========================================================
-#  URL生成ヘルパー (Render環境での https 強制用)
+#  URL生成ヘルパー
 # =========================================================
 def get_safe_redirect_uri(request: Request, path: str) -> str:
-    """
-    Render環境などを考慮し、強制的に正しいスキーム(https)とホストでURLを構築する
-    path: '/auth' や '/login' など
-    """
-    host = request.headers.get("host")  # 例: ishikawa-chatbot.onrender.com
-    # onrender.com が含まれていれば https を強制、それ以外(ローカルなど)はリクエストに従う
+    host = request.headers.get("host")
     scheme = "https" if "onrender.com" in host else request.url.scheme
-    
-    # 複数のスラッシュが重ならないように結合
     clean_path = path if path.startswith("/") else f"/{path}"
     return f"{scheme}://{host}{clean_path}"
 
@@ -30,9 +24,7 @@ async def login_auth0(request: Request):
     if 'auth0' not in oauth._clients:
         raise HTTPException(status_code=500, detail="Auth0 is not configured.")
     
-    # ★修正: ヘルパー関数を使って、確実に https://.../auth を指定する
     redirect_uri = get_safe_redirect_uri(request, '/auth')
-    
     return await oauth.auth0.authorize_redirect(request, redirect_uri)
 
 @router.get('/auth')
@@ -61,7 +53,6 @@ async def auth(request: Request):
             logging.warning(f"Unauthorized login attempt by: {user_email}")
             return RedirectResponse(url='/logout')
             
-    logging.error("Failed to get userinfo from Auth0.")
     return RedirectResponse(url='/login')
 
 @router.get('/logout')
@@ -71,26 +62,30 @@ async def logout(request: Request):
     if not all([AUTH0_DOMAIN, AUTH0_CLIENT_ID]):
         return RedirectResponse(url='/', status_code=302)
     
-    # ★修正: ログアウト後の戻り先もヘルパー関数で https://.../login に固定
+    # 戻り先URLを作成 (https://.../login)
     return_to = get_safe_redirect_uri(request, '/login')
+    
+    # ★修正: URLエンコードを行う (:// などを %3A%2F%2F に変換)
+    # これでAuth0が確実にURLを認識できるようになります
+    encoded_return_to = quote_plus(return_to)
     
     logout_url = (
         f"https://{AUTH0_DOMAIN}/v2/logout?"
         f"client_id={AUTH0_CLIENT_ID}&"
-        f"returnTo={return_to}"
+        f"returnTo={encoded_return_to}"
     )
     
     return RedirectResponse(url=logout_url, status_code=302)
 
+# ... (HTML配信部分などは変更なし。そのまま残してください) ...
 # ---------------------------------------------------------
-# ページ配信 (変更なし)
+# ページ配信
 # ---------------------------------------------------------
 @router.get("/", response_class=FileResponse)
 async def serve_client(request: Request):
     user = request.session.get('user')
     if not user:
         return RedirectResponse(url='/login', status_code=302)
-    
     client_path = os.path.join(BASE_DIR, "static", "client.html")
     if not os.path.exists(client_path):
         raise HTTPException(status_code=404, detail="client.html not found")
@@ -102,13 +97,10 @@ async def serve_admin(request: Request):
     user = request.session.get('user')
     if not user:
         return RedirectResponse(url='/login', status_code=302)
-    
     user_email = user.get('email', '').lower()
     super_admin_emails_lower = [email.lower() for email in SUPER_ADMIN_EMAILS]
-    
     if user_email not in super_admin_emails_lower:
         return RedirectResponse(url='/', status_code=302)
-
     admin_path = os.path.join(BASE_DIR, "static", "admin.html")
     if not os.path.exists(admin_path):
         raise HTTPException(status_code=404, detail="admin.html not found")
@@ -119,13 +111,10 @@ async def serve_db_page(request: Request):
     user = request.session.get('user')
     if not user:
         return RedirectResponse(url='/login', status_code=302)
-        
     user_email = user.get('email', '').lower()
     super_admin_emails_lower = [email.lower() for email in SUPER_ADMIN_EMAILS]
-    
     if user_email not in super_admin_emails_lower:
         return RedirectResponse(url='/', status_code=302)
-
     db_path = os.path.join(BASE_DIR, "static", "DB.html")
     if not os.path.exists(db_path):
         raise HTTPException(status_code=404, detail="DB.html not found")
