@@ -60,6 +60,14 @@ async def logout(request: Request):
     # 現在のホストを取得（http/https を自動判定）
     scheme = request.url.scheme
     host = request.url.netloc
+    
+    # 【重要】Render上など本番環境では、強制的に 'https' を使う
+    # request.url.scheme はプロキシ環境下で 'http' になることがあるため
+    if "onrender.com" in host:
+        scheme = "https"
+    else:
+        scheme = request.url.scheme
+
     return_to = f"{scheme}://{host}/login"
     
     logout_url = (
