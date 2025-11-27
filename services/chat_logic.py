@@ -134,8 +134,8 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
 # アプリケーション設定値
 # -----------------------------------------------
 # Document RAG (旧Stage 1) の類似度閾値
-STRICT_THRESHOLD = 0.75
-RELATED_THRESHOLD = 0.65
+STRICT_THRESHOLD = 0.65
+RELATED_THRESHOLD = 0.50
 
 # Q&A Fallback (旧Stage 2) の類似度閾値 -> 今回はこれを「Stage 1」として厳しめに使う
 QA_SIMILARITY_THRESHOLD = 0.95
@@ -272,7 +272,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         try:
             query_embedding_response = genai.embed_content(
                 model=chat_req.embedding_model,
-                content=user_input
+                content=user_input,
+                task_type="retrieval_query"  # ★これがないと検索精度が出ません！
             )
             query_embedding = query_embedding_response["embedding"]
         except Exception as e:
@@ -373,7 +374,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     embedding=query_embedding,
                     match_count=initial_fetch_count
                 )
-                
+                for doc in raw_search_results:
+                    logging.info(f"【デバッグ】ID:{doc.get('id')} Sim:{doc.get('similarity'):.4f} Content:{doc.get('content')[:20]}...")
                 # 2. 多様性フィルタ（内容が被っているものを間引く）
                 unique_results = filter_results_by_diversity(raw_search_results, threshold=0.7)
                 
