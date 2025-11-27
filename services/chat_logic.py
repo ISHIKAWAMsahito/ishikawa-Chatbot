@@ -384,13 +384,32 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     top_k=chat_req.top_k
                 )
                 
-                # 【修正済み】以前ここで search_results を filter_results_by_diversity で上書きしていたため、
-                # リランク結果が全て無駄になっていました。その行を削除しました。
             
-            # 閾値判定
-            strict_docs = [d for d in search_results if d.get('similarity', 0) >= STRICT_THRESHOLD]
-            related_docs = [d for d in search_results if RELATED_THRESHOLD <= d.get('similarity', 0) < STRICT_THRESHOLD]
-            relevant_docs = strict_docs + related_docs
+            # -------------------------------------------------------
+            # 【修正版】 閾値判定ロジック (Gemini救済措置つき)
+            # -------------------------------------------------------
+            
+            relevant_docs = []
+            
+            # 採用基準の確認ループ
+            for d in search_results:
+                sim = d.get('similarity', 0)
+                score = d.get('rerank_score', 0) # Geminiがつけた点数 (0-10)
+                
+                # 合格基準:
+                # 1. 類似度が厳格閾値(STRICT)を超えている
+                # 2. または、類似度が関連閾値(RELATED)を超えている
+                # 3. ★重要★ Geminiのリランクスコアが「7点以上」なら、類似度が低くても強制採用！
+                if sim >= STRICT_THRESHOLD:
+                    relevant_docs.append(d)
+                elif sim >= RELATED_THRESHOLD:
+                    relevant_docs.append(d)
+                elif score is not None and score >= 7: # Gemini救済条項
+                    logging.info(f"★Gemini救済採用: {d.get('content')[:20]}... (Score: {score}, Sim: {sim})")
+                    relevant_docs.append(d)
+
+            # 重複を除去 (ロジック上発生しにくいが念のため)
+            relevant_docs = list({v['id']: v for v in relevant_docs}.values())
 
             if relevant_docs:
                 logging.info(f"--- Stage 2 コンテキストに使用 ({len(relevant_docs)}件) ---")
