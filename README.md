@@ -7,13 +7,12 @@ Retrieval-Augmented Generation (RAG) を活用した、札幌学院大学向け�
 - 📚 公式情報ベースの回答：大学サイトや資料を参照
 - 🔐 セキュアなアクセス制御：大学ドメイン限定（@sgu.ac.jp / @e.sgu.ac.jp）
 - ⚙️ リアルタイム設定反映：管理者の変更が即時に学生画面へ反映
-- 📊 監視・ログ管理：Prometheus + Grafana による可視化
 
 🏗️ システム構成
 フロントエンド層: client.html / admin.html / DB.html
 アプリケーション層: FastAPI + Gemini API + Auth0
 データベース層: Supabase (PostgreSQL + pgvector)
-インフラ・監視層: Render + Docker + Prometheus + Grafana
+インフラ・監視層: Render + Docker
 
 
 
@@ -41,7 +40,7 @@ Retrieval-Augmented Generation (RAG) を活用した、札幌学院大学向け�
 - DB: Supabase (PostgreSQL + pgvector)
 - 認証: Auth0 (OAuth2.0)
 - インフラ: Render (無料プラン), Docker
-- 監視: Prometheus + Grafana
+- 監視: Uptime Robot
 
 🛠️ セットアップ
 1. 環境変数を設定
@@ -60,8 +59,6 @@ docker-compose up -d
 
 
 - アプリ: http://localhost:8000
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000
 3. Render でデプロイ
 # render.yaml を利用
 services:
