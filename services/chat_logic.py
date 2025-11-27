@@ -384,7 +384,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 #    上位5件だけをリランクにかけて、AIに「どれが質問に一番近いか」判断させる
                 search_results = await rerank_documents_with_gemini(
                     query=user_input,
-                    documents=unique_results[:5],
+                    documents=unique_results[:50], # 上位50件をリランクにかける
                     top_k=chat_req.top_k
                 )
                 
