@@ -23,7 +23,7 @@ from models.schemas import ChatQuery
 from services.utils import format_urls_as_links
 
 # -----------------------------------------------
-#  MMR風フィルタリング関数 (メインロジックの外に定義)
+#  MMR風フィルタリング関数
 # -----------------------------------------------
 def filter_results_by_diversity(results: List[Dict[str, Any]], threshold: float = 0.6) -> List[Dict[str, Any]]:
     """
@@ -166,7 +166,7 @@ class ChatHistoryManager:
 
     def add_to_history(self, session_id: str, role: str, content: str):
         """履歴に新しいメッセージを追加"""
-        # 試作品段階のため、履歴保存を一時的に停止
+        # 試作品段階のため、履歴保存を一時的に停止（必要に応じてコメントアウトを外してください）
         return
         
         history = self._histories.get(session_id, [])
@@ -366,25 +366,26 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             if core_database.db_client:
                 initial_fetch_count = chat_req.top_k * 4 
                 
+                # 1. 広めに検索
                 raw_search_results = core_database.db_client.search_documents_by_vector(
                     collection_name=chat_req.collection,
                     embedding=query_embedding,
                     match_count=initial_fetch_count
                 )
                 
-                # 重複排除
+                # 2. 多様性フィルタ（内容が被っているものを間引く）
                 unique_results = filter_results_by_diversity(raw_search_results, threshold=0.7)
                 
-                # Geminiリランク
+                # 3. Geminiリランク（精度の高い順位付け）
+                #    上位5件だけをリランクにかけて、AIに「どれが質問に一番近いか」判断させる
                 search_results = await rerank_documents_with_gemini(
                     query=user_input,
                     documents=unique_results[:5],
                     top_k=chat_req.top_k
                 )
                 
-                # 再度フィルタ
-                search_results = filter_results_by_diversity(raw_search_results, threshold=0.6)
-                search_results = search_results[:chat_req.top_k]
+                # 【修正済み】以前ここで search_results を filter_results_by_diversity で上書きしていたため、
+                # リランク結果が全て無駄になっていました。その行を削除しました。
             
             # 閾値判定
             strict_docs = [d for d in search_results if d.get('similarity', 0) >= STRICT_THRESHOLD]
@@ -474,8 +475,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     try:
                         if chunk.text:
                             response_text += chunk.text
-                            # 途中経過は必要であれば yield するが、
-                            # "見つかりません"の誤判定を防ぐため、ここではバッファリングのみ行う実装としている
+                            # バッファリング処理（フロントエンドが対応していればここでyield可能）
                             # yield f"data: {json.dumps({'content': chunk.text})}\n\n" 
                     except ValueError:
                         pass
