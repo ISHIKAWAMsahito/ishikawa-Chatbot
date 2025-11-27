@@ -375,7 +375,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     match_count=initial_fetch_count
                 )
                 for doc in raw_search_results:
-                    logging.info(f"【デバッグ】ID:{doc.get('id')} Sim:{doc.get('similarity'):.4f} Content:{doc.get('content')[:20]}...")
+                    # flush=Trueをつけることで、バッファされずに即座にターミナルに出ます
+                    print(f"★デバッグ★ ID:{doc.get('id')} Sim:{doc.get('similarity'):.4f} Content:{doc.get('content')[:20]}...", flush=True)
                 # 2. 多様性フィルタ（内容が被っているものを間引く）
                 unique_results = filter_results_by_diversity(raw_search_results, threshold=0.7)
                 
