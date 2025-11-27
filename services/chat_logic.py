@@ -365,8 +365,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         try:
             # 3b. ベクトルDB検索 (ドキュメント)
             if core_database.db_client:
-                # 【修正】網を広げるため、計算式をやめて50件固定にする
-                initial_fetch_count = 50
+                initial_fetch_count = 30
                 
                 # 1. 広めに検索
                 raw_search_results = core_database.db_client.search_documents_by_vector(
