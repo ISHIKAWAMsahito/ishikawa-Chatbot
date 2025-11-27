@@ -134,8 +134,8 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
 # アプリケーション設定値
 # -----------------------------------------------
 # Document RAG (旧Stage 1) の類似度閾値
-STRICT_THRESHOLD = 0.65
-RELATED_THRESHOLD = 0.50
+STRICT_THRESHOLD = 0.80
+RELATED_THRESHOLD = 0.75
 
 # Q&A Fallback (旧Stage 2) の類似度閾値 -> 今回はこれを「Stage 1」として厳しめに使う
 QA_SIMILARITY_THRESHOLD = 0.95
@@ -376,9 +376,9 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 )
                 for doc in raw_search_results:
                     # flush=Trueをつけることで、バッファされずに即座にターミナルに出ます
-                    print(f"★デバッグ★ ID:{doc.get('id')} Sim:{doc.get('similarity'):.4f} Content:{doc.get('content')[:20]}...", flush=True)
+                    # print(f"★デバッグ★ ID:{doc.get('id')} Sim:{doc.get('similarity'):.4f} Content:{doc.get('content')[:20]}...", flush=True)
                 # 2. 多様性フィルタ（内容が被っているものを間引く）
-                unique_results = filter_results_by_diversity(raw_search_results, threshold=0.7)
+                    unique_results = filter_results_by_diversity(raw_search_results, threshold=0.7)
                 
                 # 3. Geminiリランク（精度の高い順位付け）
                 #    上位5件だけをリランクにかけて、AIに「どれが質問に一番近いか」判断させる
