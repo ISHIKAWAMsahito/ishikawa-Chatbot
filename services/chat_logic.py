@@ -134,8 +134,8 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
 # アプリケーション設定値
 # -----------------------------------------------
 # Document RAG (旧Stage 1) の類似度閾値
-STRICT_THRESHOLD = 0.85
-RELATED_THRESHOLD = 0.80
+STRICT_THRESHOLD = 0.75
+RELATED_THRESHOLD = 0.65
 
 # Q&A Fallback (旧Stage 2) の類似度閾値 -> 今回はこれを「Stage 1」として厳しめに使う
 QA_SIMILARITY_THRESHOLD = 0.95
