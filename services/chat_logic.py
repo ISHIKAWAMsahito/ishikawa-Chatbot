@@ -247,13 +247,15 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
 # -----------------------------------------------
 #  [追加] 質問の曖昧性判定・絞り込み関数
 # -----------------------------------------------
+# -----------------------------------------------
+#  [修正] 質問の曖昧性判定・絞り込み関数
+# -----------------------------------------------
 async def check_ambiguity_and_suggest_options(query: str) -> Dict[str, Any]:
     """
     ユーザーの質問が曖昧（単語のみなど）な場合、
     具体的な選択肢を提示するための情報を生成する。
     """
-    # 質問が十分に長い場合（例: 20文字以上）は具体的である可能性が高いのでスキップ
-    # ※コスト削減のための簡易フィルタ。必要に応じて調整してください。
+    # 20文字以上なら具体的とみなす（変更なし）
     if len(query) > 20:
         return {"is_ambiguous": False}
 
@@ -264,24 +266,28 @@ async def check_ambiguity_and_suggest_options(query: str) -> Dict[str, Any]:
 この質問に対して、**「検索を実行すべき」**か、**「質問が曖昧すぎるため聞き返すべき」**かを判定してください。
 
 # 判定基準
-1. **聞き返す（Ambiguous）**:
-   - ユーザー入力が「Wi-Fi」「履修」「証明書」のような**単語のみ**の場合。
-   - 意図が全く読み取れない場合。
+1. **聞き返す（Ambiguous = true）**:
+   - ユーザー入力が「証明書」「パスワード」「Wi-Fi」「履修」のような**広範な単語単体**のみの場合。
+   - 「大学について」のような漠然としすぎている場合。
 
-2. **検索する（Not Ambiguous）**:
-   - **「～の接続方法」「～を忘れた」「～できない」などの文脈がある場合は、必ず「曖昧ではない」と判定してください。**
-   - ユーザーが選択肢を選んだ結果のような具体的な文章の場合も、「曖昧ではない」と判定してください。
+2. **検索する（Ambiguous = false）**:
+   - **「在学証明書」「学内Wi-Fi」「履修登録」のような「具体的な複合語」の場合は、単語のみでも「検索する」と判定してください。**
+   - 「～の接続方法」「～について」などの文脈がある場合。
+
+# 候補リスト生成のルール（重要）
+- 曖昧と判定した場合、ユーザーが意図していそうな候補を3つ挙げてください。
+- **リストの4つ目（最後）には、必ず「上記以外（その他）」を追加してください。**
 
 # 出力フォーマット (JSON)
 {{
   "is_ambiguous": true/false,
-  "response_text": "曖昧なときのみ、ユーザーに返す選択肢の提案メッセージ",
-  "candidates": ["候補1", "候補2", "候補3"]
+  "response_text": "曖昧なときのみ、ユーザーに返す誘導メッセージ（例: 〇〇についてですね。具体的には...）",
+  "candidates": ["選択肢1", "選択肢2", "選択肢3", "上記以外（その他）"]
 }}
 """
 
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash") # 高速・安価なモデルでOK
+        model = genai.GenerativeModel("gemini-2.5-flash")
         response = await model.generate_content_async(
             prompt,
             generation_config={"response_mime_type": "application/json"}
@@ -318,13 +324,16 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         ambiguity_result = await check_ambiguity_and_suggest_options(user_input)
         
         if ambiguity_result.get("is_ambiguous"):
-            # 曖昧判定時の処理: 提案テキストを返して終了
+            # 曖昧判定時の処理
             suggestion_text = ambiguity_result.get("response_text", "もう少し具体的に教えていただけますか？")
-            
-            # 必要であれば履歴に保存
-            # history_manager.add_to_history(session_id, "user", user_input)
-            # history_manager.add_to_history(session_id, "assistant", suggestion_text)
-            
+            candidates = ambiguity_result.get("candidates", [])
+
+            # ★ここが重要: 候補リスト(candidates)がある場合、テキスト末尾に箇条書きで追加する
+            if candidates:
+                suggestion_text += "\n\n"  # 改行を入れる
+                for item in candidates:
+                    suggestion_text += f"・{item}\n"
+
             yield f"data: {json.dumps({'content': suggestion_text})}\n\n"
             yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
             return
