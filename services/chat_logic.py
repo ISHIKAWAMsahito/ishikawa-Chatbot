@@ -244,7 +244,55 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
 # -----------------------------------------------
 # メインのチャットロジック
 # -----------------------------------------------
+# -----------------------------------------------
+#  [追加] 質問の曖昧性判定・絞り込み関数
+# -----------------------------------------------
+async def check_ambiguity_and_suggest_options(query: str) -> Dict[str, Any]:
+    """
+    ユーザーの質問が曖昧（単語のみなど）な場合、
+    具体的な選択肢を提示するための情報を生成する。
+    """
+    # 質問が十分に長い場合（例: 20文字以上）は具体的である可能性が高いのでスキップ
+    # ※コスト削減のための簡易フィルタ。必要に応じて調整してください。
+    if len(query) > 20:
+        return {"is_ambiguous": False}
 
+    prompt = f"""
+あなたは大学のヘルプデスクAIです。
+ユーザーの質問: "{query}"
+
+この質問が「抽象的すぎて一つに特定できない」かどうか判定してください。
+例えば「パスワード」「証明書」「ログイン」などの単語のみの場合は「曖昧」です。
+「G-Portのパスワードを忘れた」のように具体的な場合は「曖昧ではない」です。
+
+曖昧な場合は、ユーザーが意図している可能性が高い候補（3つ程度）を挙げてください。
+
+# 出力フォーマット (JSON)
+{{
+  "is_ambiguous": true/false,
+  "response_text": "曖昧な場合にユーザーへ返すメッセージ（候補のリストを含む）",
+  "candidates": ["候補1", "候補2", "候補3"]
+}}
+
+# 出力例（質問が「パスワード」の場合）
+{{
+  "is_ambiguous": true,
+  "response_text": "パスワードについてですね。具体的には以下のどれについて知りたいですか？\\n\\n・統合ポータルシステム (G-Port) のパスワード\\n・学内Wi-Fi接続用パスワード\\n・大学Googleアカウントのパスワード",
+  "candidates": ["ポータル(G-Port)", "Wi-Fi", "Googleアカウント"]
+}}
+"""
+
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash") # 高速・安価なモデルでOK
+        response = await model.generate_content_async(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        result = json.loads(response.text)
+        return result
+    except Exception as e:
+        logging.error(f"曖昧性判定でエラー: {e}")
+        return {"is_ambiguous": False}
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     """
     Stage 1: Q&A (FAQ) 検索
@@ -258,7 +306,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
     # 1. フィードバックIDをクライアントに即時送信
     yield f"data: {json.dumps({'feedback_id': feedback_id})}\n\n"
-
     try:
         # 2. システムヘルスチェック
         if not all([core_database.db_client, GEMINI_API_KEY]):
@@ -266,20 +313,36 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             yield f"data: {json.dumps({'content': 'システムが利用できません。管理者にお問い合わせください。'})}\n\n"
             return
 
-        # ---------------------------------------------------------
-        # 3. 質問をベクトル化 (共通処理)
-        # ---------------------------------------------------------
+        # =========================================================
+        # [追加] ステップ0: 質問の絞り込み（曖昧性チェック）
+        # =========================================================
+        # 質問が曖昧（単語のみ等）な場合、ここで選択肢を提示して処理を終了します
+        ambiguity_result = await check_ambiguity_and_suggest_options(user_input)
+        
+        if ambiguity_result.get("is_ambiguous"):
+            # 曖昧判定時の処理: 提案テキストを返して終了
+            suggestion_text = ambiguity_result.get("response_text", "もう少し具体的に教えていただけますか？")
+            
+            # 必要であれば履歴に保存
+            # history_manager.add_to_history(session_id, "user", user_input)
+            # history_manager.add_to_history(session_id, "assistant", suggestion_text)
+            
+            yield f"data: {json.dumps({'content': suggestion_text})}\n\n"
+            yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+            return
         try:
             query_embedding_response = genai.embed_content(
                 model=chat_req.embedding_model,
                 content=user_input,
-                task_type="retrieval_query"  # ★これがないと検索精度が出ません！
+                task_type="retrieval_query"
             )
             query_embedding = query_embedding_response["embedding"]
         except Exception as e:
             logging.error(f"ベクトル化エラー: {e}")
             yield f"data: {json.dumps({'content': '入力の処理中にエラーが発生しました。'})}\n\n"
             return
+        
+            
 
 
         # =========================================================
