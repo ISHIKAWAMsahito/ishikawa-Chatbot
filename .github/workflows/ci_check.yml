@@ -1,0 +1,38 @@
+name: CI Pipeline (Python Syntax Check)
+
+# トリガー: mainブランチにpushされた時、またはプルリクエストが作成された時に実行
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-and-check:
+    # 実行環境: 最新のUbuntu（Linux）
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. GitHubから最新のソースコードを取得
+    - name: ソースコードのチェックアウト
+      uses: actions/checkout@v4
+
+    # 2. Python環境のセットアップ（バージョンはプロジェクトに合わせて調整可）
+    - name: Python 3.10のセットアップ
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    # 3. ライブラリのインストール
+    - name: 依存関係のインストール
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    # 4. コードの構文チェック (Lint)
+    # ここでエラー（文法ミス）があれば、GitHub上で「×」がつき、通知されます
+    - name: 構文エラーのチェック (flake8)
+      run: |
+        # E9, F63, F7, F82: 文法的に動かない致命的なエラーのみを検出
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
