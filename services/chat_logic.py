@@ -21,6 +21,7 @@ from core.config import GEMINI_API_KEY
 from core import database as core_database
 from models.schemas import ChatQuery
 from services.utils import format_urls_as_links
+genai.configure(api_key=GEMINI_API_KEY)
 
 # -----------------------------------------------
 #  MMR風フィルタリング関数
