@@ -5,7 +5,7 @@ from core.config import ACTIVE_COLLECTION_NAME
 class ChatQuery(BaseModel):
     query: str
     model: str = "gemini-2.5-flash"
-    embedding_model: str = "models/gemini-embedding-001"
+    embedding_model: str = "models/embedding-001"
     top_k: int = 5
     collection: str = ACTIVE_COLLECTION_NAME
 
