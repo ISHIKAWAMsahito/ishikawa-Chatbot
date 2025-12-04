@@ -66,3 +66,8 @@ if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
     )
 else:
     logging.warning("Auth0の設定が不完全なため、管理者ページの認証機能は動作しません。")
+# デバッグ用：ログにキーの一部を出力して、どっちのキーを使っているか白黒つける
+if GEMINI_API_KEY:
+    print(f"DEBUG: Current API Key starts with: {GEMINI_API_KEY[:5]}...", flush=True)
+else:
+    print("DEBUG: GEMINI_API_KEY is empty!", flush=True)
