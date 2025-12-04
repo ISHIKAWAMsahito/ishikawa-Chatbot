@@ -101,8 +101,6 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
             new_content = request["content"]
             update_data["content"] = new_content
             
-            embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
-            
             logging.info(f"ドキュメント {doc_id} のコンテンツが変更されたため、ベクトルを再生成します...")
             try:
                 embedding_response = genai.embed_content(
