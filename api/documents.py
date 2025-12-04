@@ -166,7 +166,7 @@ async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
 async def upload_document(
     file: UploadFile = File(...), 
     category: str = Form("その他"), 
-    # ▼ 追加: フロントエンドからのモデル指定を受け取る
+    # ▼ フロントエンドからのモデル指定を受け取る
     embedding_model: str = Form("models/gemini-embedding-001"), 
     user: dict = Depends(require_auth)
 ):
@@ -198,37 +198,71 @@ async def upload_document(
         if not docs_to_embed:
             raise HTTPException(status_code=400, detail="ファイルからテキストを抽出できませんでした。")
 
-        
-        total_chunks = len(docs_to_embed)
-        logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します...")
+        # ---------------------------------------------------------
+        # 【重要】ここに embedding_model を上書きする行が無いことを確認
+        # ---------------------------------------------------------
 
+        total_chunks = len(docs_to_embed)
+        logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します... (Model: {embedding_model})")
+
+        # 3. バッチ処理 (API課金の節約と高速化)
+        # 100件ずつまとめてAPIに送信することで、リクエスト回数を1/100に減らします
+        batch_size = 100
         count = 0
-        for doc in docs_to_embed:
-            try:
-                embedding_response = genai.embed_content(
-                    model=embedding_model, 
-                    content=doc.page_content
-                )
-                embedding = embedding_response["embedding"]
-                
-                database.db_client.insert_document(
-                    content=doc.page_content, 
-                    embedding=embedding, 
-                    metadata=doc.metadata
-                )
-                count += 1
-                
-                await asyncio.sleep(1)
+
+        for i in range(0, total_chunks, batch_size):
+            batch_docs = docs_to_embed[i : i + batch_size]
+            batch_texts = [doc.page_content for doc in batch_docs]
             
+            try:
+                # API呼び出し (ここで100件分を 1回のリクエスト で処理します)
+                # task_type="retrieval_document" は検索対象ドキュメント用として精度が向上します
+                embedding_response = genai.embed_content(
+                    model=embedding_model,
+                    content=batch_texts,
+                    task_type="retrieval_document"
+                )
+                embeddings = embedding_response["embedding"]
+                
+                # 取得したベクトルをDBに保存
+                for j, doc in enumerate(batch_docs):
+                    database.db_client.insert_document(
+                        content=doc.page_content, 
+                        embedding=embeddings[j], 
+                        metadata=doc.metadata
+                    )
+                    count += 1
+                
+                logging.info(f"バッチ処理進行中: {count}/{total_chunks}")
+                # API制限対策の待機 (バッチ処理なら0.5秒でも十分安全です)
+                await asyncio.sleep(0.5)
+
             except Exception as e:
+                # クォータエラーなどが起きた場合の待機処理
                 if "429" in str(e) or "quota" in str(e).lower():
-                    logging.warning("埋め込み生成でAPI制限に達しました。30秒待機します。")
-                    await asyncio.sleep(30)
-                    embedding_response = genai.embed_content(model=embedding_model, content=doc.page_content)
-                    embedding = embedding_response["embedding"]
-                    database.db_client.insert_document(doc.page_content, embedding, doc.metadata)
+                    logging.warning(f"API制限を検知しました。10秒待機してリトライします... ({i}~)")
+                    await asyncio.sleep(10)
+                    try:
+                        # 1回だけリトライ
+                        embedding_response = genai.embed_content(
+                            model=embedding_model,
+                            content=batch_texts,
+                            task_type="retrieval_document"
+                        )
+                        embeddings = embedding_response["embedding"]
+                        for j, doc in enumerate(batch_docs):
+                            database.db_client.insert_document(
+                                content=doc.page_content, 
+                                embedding=embeddings[j], 
+                                metadata=doc.metadata
+                            )
+                            count += 1
+                    except Exception as retry_e:
+                        logging.error(f"リトライも失敗しました: {retry_e}")
+                        continue
                 else:
-                    logging.error(f"チャンク処理エラー ({filename}): {e}")
+                    logging.error(f"バッチ処理エラー (index {i}~): {e}")
+                    await asyncio.sleep(2)
                     continue
 
         logging.info(f"ファイル処理完了: {filename} ({count}/{total_chunks}件のチャンクをDBに挿入)")
