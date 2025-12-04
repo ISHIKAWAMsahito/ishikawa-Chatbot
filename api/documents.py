@@ -198,7 +198,6 @@ async def upload_document(
         if not docs_to_embed:
             raise HTTPException(status_code=400, detail="ファイルからテキストを抽出できませんでした。")
 
-        embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
         
         total_chunks = len(docs_to_embed)
         logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します...")
