@@ -11,8 +11,9 @@ class SimpleDocumentProcessor:
     """
     メモリを消費しない、単純なテキスト抽出とチャンキングを行うクラス。
     """
-    def __init__(self, chunk_size=1000, chunk_overlap=200):
-        # 改行で優先的に切る設定を生かすため、前処理で改行を消さないように注意する
+    # 修正推奨: chunk_size を 1000 から 1500 または 2000 に増やす
+    # gemini-embedding-001 は入力制限に余裕があるため、長めのチャンクでも処理可能です。
+    def __init__(self, chunk_size=1500, chunk_overlap=300): 
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,

@@ -168,6 +168,8 @@ async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
 async def upload_document(
     file: UploadFile = File(...), 
     category: str = Form("その他"), 
+    # ▼ 追加: フロントエンドからのモデル指定を受け取る
+    embedding_model: str = Form("models/gemini-embedding-001"), 
     user: dict = Depends(require_auth)
 ):
     """ファイルを受け取り、(古いデータを削除後)、テキスト抽出・チャンキング・ベクトル化してDBに挿入"""
@@ -178,7 +180,7 @@ async def upload_document(
         filename = file.filename
         content = await file.read()
         
-        logging.info(f"ファイルアップロード受信: {filename} (カテゴリ: {category})")
+        logging.info(f"ファイルアップロード受信: {filename} (カテゴリ: {category}, モデル: {embedding_model})")
 
         # 1. 古いデータを削除
         logging.info(f"古いチャンク (source: {filename}) を削除しています...")
