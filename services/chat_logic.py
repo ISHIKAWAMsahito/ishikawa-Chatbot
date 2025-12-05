@@ -139,7 +139,7 @@ STRICT_THRESHOLD = 0.80
 RELATED_THRESHOLD = 0.75
 
 # Q&A Fallback (旧Stage 2) の類似度閾値 -> 今回はこれを「Stage 1」として厳しめに使う
-QA_SIMILARITY_THRESHOLD = 0.95
+QA_SIMILARITY_THRESHOLD = 0.90
 QA_RERANK_SCORE_THRESHOLD = 8 # リランクスコア(10点満点)の閾値。FAQは厳密一致のみ採用したい。
 
 # RAGコンテキストの最大文字数 (トークン制限超過を避けるための簡易的な制限)
