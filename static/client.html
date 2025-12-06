@@ -15,14 +15,14 @@
     async function initializeSupabase() {
         try {
             // ★変更点: 管理者用(admin)ではなく、学生用(client)のAPIを叩く
-            const response = await fetch('/api/client/chat/config');
-            
-            if (!response.ok) {
-                console.error(`API Error: ${response.status}`);
-                throw new Error('設定の読み込みに失敗しました。');
-            }
-            
-            const config = await response.json();
+            const response = await fetch('/api/client/config');
+        
+        if (!response.ok) {
+            console.error(`API Error: ${response.status}`);
+            throw new Error('設定の読み込みに失敗しました。');
+        }
+        
+        const config = await response.json();
             const SUPABASE_URL = config.supabase_url;
             const SUPABASE_ANON_KEY = config.supabase_anon_key;
 
