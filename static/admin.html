@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI chatbot system【管理者画面】</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     
 <style>
     /* ... (CSSスタイルは変更なしのため省略。元のCSSをそのまま使用してください) ... */
@@ -511,6 +512,27 @@
     </div>
 
     <script>
+    const { createClient } = supabase;
+    window.supabaseClient = null;
+
+    async function initializeSupabase() {
+        try {
+            // クライアント用と同じ設定エンドポイントを利用します
+            const response = await fetch('/api/client/chat/config');
+            if (!response.ok) return;
+            
+            const config = await response.json();
+            if (config.supabase_url && config.supabase_anon_key) {
+                window.supabaseClient = createClient(config.supabase_url, config.supabase_anon_key);
+                console.log('✅ Supabase初期化完了 (Admin)');
+            }
+        } catch (error) {
+            console.error("Supabase初期化失敗:", error);
+        }
+    }
+    
+    // ページ読み込み時に実行
+    initializeSupabase();
     document.addEventListener('DOMContentLoaded', () => {
         const chatMessages = document.getElementById('chatMessages');
         const chatInput = document.getElementById('chatInput');
@@ -680,35 +702,44 @@
         }
 
         // --- フィードバック送信機能 ---
+        // --- フィードバック送信機能 (Supabase版) ---
         async function sendFeedback(element, rating) {
-    const messageWrapper = element.closest('.message');
-    const logId = messageWrapper.dataset.logId; // ここで logId を取得
-
-    // ★追加: デバッグ用ログ（ブラウザのコンソールで確認用）
-    console.log("送信しようとしているデータ:", { log_id: logId, rating: rating });
-
-    if (!logId) {
-        console.error("Log ID not found for feedback.");
-        addMessage('フィードバックの送信に失敗しました (log_idが見つかりません)', 'bot');
-        return;
-    }
-    
-    try {
-        // ★修正: URLの末尾にスラッシュを追加
-        const res = await fetch(`/api/client/feedback/`, { // 12/6末尾にスラッシュ追加 サーバー側の定義が /api/client/feedback/（末尾スラッシュあり）になっているのに、クライアントが /api/client/feedback（なし）にアクセスしているため
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ feedback_id: logId, rating: rating })
-        });
-                if(!res.ok) {
-                    const errorData = await res.json();
-                    throw new Error(errorData.detail || "Failed to send feedback.");
+            console.log(`フィードバック送信開始: ${rating}`);
+            
+            try {
+                // 1. Supabaseクライアントの確認
+                if (!window.supabaseClient) {
+                    console.error("Supabaseクライアントが初期化されていません");
+                    // エラーが出てもアラートは出さず、コンソールのみにするか、
+                    // または alert("DB接続エラー") などを出してもOKです
+                    return;
                 }
+
+                // 2. 送信するデータの作成
+                const insertData = {
+                    rating: rating,        // 'good' または 'bad'
+                    comment: "管理者画面からの評価", // どこから送ったかわかるように変更推奨
+                    created_at: new Date().toISOString() 
+                };
+
+                // 3. Supabaseに送信 (anonymous_commentsテーブル)
+                const { data, error } = await window.supabaseClient
+                    .from('anonymous_comments')
+                    .insert([insertData]);
+
+                if (error) {
+                    throw error;
+                }
+
+                console.log("Supabaseへの保存成功:", data);
+
+                // 4. 画面の見た目を更新
                 const feedbackContainer = element.parentElement;
-                feedbackContainer.innerHTML = '<span class="feedback-thanks">フィードバックありがとうございます！</span>';
+                feedbackContainer.innerHTML = '<span class="feedback-thanks">フィードバックを保存しました</span>';
+                
             } catch(error) {
-                console.error("Error sending feedback:", error);
-                addMessage(`フィードバックの送信中にエラーが発生しました: ${error.message}`, 'bot');
+                console.error("フィードバック送信エラー:", error);
+                alert("送信に失敗しました。");
             }
         }
 
