@@ -659,8 +659,7 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
 
     # 3. Geminiに分析させる
     try:
-        # 分析には思考力の高いモデル推奨 (Flashでも可だが、Proの方が分析は得意)
-        model = genai.GenerativeModel("gemini-1.5-pro") 
+        model = genai.GenerativeModel("gemini-2.5-flash") 
         
         # ストリーミングで回答生成
         stream = await safe_generate_content(model, prompt, stream=True)
