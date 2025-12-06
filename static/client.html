@@ -632,6 +632,13 @@ document.addEventListener('DOMContentLoaded', function() {
                                         connectSettingsWebSocket();
                                 
                                     });
+                                    // スクリプト読み込み後、DOMContentLoaded を待たずに実行
+console.log("✅ スクリプトが読み込まれました");
+console.log("ボタン存在確認:", document.getElementById('sendCommentBtn'));
+
+// Supabase初期化確認
+console.log("Supabaseクライアント:", window.supabaseClient);
+</script>
                                     </script>
                                 </body>
                                 </html>
