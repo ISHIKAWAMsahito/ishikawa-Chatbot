@@ -603,3 +603,73 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
     # 最終処理
     yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+
+# -----------------------------------------------
+#  [追加] 統計・分析用のAIロジック
+# -----------------------------------------------
+async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
+    """
+    管理者画面の「分析を実行」ボタンから呼ばれる関数。
+    SupabaseのログデータをGeminiに渡し、傾向分析レポートをストリーミング生成する。
+    
+    Args:
+        logs: Supabaseから取得した 'anonymous_comments' テーブルのデータリスト
+    """
+    if not logs:
+        yield f"data: {json.dumps({'content': '分析対象のデータがありません。'})}\n\n"
+        return
+
+    # 1. AIに読ませるためのテキストデータを構築
+    # date, rating, comment (中身は会話ログ) を列挙する
+    formatted_logs = ""
+    for log in logs:
+        date = log.get('created_at', '不明な日時')
+        rating = log.get('rating', 'なし')
+        # commentカラムに「質問と回答」が入っている前提
+        content = log.get('comment', '').replace('\n', ' ')[:500] # 長すぎるとトークン溢れるのでカット
+        
+        formatted_logs += f"- 日時: {date} | 評価: {rating} | 内容: {content}\n"
+
+    # 2. 分析官になりきらせるプロンプト
+    prompt = f"""
+あなたは大学チャットボットの「運用改善コンサルタントAI」です。
+以下の「ユーザー利用ログ（直近データ）」を分析し、管理者向けのレポートを作成してください。
+
+# ログデータ
+{formatted_logs}
+
+# 分析要件 (Markdown形式で出力)
+
+1. **📊 質問トレンド分析**
+   - 学生たちが「今」何について知りたがっているか、キーワードやトピックを3つ挙げて解説してください。
+   - (例: 「履修登録」に関する質問が全体の4割を占めています、等)
+
+2. **⚠️ 低評価(Bad)の原因分析**
+   - 「評価: bad」がついているログに注目し、なぜユーザーが満足しなかったか推測してください。
+   - (例: リンクが案内されていない、回答が的外れ、等)
+   - Badがない場合は「特に目立った不満は見当たりません」としてください。
+
+3. **💡 改善提案**
+   - 今後、回答精度を上げるためにデータベースに追加すべき情報や、改善アクションを提案してください。
+
+# 出力ルール
+- 見出しは見やすくMarkdownの `###` を使ってください。
+- 文体は「です・ます」調で、管理者に報告するスタイルにしてください。
+"""
+
+    # 3. Geminiに分析させる
+    try:
+        # 分析には思考力の高いモデル推奨 (Flashでも可だが、Proの方が分析は得意)
+        model = genai.GenerativeModel("gemini-1.5-pro") 
+        
+        # ストリーミングで回答生成
+        stream = await safe_generate_content(model, prompt, stream=True)
+        
+        async for chunk in stream:
+            if chunk.text:
+                # フロントエンド(stats.html)は data: {"content": ...} を待っている
+                yield f"data: {json.dumps({'content': chunk.text})}\n\n"
+
+    except Exception as e:
+        logging.error(f"分析生成エラー: {e}", exc_info=True)
+        yield f"data: {json.dumps({'content': '申し訳ありません。分析中にエラーが発生しました。'})}\n\n"
