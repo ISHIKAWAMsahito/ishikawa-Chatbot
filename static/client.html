@@ -15,7 +15,7 @@
     async function initializeSupabase() {
         try {
             // ★変更点: 管理者用(admin)ではなく、学生用(client)のAPIを叩く
-            const response = await fetch('/api/chat/config');
+            const response = await fetch('/api/client/chat/config');
             
             if (!response.ok) {
                 console.error(`API Error: ${response.status}`);

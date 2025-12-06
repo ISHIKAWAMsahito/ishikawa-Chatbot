@@ -15,9 +15,9 @@ async def chat_endpoint(request: Request, query: ChatQuery):
     """管理者用チャットエンドポイント"""
     return StreamingResponse(enhanced_chat_logic(request, query), media_type="text/event-stream")
 
-# 修正: main.pyで /api/client/chat になるため /chat_for_client を削除し / とする
-# ※注意: クライアントHTMLもこのパスに合わせて修正します
-@router.post("/client") 
+# 修正後： "/client" を削除して "/" にします
+# これで URLが /api/client/chat になり、HTMLと合います
+@router.post("/")
 async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: dict = Depends(require_auth_client)):
     """認証されたクライアント用チャットエンドポイント"""
     if not core_settings.settings_manager:
