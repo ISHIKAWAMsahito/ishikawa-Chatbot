@@ -1,5 +1,4 @@
-# api/chat.py
-
+import logging
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from core.dependencies import require_auth_client
@@ -7,25 +6,21 @@ from core import settings as core_settings
 from core.config import ACTIVE_COLLECTION_NAME
 from models.schemas import ChatQuery, ClientChatQuery
 from services.chat_logic import enhanced_chat_logic, get_or_create_session_id, history_manager
-import logging
 
-# ★重要: ルーターを2つ作成する
+# ★重要: ルーターを2つ定義
 admin_router = APIRouter()   # 管理者用
 client_router = APIRouter()  # 学生用
 
 # ============================
-# 管理者用エンドポイント (admin_router を使用)
+# 管理者用エンドポイント (admin_router)
 # ============================
 @admin_router.post("/")
 async def chat_endpoint(request: Request, query: ChatQuery):
     """管理者用チャットエンドポイント"""
     return StreamingResponse(enhanced_chat_logic(request, query), media_type="text/event-stream")
 
-# 他の管理者用APIがあれば admin_router に追加
-# @admin_router.get("/history")... など
-
 # ============================
-# 学生用エンドポイント (client_router を使用)
+# 学生用エンドポイント (client_router)
 # ============================
 @client_router.post("/")
 async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: dict = Depends(require_auth_client)):
@@ -35,7 +30,7 @@ async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: d
     
     logging.info(f"Chat request from user: {user.get('email', 'N/A')}")
 
-    # 学生用はデフォルト設定を確実に指定
+    # 学生用はデフォルト設定を確実に指定 (3072次元エラー回避のため)
     default_model = "gemini-2.0-flash" 
     default_embedding = "models/text-embedding-004"
 
@@ -51,24 +46,16 @@ async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: d
 
 @client_router.get("/history")
 async def get_chat_history(request: Request, user: dict = Depends(require_auth_client)):
+    """現在のセッションのチャット履歴を取得"""
     session_id = get_or_create_session_id(request)
     history = history_manager.get_history(session_id)
     return {"history": history}
 
 @client_router.delete("/history")
 async def delete_chat_history(request: Request, user: dict = Depends(require_auth_client)):
+    """現在のセッションのチャット履歴を削除"""
     session_id = get_or_create_session_id(request)
     history_manager.clear_history(session_id)
     return {"message": "履歴をクリアしました"}
 
-@router.get("/config")
-def get_client_config():
-    # 念のためキーがあるか確認
-    if not hasattr(config, "SUPABASE_ANON_KEY") or not config.SUPABASE_ANON_KEY:
-        # 環境変数が読み込めていない場合の安全策
-        raise HTTPException(status_code=500, detail="Server Config Error: ANON KEY not found.")
-
-    return {
-        "supabase_url": config.SUPABASE_URL,
-        "supabase_anon_key": config.SUPABASE_ANON_KEY
-    }
+# ★注意: ここにあった @router.get("/config") は main.py に移動したので削除済みです
