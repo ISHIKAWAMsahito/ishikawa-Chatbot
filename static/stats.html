@@ -241,25 +241,27 @@
 
     // データ取得関数
     async function fetchData() {
-        if (!supabaseClient) return;
-        
+        // Supabaseクライアントは使わず、自サーバーのAPIを叩く
         try {
-            // commentカラムに質問と回答が入っている前提で取得
-            const { data, error } = await supabaseClient
-                .from('anonymous_comments')
-                .select('*')
-                .order('created_at', { ascending: false })
-                .limit(50); // 最新50件
+            const response = await fetch('/api/admin/stats/data');
+            
+            if (!response.ok) {
+                // 認証エラー（ログアウト状態）などの場合
+                if (response.status === 401 || response.status === 403) {
+                    window.location.href = '/login'; // ログイン画面へ飛ばす
+                    return;
+                }
+                throw new Error("データの取得に失敗しました");
+            }
 
-            if (error) throw error;
-
+            const data = await response.json();
             currentData = data;
             renderDashboard(data);
 
         } catch (err) {
             console.error("Fetch error:", err);
             document.getElementById('dataTableBody').innerHTML = 
-                `<tr><td colspan="3" style="color:red; text-align:center;">データ取得エラー: ${err.message}</td></tr>`;
+                `<tr><td colspan="3" style="color:red; text-align:center;">エラー: ${err.message}</td></tr>`;
         }
     }
 

@@ -107,7 +107,26 @@ def healthz_check():
 @app.get("/stats.html")
 async def get_stats_page():
     return FileResponse("static/stats.html")
-
+@app.get("/api/admin/stats/data", dependencies=[Depends(require_auth)])
+async def get_admin_stats_data():
+    """
+    Supabaseからコメント履歴を取得する（管理者権限が必要）。
+    サーバー側からアクセスするため、RLSが無効でもデータ取得が可能。
+    """
+    if not database.db_client:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+    
+    try:
+        # サーバー側の権限でデータを取得
+        response = database.db_client.table("anonymous_comments")\
+            .select("*")\
+            .order("created_at", desc=True)\
+            .limit(100)\
+            .execute()
+        return response.data
+    except Exception as e:
+        logging.error(f"Stats data fetch error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 # =========================================================
 # WebSocketエンドポイント
 # =========================================================
