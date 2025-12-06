@@ -74,8 +74,8 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
     # 1. AIに渡すためのリストテキストを作成
     candidates_text = ""
     for i, doc in enumerate(documents):
-        # コンテンツを少し短くしてトークン節約（先頭300文字程度で判断させる）
-        content_snippet = doc.get('content', '')[:300].replace('\n', ' ')
+        # 300文字ではなく、1000文字～全文渡して判断させる
+        content_snippet = doc.get('content', '')[:1000].replace('\n', ' ')
         source = doc.get('metadata', {}).get('source', 'unknown')
         candidates_text += f"ID:{i} Source:{source} Content:{content_snippet}\n\n"
 
