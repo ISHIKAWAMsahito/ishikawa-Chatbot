@@ -369,17 +369,12 @@ ${logsText}
         `;
 
         try {
-            const response = await fetch('/api/admin/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    query: prompt,
-                    model: "gemini-2.0-flash", // 分析に適したモデルを指定
-                    collection: "admin_analysis", 
-                    embedding_model: "models/embedding-001",
-                    top_k: 1
-                })
-            });
+        // ★ここを修正！ URLの末尾を /analyze にする
+        const response = await fetch('/api/admin/chat/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}) 
+        });
 
             if (!response.ok) throw new Error("API Error");
 
