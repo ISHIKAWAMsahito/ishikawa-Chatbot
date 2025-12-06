@@ -10,7 +10,7 @@ from fastapi.responses import RedirectResponse, FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
-
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, Request, status, HTTPException
 from core.config import APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY
 from core.database import SupabaseClientManager
 from core.settings import SettingsManager
@@ -131,6 +131,20 @@ app.include_router(documents.router, prefix="/api/admin/documents", tags=["Admin
 app.include_router(fallbacks.router, prefix="/api/admin/fallbacks", tags=["Admin Fallbacks"], dependencies=[Depends(require_auth)])
 app.include_router(system.router, prefix="/api/admin/system", tags=["Admin System"], dependencies=[Depends(require_auth)])
 app.include_router(chat.router, prefix="/api/admin/chat", tags=["Admin Chat"], dependencies=[Depends(require_auth)])
+# =========================================================
+# ★追加: 学生画面用 設定配布API
+# =========================================================
+@app.get("/api/client/config")
+def get_client_config():
+    """学生画面へSupabase接続情報を渡す"""
+    if not SUPABASE_ANON_KEY:
+        # 環境変数が読み込めていない場合のエラー
+        raise HTTPException(status_code=500, detail="Server Config Error: ANON KEY not found")
+
+    return {
+        "supabase_url": SUPABASE_URL,
+        "supabase_anon_key": SUPABASE_ANON_KEY
+    }
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
