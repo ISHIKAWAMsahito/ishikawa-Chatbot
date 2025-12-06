@@ -1,45 +1,104 @@
+import os
+import json
 import logging
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
-from models.schemas import FeedbackRequest, AIResponseFeedbackRequest
-from services.feedback import feedback_manager
-from core import database
-from core.config import JST
+from typing import Dict, Any
+from fastapi import APIRouter, HTTPException  # 追加
+from pydantic import BaseModel  # 追加
+from core.config import BASE_DIR, JST
 
+# ==========================================
+# 1. ルーターの定義 (これが不足していました)
+# ==========================================
 router = APIRouter()
 
-# 修正: /feedback -> /
+# ==========================================
+# 2. データ受信用の型定義 (Pydanticモデル)
+# ==========================================
+class FeedbackRequest(BaseModel):
+    feedback_id: str
+    rating: str
+    comment: str = ""
+
+# ==========================================
+# 3. ロジッククラス (元のコード)
+# ==========================================
+class FeedbackManager:
+    """フィードバック管理クラス(簡素化版)"""
+    def __init__(self):
+        self.feedback_file = os.path.join(BASE_DIR, "feedback.json")
+
+    def save_feedback(self, feedback_id: str, rating: str, comment: str = ""):
+        """フィードバックを保存"""
+        try:
+            feedback_data = []
+            if os.path.exists(self.feedback_file):
+                with open(self.feedback_file, 'r', encoding='utf-8') as f:
+                    feedback_data = json.load(f)
+            
+            feedback_entry = {
+                "id": feedback_id,
+                "rating": rating,
+                "comment": comment,
+                "timestamp": datetime.now(JST).isoformat()
+            }
+            feedback_data.append(feedback_entry)
+            
+            with open(self.feedback_file, 'w', encoding='utf-8') as f:
+                json.dump(feedback_data, f, ensure_ascii=False, indent=2)
+            
+            logging.info(f"フィードバック保存完了: {feedback_id} - {rating}")
+        except Exception as e:
+            logging.error(f"フィードバック保存エラー: {e}")
+            raise  # エラーを呼び出し元に伝える
+
+    def get_feedback_stats(self) -> Dict[str, Any]:
+        """フィードバック統計を取得"""
+        try:
+            if not os.path.exists(self.feedback_file):
+                return {"total": 0, "resolved": 0, "not_resolved": 0, "rate": 0}
+            with open(self.feedback_file, 'r', encoding='utf-8') as f:
+                feedback_data = json.load(f)
+            total = len(feedback_data)
+            resolved = sum(1 for fb in feedback_data if fb['rating'] == 'resolved')
+            not_resolved = total - resolved
+            rate = (resolved / total * 100) if total > 0 else 0
+            return {
+                "total": total,
+                "resolved": resolved,
+                "not_resolved": not_resolved,
+                "rate": round(rate, 1)
+            }
+        except Exception as e:
+            logging.error(f"フィードバック統計取得エラー: {e}")
+            return {"total": 0, "resolved": 0, "not_resolved": 0, "rate": 0}
+
+# グローバルインスタンス
+feedback_manager = FeedbackManager()
+
+# ==========================================
+# 4. APIエンドポイントの実装 (ここが重要)
+# ==========================================
 @router.post("/")
-async def save_feedback(feedback: FeedbackRequest):
-    """フィードバックを保存"""
+async def submit_feedback(request: FeedbackRequest):
+    """
+    フィードバックを受け取るAPIエンドポイント
+    URL: /api/client/feedback/ (main.pyの設定による)
+    """
     try:
-        feedback_manager.save_feedback(feedback.feedback_id, feedback.rating, feedback.comment)
-        return {"message": "フィードバックを保存しました"}
+        feedback_manager.save_feedback(
+            feedback_id=request.feedback_id,
+            rating=request.rating,
+            comment=request.comment
+        )
+        return {"status": "success", "message": "フィードバックを受け付けました"}
     except Exception as e:
-        logging.error(f"フィードバック保存エラー: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"APIエラー: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
-# 修正: /feedback/ai-response -> /ai-response
-@router.post("/ai-response")
-async def save_ai_response_feedback(feedback: AIResponseFeedbackRequest):
-    """AI回答へのフィードバックを保存"""
-    try:
-        database.db_client.client.table("anonymous_comments").insert({
-            "comment": f"Q: {feedback.user_question}\nA: {feedback.ai_response}",
-            "created_at": datetime.now(JST).isoformat(),
-            "rating": feedback.rating
-        }).execute()
-        return {"message": "AI回答へのフィードバックを保存しました"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# 修正: /feedback/stats -> /stats
 @router.get("/stats")
-async def get_feedback_stats():
-    """フィードバック統計を取得"""
-    try:
-        stats = feedback_manager.get_feedback_stats()
-        return stats
-    except Exception as e:
-        logging.error(f"フィードバック統計取得エラー: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+async def get_stats():
+    """
+    統計情報を取得するAPIエンドポイント (管理者用などで使用可能)
+    """
+    return feedback_manager.get_feedback_stats()
