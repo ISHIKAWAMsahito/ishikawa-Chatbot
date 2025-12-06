@@ -317,7 +317,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             logging.error("DBクライアントまたはAPIキーが設定されていません。")
             yield f"data: {json.dumps({'content': 'システムが利用できません。管理者にお問い合わせください。'})}\n\n"
             return
-
+    
         # =========================================================
         # [追加] ステップ0: 質問の絞り込み（曖昧性チェック）
         # =========================================================
@@ -342,7 +342,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             query_embedding_response = genai.embed_content(
                 model=chat_req.embedding_model,
                 content=user_input,
-                task_type="retrieval_query"
+                task_type="retrieval_query",
+                output_dimensionality=3072  # ★追加: これでDBと同じ3072次元になります
             )
             query_embedding = query_embedding_response["embedding"]
         except Exception as e:
