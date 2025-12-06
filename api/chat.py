@@ -6,7 +6,7 @@ from core import settings as core_settings
 from core.config import ACTIVE_COLLECTION_NAME
 from models.schemas import ChatQuery, ClientChatQuery
 from services.chat_logic import enhanced_chat_logic, get_or_create_session_id, history_manager
-
+from core import config
 router = APIRouter()
 
 # 修正: main.pyで /api/admin/chat になるため /chat を削除し / とする
@@ -50,3 +50,15 @@ async def delete_chat_history(request: Request, user: dict = Depends(require_aut
     session_id = get_or_create_session_id(request)
     history_manager.clear_history(session_id)
     return {"message": "履歴をクリアしました"}
+
+@router.get("/config")
+def get_client_config():
+    # 念のためキーがあるか確認
+    if not hasattr(config, "SUPABASE_ANON_KEY") or not config.SUPABASE_ANON_KEY:
+        # 環境変数が読み込めていない場合の安全策
+        raise HTTPException(status_code=500, detail="Server Config Error: ANON KEY not found.")
+
+    return {
+        "supabase_url": config.SUPABASE_URL,
+        "supabase_anon_key": config.SUPABASE_ANON_KEY
+    }

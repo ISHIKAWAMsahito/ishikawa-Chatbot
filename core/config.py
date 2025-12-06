@@ -5,7 +5,6 @@ from authlib.integrations.starlette_client import OAuth
 import logging
 
 IS_PRODUCTION = os.getenv('RENDER', False)
-
 if not IS_PRODUCTION:
     # ローカル開発環境の場合のみ .env ファイルを読み込む
     load_dotenv()
