@@ -28,7 +28,8 @@ async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: d
     chat_query = ChatQuery(
         query=query.query,
         model=core_settings.settings_manager.settings.get("model", "gemini-2.5-flash"),
-        embedding_model=core_settings.settings_manager.settings.get("embedding_model", "text-embedding-004"),
+        # デフォルトを gemini-embedding-001 (3072次元) に変更する
+        embedding_model=core_settings.settings_manager.settings.get("embedding_model", "models/gemini-embedding-001"),
         top_k=core_settings.settings_manager.settings.get("top_k", 5),
         collection=core_settings.settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
     )
