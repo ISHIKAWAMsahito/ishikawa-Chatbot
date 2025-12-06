@@ -1,6 +1,7 @@
 import os
 import logging
 import uvicorn
+import asyncio
 from contextlib import asynccontextmanager
 
 # 必要なモジュールをインポート
@@ -31,23 +32,38 @@ async def lifespan(app: FastAPI):
     """アプリケーションのライフサイクル管理"""
     logging.info("--- アプリケーション起動 ---")
     
-    # 1. 設定マネージャー初期化
+    # 1. 設定マネージャー初期化（高速）
     from core import settings as settings_module
     settings_module.settings_manager = SettingsManager()
+    logging.info("✅ 設定マネージャー初期化完了")
     
-    # 2. ドキュメントプロセッサ初期化
+    # 2. ドキュメントプロセッサ初期化（高速）
     from services import document_processor
     document_processor.simple_processor = SimpleDocumentProcessor(chunk_size=1000, chunk_overlap=200)
+    logging.info("✅ ドキュメントプロセッサ初期化完了")
 
-    # 3. Supabase初期化
+    # 3. Supabase初期化（タイムアウト対応）
     if SUPABASE_URL and SUPABASE_KEY:
         try:
-            database.db_client = SupabaseClientManager(url=SUPABASE_URL, key=SUPABASE_KEY)
-            logging.info("Supabaseクライアント初期化完了")
+            logging.info("⏳ Supabase初期化中...")
+            # ★修正: タイムアウト時間を10秒に設定
+            def init_supabase():
+                return SupabaseClientManager(url=SUPABASE_URL, key=SUPABASE_KEY)
+            
+            try:
+                database.db_client = await asyncio.wait_for(
+                    asyncio.to_thread(init_supabase),
+                    timeout=10.0
+                )
+                logging.info("✅ Supabaseクライアント初期化完了")
+            except asyncio.TimeoutError:
+                logging.warning("⚠️ Supabase初期化タイムアウト（起動は続行）")
+                database.db_client = None
         except Exception as e:
-            logging.error(f"Supabase初期化エラー: {e}")
+            logging.error(f"❌ Supabase初期化エラー: {e}")
+            database.db_client = None
     else:
-        logging.warning("Supabase設定が見つかりません")
+        logging.warning("⚠️ Supabase設定が見つかりません")
 
     yield
     logging.info("--- アプリケーション終了 ---")
@@ -126,7 +142,6 @@ app.include_router(auth.router, tags=["Auth"])
 # APIルーター群
 
 # ★修正箇所1: chat.client_router を使用 (学生用)
-# これにより、chat.py 内で定義した @client_router のロジックが適用されます
 app.include_router(chat.client_router, prefix="/api/client/chat", tags=["Client Chat"])
 
 app.include_router(feedback.router, prefix="/api/client/feedback", tags=["Client Feedback"])
@@ -137,10 +152,8 @@ app.include_router(fallbacks.router, prefix="/api/admin/fallbacks", tags=["Admin
 app.include_router(system.router, prefix="/api/admin/system", tags=["Admin System"], dependencies=[Depends(require_auth)])
 
 # ★修正箇所2: chat.admin_router を使用 (管理者用)
-# これにより、chat.py 内で定義した @admin_router のロジックが適用されます
 app.include_router(chat.admin_router, prefix="/api/admin/chat", tags=["Admin Chat"], dependencies=[Depends(require_auth)])
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
-    # proxy_headers=True, forwarded_allow_ips="*" を追加すると、Render等のプロキシ下で正しくhttpsを認識します
     uvicorn.run("main:app", host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
