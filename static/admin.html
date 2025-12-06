@@ -681,19 +681,25 @@
 
         // --- フィードバック送信機能 ---
         async function sendFeedback(element, rating) {
-            const messageWrapper = element.closest('.message');
-            const logId = messageWrapper.dataset.logId;
-            if (!logId) {
-                console.error("Log ID not found for feedback.");
-                addMessage('フィードバックの送信に失敗しました (log_idが見つかりません)', 'bot');
-                return;
-            }
-            try {
-                const res = await fetch(`/api/client/feedback`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ log_id: logId, rating: rating })
-                });
+    const messageWrapper = element.closest('.message');
+    const logId = messageWrapper.dataset.logId; // ここで logId を取得
+
+    // ★追加: デバッグ用ログ（ブラウザのコンソールで確認用）
+    console.log("送信しようとしているデータ:", { log_id: logId, rating: rating });
+
+    if (!logId) {
+        console.error("Log ID not found for feedback.");
+        addMessage('フィードバックの送信に失敗しました (log_idが見つかりません)', 'bot');
+        return;
+    }
+    
+    try {
+        // ★修正: URLの末尾にスラッシュを追加
+        const res = await fetch(`/api/client/feedback/`, { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ log_id: logId, rating: rating })
+        });
                 if(!res.ok) {
                     const errorData = await res.json();
                     throw new Error(errorData.detail || "Failed to send feedback.");
