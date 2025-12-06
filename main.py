@@ -27,10 +27,6 @@ from api import auth, chat, documents, fallbacks, feedback, system
 # ログ設定
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
 
-# 統計画面設定
-@app.get("/stats.html")
-async def get_stats_page():
-    return FileResponse("static/stats.html")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -106,6 +102,11 @@ def global_health_check():
 def healthz_check():
     return {"status": "ok"}
 
+
+# 統計画面設定
+@app.get("/stats.html")
+async def get_stats_page():
+    return FileResponse("static/stats.html")
 
 # =========================================================
 # WebSocketエンドポイント
