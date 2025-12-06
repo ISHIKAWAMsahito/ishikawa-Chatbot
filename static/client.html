@@ -7,28 +7,33 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 <script>
-    // 1. import行を削除しました
-    // 2. 代わりに、グローバル変数の supabase から createClient を取り出します
+    // グローバル変数のsupabaseからcreateClientを取り出す（これでwrapperエラー回避）
     const { createClient } = supabase;
 
     window.supabaseClient = null;
 
     async function initializeSupabase() {
         try {
-            const response = await fetch('/api/admin/system/config');
-            if (!response.ok) throw new Error('設定の読み込みに失敗しました。');
+            // ★変更点: 管理者用(admin)ではなく、学生用(client)のAPIを叩く
+            const response = await fetch('/api/client/config');
+            
+            if (!response.ok) {
+                console.error(`API Error: ${response.status}`);
+                throw new Error('設定の読み込みに失敗しました。');
+            }
             
             const config = await response.json();
             const SUPABASE_URL = config.supabase_url;
             const SUPABASE_ANON_KEY = config.supabase_anon_key;
 
             if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-                console.error("Supabase設定エラー");
+                console.error("Supabase設定エラー: 環境変数が取得できませんでした");
                 return;
             }
 
+            // 初期化実行
             window.supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            console.log('Supabase初期化完了');
+            console.log('Supabase初期化完了 (Render環境変数使用)');
 
         } catch (error) {
             console.error("Supabase初期化失敗:", error);
