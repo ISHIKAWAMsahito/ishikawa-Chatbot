@@ -8,11 +8,11 @@ from core.config import ACTIVE_COLLECTION_NAME, BASE_DIR
 
 class SettingsManager:#ここから、「設定管理者という役割（クラス）を作る・このシステムの設定を一手に引き受ける責任者
     """設定管理クラス"""
-    def __init__(self):#まず、AIモデルの種類や検索数などの「初期設定」をメモリにセットする
+    def __init__(self):
         self.settings = {
             "model": "gemini-2.5-flash",
             "collection": ACTIVE_COLLECTION_NAME,
-            "embedding_model": "text-embedding-004",
+            "embedding_model": "models/gemini-embedding-001",  # ✅ 3072次元対応モデルに変更
             "top_k": 5
         }
         self.websocket_connections: List[WebSocket] = [] #次に、現在接続しているユーザーを管理するためのリスト（名簿）を空の状態で作る

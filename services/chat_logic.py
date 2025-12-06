@@ -340,11 +340,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             return
         try:
             query_embedding_response = genai.embed_content(
-                model=chat_req.embedding_model,
-                content=user_input,
-                task_type="retrieval_query",
-                output_dimensionality=3072  # ★追加: これでDBと同じ3072次元になります
-            )
+    model=chat_req.embedding_model,  # これで自動的に設定ファイルから読み込まれる
+    content=user_input,
+    task_type="retrieval_query"
+    # output_dimensionality は指定しない（モデルのデフォルト次元を使用）
+)
             query_embedding = query_embedding_response["embedding"]
         except Exception as e:
             logging.error(f"ベクトル化エラー: {e}")
