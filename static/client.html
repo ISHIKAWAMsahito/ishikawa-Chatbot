@@ -517,7 +517,13 @@ document.addEventListener('DOMContentLoaded', function() {
         // 【修正】admin.html内のチャット送信機能
         // ========================================
         // 行番号 約807-866 付近を置き換え
-
+chatMessages.addEventListener('click', function(e) {
+            // クリックされた要素がフィードバックボタンかチェック
+            if (e.target.classList.contains('feedback-btn')) {
+                const rating = e.target.dataset.rating; // "good" または "bad"
+                sendFeedback(e.target, rating);
+            }
+        });
         async function sendMessage() {
             const userInput = chatInput.value.trim();
             if (!userInput) return;
