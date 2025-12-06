@@ -30,9 +30,10 @@ async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: d
     
     logging.info(f"Chat request from user: {user.get('email', 'N/A')}")
 
-    # 学生用はデフォルト設定を確実に指定 (3072次元エラー回避のため)
+    # 学生用はデフォルト設定を確実に指定
+    # ★修正: 3072次元のDBに合わせるため、3072次元対応の 'gemini-embedding-001' を使用
     default_model = "gemini-2.0-flash" 
-    default_embedding = "models/text-embedding-004"
+    default_embedding = "models/gemini-embedding-001"
 
     chat_query = ChatQuery(
         query=query.query,
@@ -57,5 +58,3 @@ async def delete_chat_history(request: Request, user: dict = Depends(require_aut
     session_id = get_or_create_session_id(request)
     history_manager.clear_history(session_id)
     return {"message": "履歴をクリアしました"}
-
-# ★注意: ここにあった @router.get("/config") は main.py に移動したので削除済みです
