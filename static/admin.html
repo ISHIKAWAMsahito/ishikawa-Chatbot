@@ -695,7 +695,7 @@
     
     try {
         // ★修正: URLの末尾にスラッシュを追加
-        const res = await fetch(`/api/client/feedback/`, { 
+        const res = await fetch(`/api/client/feedback/`, { // 12/6末尾にスラッシュ追加 サーバー側の定義が /api/client/feedback/（末尾スラッシュあり）になっているのに、クライアントが /api/client/feedback（なし）にアクセスしているため
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ log_id: logId, rating: rating })
