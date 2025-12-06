@@ -6,8 +6,10 @@
     <title>AI chatbot system</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-<script type="module">
-    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+<script>
+    // 1. import行を削除しました
+    // 2. 代わりに、グローバル変数の supabase から createClient を取り出します
+    const { createClient } = supabase;
 
     window.supabaseClient = null;
 
@@ -465,7 +467,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             try {
-                const res = await fetch(`${BACKEND_API_BASE_URL}/api/client/feedback/`, {
+                const res = await fetch(`${BACKEND_API_BASE_URL}/api/client/feedback/`, { // 12/6feedback.pyの定義が@router.post("/")になっているため、末尾にスラッシュを追加
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ feedback_id: logId, rating: rating })
