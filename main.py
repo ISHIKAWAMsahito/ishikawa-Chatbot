@@ -3,15 +3,16 @@ import logging
 import uvicorn
 from contextlib import asynccontextmanager
 
-# 必要なモジュールをすべてインポート (Dependsを含む)
-from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, Request, status
+# 必要なモジュールをインポート
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, Request, status, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, Request, status, HTTPException
-from core.config import APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY
+
+# Core & Config
+from core.config import APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY, SUPABASE_ANON_KEY
 from core.database import SupabaseClientManager
 from core.settings import SettingsManager
 from services.document_processor import SimpleDocumentProcessor
@@ -123,16 +124,24 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(auth.router, tags=["Auth"])
 
 # APIルーター群
-app.include_router(chat.router, prefix="/api/client/chat", tags=["Client Chat"])
+
+# ★修正箇所1: chat.client_router を使用 (学生用)
+# これにより、chat.py 内で定義した @client_router のロジックが適用されます
+app.include_router(chat.client_router, prefix="/api/client/chat", tags=["Client Chat"])
+
 app.include_router(feedback.router, prefix="/api/client/feedback", tags=["Client Feedback"])
 
 # 管理者API (APIエンドポイントは厳密に保護)
 app.include_router(documents.router, prefix="/api/admin/documents", tags=["Admin Documents"], dependencies=[Depends(require_auth)])
 app.include_router(fallbacks.router, prefix="/api/admin/fallbacks", tags=["Admin Fallbacks"], dependencies=[Depends(require_auth)])
 app.include_router(system.router, prefix="/api/admin/system", tags=["Admin System"], dependencies=[Depends(require_auth)])
-app.include_router(chat.router, prefix="/api/admin/chat", tags=["Admin Chat"], dependencies=[Depends(require_auth)])
+
+# ★修正箇所2: chat.admin_router を使用 (管理者用)
+# これにより、chat.py 内で定義した @admin_router のロジックが適用されます
+app.include_router(chat.admin_router, prefix="/api/admin/chat", tags=["Admin Chat"], dependencies=[Depends(require_auth)])
+
 # =========================================================
-# ★追加: 学生画面用 設定配布API
+# 学生画面用 設定配布API
 # =========================================================
 @app.get("/api/client/config")
 def get_client_config():
