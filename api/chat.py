@@ -1,9 +1,9 @@
 import logging
 from fastapi import APIRouter, Request, HTTPException, Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from core.dependencies import require_auth_client
 from core import settings as core_settings
-from core.config import ACTIVE_COLLECTION_NAME
+from core.config import ACTIVE_COLLECTION_NAME, SUPABASE_URL, SUPABASE_ANON_KEY
 from models.schemas import ChatQuery, ClientChatQuery
 from services.chat_logic import enhanced_chat_logic, get_or_create_session_id, history_manager
 
@@ -32,7 +32,7 @@ async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: d
 
     # 学生用はデフォルト設定を確実に指定
     # ★修正: 3072次元のDBに合わせるため、3072次元対応の 'gemini-embedding-001' を使用
-    default_model = "gemini-2.0-flash" 
+    default_model = "gemini-2.5-flash" 
     default_embedding = "models/gemini-embedding-001"
 
     chat_query = ChatQuery(
@@ -44,11 +44,14 @@ async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: d
     )
     
     return StreamingResponse(enhanced_chat_logic(request, chat_query), media_type="text/event-stream")
+
+# ★修正: 認証なしで /config にアクセス可能にする
 @client_router.get("/config")
-async def get_client_config(user: dict = Depends(require_auth_client)):
+async def get_client_config():
     """
     クライアント画面に対して、Supabaseの設定を返す
     （公開用キー: SUPABASE_ANON_KEY のみ）
+    ※ 認証なしでアクセス可能（クライアント初期化時に必要）
     """
     if not SUPABASE_URL or not SUPABASE_ANON_KEY:
         raise HTTPException(
@@ -56,10 +59,11 @@ async def get_client_config(user: dict = Depends(require_auth_client)):
             detail="Supabase設定が不完全です"
         )
     
-    return JSONResponse({
+    return {
         "supabase_url": SUPABASE_URL,
         "supabase_anon_key": SUPABASE_ANON_KEY
-    })
+    }
+
 @client_router.get("/history")
 async def get_chat_history(request: Request, user: dict = Depends(require_auth_client)):
     """現在のセッションのチャット履歴を取得"""
