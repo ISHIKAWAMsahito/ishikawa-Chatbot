@@ -44,7 +44,22 @@ async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: d
     )
     
     return StreamingResponse(enhanced_chat_logic(request, chat_query), media_type="text/event-stream")
-
+@client_router.get("/config")
+async def get_client_config(user: dict = Depends(require_auth_client)):
+    """
+    クライアント画面に対して、Supabaseの設定を返す
+    （公開用キー: SUPABASE_ANON_KEY のみ）
+    """
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise HTTPException(
+            status_code=500, 
+            detail="Supabase設定が不完全です"
+        )
+    
+    return JSONResponse({
+        "supabase_url": SUPABASE_URL,
+        "supabase_anon_key": SUPABASE_ANON_KEY
+    })
 @client_router.get("/history")
 async def get_chat_history(request: Request, user: dict = Depends(require_auth_client)):
     """現在のセッションのチャット履歴を取得"""
