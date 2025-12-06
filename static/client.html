@@ -485,31 +485,43 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         async function sendFeedback(element, rating) {
-            const messageWrapper = element.closest('.message');
-            const logId = messageWrapper.dataset.logId;
+            console.log(`フィードバック送信開始: ${rating}`);
             
-            if (!logId) {
-                console.error("Log ID not found for feedback.");
-                return;
-            }
-
             try {
-                const res = await fetch(`${BACKEND_API_BASE_URL}/api/client/feedback/`, { // 12/6feedback.pyの定義が@router.post("/")になっているため、末尾にスラッシュを追加
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ feedback_id: logId, rating: rating })
-                });
-
-                if (!res.ok) {
-                    const errorData = await res.json();
-                    throw new Error(errorData.detail || "Failed to send feedback.");
+                // 1. Supabaseクライアントの確認
+                if (!window.supabaseClient) {
+                    console.error("Supabaseクライアントが初期化されていません");
+                    alert("通信エラー: フィードバックを送信できませんでした。");
+                    return;
                 }
 
+                // 2. 送信するデータの作成
+                // 画像のテーブル定義に合わせてデータを準備します
+                const insertData = {
+                    rating: rating,        // 'good' または 'bad'
+                    comment: "ボタンによる評価", // コメントは空でもいいですが、区別のために入れています
+                    // created_at はSupabase側で自動入力される設定なら不要ですが、念のため
+                    created_at: new Date().toISOString() 
+                };
+
+                // 3. Supabaseに送信 (anonymous_commentsテーブル)
+                const { data, error } = await window.supabaseClient
+                    .from('anonymous_comments')
+                    .insert([insertData]);
+
+                if (error) {
+                    throw error;
+                }
+
+                console.log("Supabaseへの保存成功:", data);
+
+                // 4. 画面の見た目を更新（「ありがとうございます」に変える）
                 const feedbackContainer = element.parentElement;
                 feedbackContainer.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
                 
             } catch(error) {
-                console.error("Error sending feedback:", error);
+                console.error("フィードバック送信エラー:", error);
+                alert("送信に失敗しました。");
             }
         }
 
