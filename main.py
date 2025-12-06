@@ -111,22 +111,38 @@ async def get_stats_page():
 async def get_admin_stats_data():
     """
     Supabaseからコメント履歴を取得する（管理者権限が必要）。
-    サーバー側からアクセスするため、RLSが無効でもデータ取得が可能。
     """
+    # 1. DB接続チェック
     if not database.db_client:
+        logging.error("❌ Database client is not initialized")
         raise HTTPException(status_code=503, detail="Database not initialized")
     
     try:
-        # サーバー側の権限でデータを取得
-        response = database.db_client.table("anonymous_comments")\
+        # 2. 【ここが修正点】ラッパークラスから本物のクライアントを取り出す
+        client = database.db_client
+        
+        # もし client属性の中に本体が入っているなら、それを取り出す
+        if hasattr(client, "client"): 
+            client = client.client
+            
+        logging.info("⏳ Admin Stats: Fetching data from Supabase...")
+
+        # 3. データ取得実行
+        response = client.table("anonymous_comments")\
             .select("*")\
             .order("created_at", desc=True)\
             .limit(100)\
             .execute()
+            
+        logging.info(f"✅ Data fetched successfully: {len(response.data)} items")
         return response.data
+
     except Exception as e:
-        logging.error(f"Stats data fetch error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # エラーが出たらログに出力して500を返す
+        logging.error(f"❌ Stats fetch error: {str(e)}")
+        # 念のためオブジェクトの中身をログに出してデバッグしやすくする
+        logging.error(f"Debug info: db_client type: {type(database.db_client)}, attributes: {dir(database.db_client)}")
+        raise HTTPException(status_code=500, detail=f"Server Error: {str(e)}")
 # =========================================================
 # WebSocketエンドポイント
 # =========================================================
