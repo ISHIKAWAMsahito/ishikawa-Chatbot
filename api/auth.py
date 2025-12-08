@@ -122,9 +122,20 @@ async def serve_db_page(request: Request):
 
 @router.get("/feedback-stats", response_class=FileResponse)
 async def serve_feedback_stats(request: Request):
+    # 1. ログインチェック
     user = request.session.get('user')
     if not user:
         return RedirectResponse(url='/login', status_code=302)
+    
+    # 2. ★追加: SUPER_ADMIN_EMAILS かどうかのチェック
+    user_email = user.get('email', '').lower()
+    super_admin_emails_lower = [email.lower() for email in SUPER_ADMIN_EMAILS]
+    
+    # リストに入っていない人がアクセスしたらトップページへ飛ばす
+    if user_email not in super_admin_emails_lower:
+        return RedirectResponse(url='/', status_code=302)
+    
+    # 3. ファイルの配信
     stats_path = os.path.join(BASE_DIR, "static", "feedback_stats.html")
     if not os.path.exists(stats_path):
         raise HTTPException(status_code=404, detail="feedback_stats.html not found")
