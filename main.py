@@ -39,9 +39,13 @@ async def lifespan(app: FastAPI):
     logging.info("✅ 設定マネージャー初期化完了")
     
     # 2. ドキュメントプロセッサ初期化（高速）
+    # ★修正: 親子チャンキング用に引数を変更
     from services import document_processor
-    document_processor.simple_processor = SimpleDocumentProcessor(chunk_size=1000, chunk_overlap=200)
-    logging.info("✅ ドキュメントプロセッサ初期化完了")
+    document_processor.simple_processor = SimpleDocumentProcessor(
+        parent_chunk_size=1500, 
+        child_chunk_size=400
+    )
+    logging.info("✅ ドキュメントプロセッサ初期化完了 (Parent-Child Chunking)")
 
     # 3. Supabase初期化（タイムアウト対応）
     if SUPABASE_URL and SUPABASE_KEY:
@@ -103,10 +107,28 @@ def healthz_check():
     return {"status": "ok"}
 
 
-# 統計画面設定
+# =========================================================
+# HTMLファイルのルーティング追加
+# =========================================================
+
+# 1. 統計画面 (認証不要または認証後にアクセス)
 @app.get("/stats.html")
 async def get_stats_page():
     return FileResponse("static/stats.html")
+
+# 2. DB管理画面 (認証はファイル取得時にはかけず、API側で保護)
+@app.get("/DB.html")
+async def get_db_page():
+    return FileResponse("static/DB.html")
+
+# 3. 管理画面本体 (Authルーターに任せるか、ここで明示的に返すか)
+# Authルーターが /admin を処理している場合、ここは不要かもしれませんが、
+# 明示的に admin.html にアクセスしたい場合のために追加
+@app.get("/admin.html")
+async def get_admin_page(user: dict = Depends(require_auth)):
+    return FileResponse("static/admin.html")
+
+
 @app.get("/api/admin/stats/data", dependencies=[Depends(require_auth)])
 async def get_admin_stats_data():
     """
@@ -143,6 +165,8 @@ async def get_admin_stats_data():
         # 念のためオブジェクトの中身をログに出してデバッグしやすくする
         logging.error(f"Debug info: db_client type: {type(database.db_client)}, attributes: {dir(database.db_client)}")
         raise HTTPException(status_code=500, detail=f"Server Error: {str(e)}")
+
+
 # =========================================================
 # WebSocketエンドポイント
 # =========================================================
