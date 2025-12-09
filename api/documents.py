@@ -1,7 +1,7 @@
 import logging
 import asyncio
 import traceback
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 import google.generativeai as genai
 import httpx
@@ -22,7 +22,10 @@ from services import document_processor
 
 router = APIRouter()
 
-# 修正: /api/documents/all -> /all
+# ----------------------------------------------------------------
+# 読み取り・更新・削除系
+# ----------------------------------------------------------------
+
 @router.get("/all")
 async def get_all_documents(
     user: dict = Depends(require_auth),
@@ -47,7 +50,6 @@ async def get_all_documents(
         if search:
             safe_search = search.replace('"', '""')
             search_term = f"%{safe_search}%"
-            
             query = query.ilike("content", search_term)
             count_query = count_query.ilike("content", search_term)
 
@@ -71,7 +73,7 @@ async def get_all_documents(
         logging.error(traceback.format_exc()) 
         raise HTTPException(status_code=500, detail=str(e))
 
-# 修正: /api/documents/{doc_id} -> /{doc_id}
+
 @router.get("/{doc_id}")
 async def get_document_by_id(doc_id: int, user: dict = Depends(require_auth)):
     """特定のドキュメントを取得"""
@@ -88,13 +90,16 @@ async def get_document_by_id(doc_id: int, user: dict = Depends(require_auth)):
         logging.error(f"ドキュメント取得エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# 修正: /api/documents/{doc_id} -> /{doc_id}
+
 @router.put("/{doc_id}")
 async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Depends(require_auth)):
     """ドキュメントを更新。content更新時にベクトルも再生成する。"""
     if not database.db_client or not settings.settings_manager:
         raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
     try:
+        # 現在の設定から埋め込みモデルを取得（リクエストに含まれていなければデフォルト使用）
+        embedding_model = request.get("embedding_model", "models/gemini-embedding-001")
+        
         update_data = {}
 
         if "content" in request:
@@ -105,7 +110,8 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
             try:
                 embedding_response = genai.embed_content(
                     model=embedding_model,
-                    content=new_content
+                    content=new_content,
+                    task_type="retrieval_document" 
                 )
                 update_data["embedding"] = embedding_response["embedding"]
                 logging.info(f"ドキュメント {doc_id} のベクトル再生成が完了しました。")
@@ -115,7 +121,8 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
                     await asyncio.sleep(30)
                     embedding_response = genai.embed_content(
                         model=embedding_model,
-                        content=new_content
+                        content=new_content,
+                        task_type="retrieval_document"
                     )
                     update_data["embedding"] = embedding_response["embedding"]
                 else:
@@ -141,7 +148,7 @@ async def update_document(doc_id: int, request: Dict[str, Any], user: dict = Dep
         logging.error(f"ドキュメント更新エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# 修正: /api/documents/{doc_id} -> /{doc_id}
+
 @router.delete("/{doc_id}")
 async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
     """ドキュメントを削除"""
@@ -161,16 +168,85 @@ async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
         logging.error(f"ドキュメント削除エラー: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# 修正: main.pyのprefix配下になるため変更なし (URL: /api/admin/documents/upload)
+
+# ----------------------------------------------------------------
+# アップロード & スクレイピング (Renderメモリ対策版)
+# ----------------------------------------------------------------
+
+async def process_batch_insert(batch_docs: List[Any], embedding_model: str, collection_name: str):
+    """
+    バッチ処理用のヘルパー関数。
+    受け取ったドキュメントのリストをベクトル化し、DBに挿入する。
+    """
+    if not batch_docs:
+        return 0
+
+    batch_texts = [doc.page_content for doc in batch_docs]
+    inserted_count = 0
+
+    try:
+        # API呼び出し (まとめて処理)
+        embedding_response = genai.embed_content(
+            model=embedding_model,
+            content=batch_texts,
+            task_type="retrieval_document"
+        )
+        embeddings = embedding_response["embedding"]
+        
+        # DBへの挿入
+        for j, doc in enumerate(batch_docs):
+            if "collection_name" not in doc.metadata:
+                doc.metadata["collection_name"] = collection_name
+            
+            database.db_client.insert_document(
+                content=doc.page_content, 
+                embedding=embeddings[j], 
+                metadata=doc.metadata
+            )
+            inserted_count += 1
+            
+        return inserted_count
+
+    except Exception as e:
+        # クォータエラー時のリトライ処理
+        if "429" in str(e) or "quota" in str(e).lower():
+            logging.warning("API制限(429/Quota)を検知。15秒待機してリトライします...")
+            await asyncio.sleep(15)
+            try:
+                # リトライ
+                embedding_response = genai.embed_content(
+                    model=embedding_model,
+                    content=batch_texts,
+                    task_type="retrieval_document"
+                )
+                embeddings = embedding_response["embedding"]
+                for j, doc in enumerate(batch_docs):
+                    if "collection_name" not in doc.metadata:
+                        doc.metadata["collection_name"] = collection_name
+                    
+                    database.db_client.insert_document(
+                        content=doc.page_content, 
+                        embedding=embeddings[j], 
+                        metadata=doc.metadata
+                    )
+                    inserted_count += 1
+                return inserted_count
+            except Exception as retry_e:
+                logging.error(f"リトライも失敗しました: {retry_e}")
+                raise retry_e
+        else:
+            logging.error(f"バッチベクトル化エラー: {e}")
+            raise e
+
+
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...), 
     category: str = Form("その他"), 
-    # ▼ フロントエンドからのモデル指定を受け取る
     embedding_model: str = Form("models/gemini-embedding-001"), 
     user: dict = Depends(require_auth)
 ):
-    """ファイルを受け取り、(古いデータを削除後)、テキスト抽出・チャンキング・ベクトル化してDBに挿入"""
+    """ファイルを受け取り、メモリ効率よくバッチ処理でチャンキング・ベクトル化してDBに挿入"""
     if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
     
@@ -183,90 +259,41 @@ async def upload_document(
         # 1. 古いデータを削除
         logging.info(f"古いチャンク (source: {filename}) を削除しています...")
         try:
-            delete_result = database.db_client.client.table("documents").delete().eq("metadata->>source", filename).execute()
-            if delete_result.data:
-                logging.info(f"{len(delete_result.data)} 件の古いチャンクを削除しました。")
-            else:
-                logging.info("削除対象の古いチャンクはありませんでした。")
+            database.db_client.client.table("documents").delete().eq("metadata->>source", filename).execute()
         except Exception as e:
-            logging.error(f"古いチャンクの削除中にエラー: {e}。処理を続行します。")
-            
-        # 2. 新しいデータを処理
+            logging.warning(f"古いチャンク削除時の軽微なエラー (無視可): {e}")
+
+        # 2. ジェネレータを取得 (ここではまだチャンク生成は始まらない)
         collection_name = settings.settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
-        docs_to_embed = document_processor.simple_processor.process_and_chunk(filename, content, category, collection_name)
+        doc_generator = document_processor.simple_processor.process_and_chunk(filename, content, category, collection_name)
         
-        if not docs_to_embed:
-            raise HTTPException(status_code=400, detail="ファイルからテキストを抽出できませんでした。")
+        if doc_generator is None:
+             raise HTTPException(status_code=400, detail="ファイル処理の初期化に失敗しました")
 
-        # ---------------------------------------------------------
-        # 【重要】ここに embedding_model を上書きする行が無いことを確認
-        # ---------------------------------------------------------
-
-        total_chunks = len(docs_to_embed)
-        logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します... (Model: {embedding_model})")
-
-        # 3. バッチ処理 (API課金の節約と高速化)
-        # 100件ずつまとめてAPIに送信することで、リクエスト回数を1/100に減らします
-        batch_size = 100
-        count = 0
-
-        for i in range(0, total_chunks, batch_size):
-            batch_docs = docs_to_embed[i : i + batch_size]
-            batch_texts = [doc.page_content for doc in batch_docs]
+        # 3. ストリーミング・バッチ処理
+        #    リストに全データを溜め込まず、少しずつ処理してメモリを解放する
+        batch_docs = []
+        batch_size = 50 # Render (512MB) 環境では 50程度が安全
+        total_count = 0
+        
+        # ジェネレータから1つずつ取り出す
+        for doc in doc_generator:
+            batch_docs.append(doc)
             
-            try:
-                # API呼び出し (ここで100件分を 1回のリクエスト で処理します)
-                # task_type="retrieval_document" は検索対象ドキュメント用として精度が向上します
-                embedding_response = genai.embed_content(
-                    model=embedding_model,
-                    content=batch_texts,
-                    task_type="retrieval_document"
-                )
-                embeddings = embedding_response["embedding"]
-                
-                # 取得したベクトルをDBに保存
-                for j, doc in enumerate(batch_docs):
-                    database.db_client.insert_document(
-                        content=doc.page_content, 
-                        embedding=embeddings[j], 
-                        metadata=doc.metadata
-                    )
-                    count += 1
-                
-                logging.info(f"バッチ処理進行中: {count}/{total_chunks}")
-                # API制限対策の待機 (バッチ処理なら0.5秒でも十分安全です)
-                await asyncio.sleep(0.5)
+            # バッチサイズに達したら処理実行
+            if len(batch_docs) >= batch_size:
+                inserted = await process_batch_insert(batch_docs, embedding_model, collection_name)
+                total_count += inserted
+                batch_docs = [] # メモリ解放！
+                await asyncio.sleep(0.5) # APIレート制限対策
 
-            except Exception as e:
-                # クォータエラーなどが起きた場合の待機処理
-                if "429" in str(e) or "quota" in str(e).lower():
-                    logging.warning(f"API制限を検知しました。10秒待機してリトライします... ({i}~)")
-                    await asyncio.sleep(10)
-                    try:
-                        # 1回だけリトライ
-                        embedding_response = genai.embed_content(
-                            model=embedding_model,
-                            content=batch_texts,
-                            task_type="retrieval_document"
-                        )
-                        embeddings = embedding_response["embedding"]
-                        for j, doc in enumerate(batch_docs):
-                            database.db_client.insert_document(
-                                content=doc.page_content, 
-                                embedding=embeddings[j], 
-                                metadata=doc.metadata
-                            )
-                            count += 1
-                    except Exception as retry_e:
-                        logging.error(f"リトライも失敗しました: {retry_e}")
-                        continue
-                else:
-                    logging.error(f"バッチ処理エラー (index {i}~): {e}")
-                    await asyncio.sleep(2)
-                    continue
+        # 端数（ループ終了後に残っている分）を処理
+        if batch_docs:
+            inserted = await process_batch_insert(batch_docs, embedding_model, collection_name)
+            total_count += inserted
 
-        logging.info(f"ファイル処理完了: {filename} ({count}/{total_chunks}件のチャンクをDBに挿入)")
-        return {"chunks": count, "filename": filename, "total": total_chunks}
+        logging.info(f"ファイル処理完了: {filename} (合計 {total_count} 件のチャンクをDBに挿入)")
+        return {"chunks": total_count, "filename": filename, "message": "処理完了"}
 
     except HTTPException:
         raise
@@ -274,23 +301,13 @@ async def upload_document(
         logging.error(f"ファイルアップロード処理エラー: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# 修正: main.pyのprefix配下になる (URL: /api/admin/documents/collections/...)
-@router.get("/collections/{collection_name}/documents")
-async def get_documents(collection_name: str):
-    if not database.db_client:
-        raise HTTPException(503, "DB not initialized")
-    return {
-        "documents": database.db_client.get_documents_by_collection(collection_name),
-        "count": database.db_client.count_chunks_in_collection(collection_name)
-    }
 
-# 修正: main.pyのprefix配下になる (URL: /api/admin/documents/scrape)
 @router.post("/scrape")
 async def scrape_website(
     request: ScrapeRequest, 
     user: dict = Depends(require_auth)
 ):
-    """URLからテキストを抽出し、(古いデータを削除後)、ベクトル化してDBに挿入"""
+    """URLからテキストを抽出し、メモリ効率よくバッチ処理でベクトル化してDBに挿入"""
     if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
 
@@ -301,92 +318,75 @@ async def scrape_website(
         async with httpx.AsyncClient(verify=False) as client:
             try:
                 response = await client.get(request.url, follow_redirects=True, timeout=10.0)
-                response.raise_for_status() # 200 OK以外はエラー
+                response.raise_for_status()
             except httpx.RequestError as e:
                 logging.error(f"URL取得エラー: {e}")
                 raise HTTPException(status_code=400, detail=f"URLの取得に失敗しました: {e}")
         
         # 2. HTMLからテキストを抽出
         soup = BeautifulSoup(response.text, 'html.parser')
-        
         for script_or_style in soup(["script", "style"]):
             script_or_style.decompose()
         
-        target_element = soup.body
-        if not target_element:
-            logging.warning(f"URL: {request.url} に <body> タグが見つからなかったため、HTML全体からテキストを抽出します。")
-            target_element = soup 
-
+        target_element = soup.body if soup.body else soup
         body_text = target_element.get_text(separator=' ', strip=True) 
 
         if not body_text:
             raise HTTPException(status_code=400, detail="Webサイトからテキストを抽出できませんでした。")
         
-        # 3. チャンキング 
-        filename_from_url = request.url.split('/')[-1] or request.url
+        # 3. ファイル名定義と古いデータの削除
+        filename_from_url = request.url.split('/')[-1] or "index.html"
         source_name = f"scrape_{filename_from_url}.txt"
 
-        # 3b. 古いデータを削除
         logging.info(f"古いチャンク (source: {source_name}) を削除しています...")
         try:
-            delete_result = database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
-            if delete_result.data:
-                logging.info(f"{len(delete_result.data)} 件の古いチャンクを削除しました。")
-            else:
-                logging.info("削除対象の古いチャンクはありませんでした。")
+            database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
         except Exception as e:
-            logging.error(f"古いチャンクの削除中にエラー: {e}。処理を続行します。")
+            logging.warning(f"古いチャンク削除時の軽微なエラー: {e}")
 
-        # 3c. 新しいデータを処理
-        docs_to_embed = document_processor.simple_processor.process_and_chunk(
+        # 4. ジェネレータを取得
+        doc_generator = document_processor.simple_processor.process_and_chunk(
             filename=source_name, 
             content=body_text.encode('utf-8'), 
             category="WebScrape", 
             collection_name=request.collection_name
         )
         
-        if not docs_to_embed:
-            raise HTTPException(status_code=400, detail="テキストのチャンキングに失敗しました。")
-
-        # 4. ベクトル化 & DB挿入
+        # 5. ストリーミング・バッチ処理
+        batch_docs = []
+        batch_size = 50
+        total_count = 0
         embedding_model = request.embedding_model
-        total_chunks = len(docs_to_embed)
-        logging.info(f"{total_chunks} 件のチャンクをベクトル化・挿入します...")
 
-        count = 0
-        for doc in docs_to_embed:
-            try:
-                embedding_response = genai.embed_content(
-                    model=embedding_model, 
-                    content=doc.page_content
-                )
-                embedding = embedding_response["embedding"]
-                
-                database.db_client.insert_document(
-                    content=doc.page_content, 
-                    embedding=embedding, 
-                    metadata=doc.metadata
-                )
-                count += 1
-                
-                await asyncio.sleep(1)
+        for doc in doc_generator:
+            batch_docs.append(doc)
             
-            except Exception as e:
-                if "429" in str(e) or "quota" in str(e).lower():
-                    logging.warning("埋め込み生成でAPI制限に達しました。30秒待機します。")
-                    await asyncio.sleep(30)
-                    embedding_response = genai.embed_content(model=embedding_model, content=doc.page_content)
-                    embedding = embedding_response["embedding"]
-                    database.db_client.insert_document(doc.page_content, embedding, doc.metadata)
-                else:
-                    logging.error(f"チャンク処理エラー ({request.url}): {e}")
-                    continue
+            if len(batch_docs) >= batch_size:
+                inserted = await process_batch_insert(batch_docs, embedding_model, request.collection_name)
+                total_count += inserted
+                batch_docs = [] # メモリ解放
+                await asyncio.sleep(0.5)
 
-        logging.info(f"スクレイプ処理完了: {request.url} ({count}/{total_chunks}件のチャンクをDBに挿入)")
-        return {"chunks": count, "filename": request.url, "total": total_chunks}
+        # 端数処理
+        if batch_docs:
+            inserted = await process_batch_insert(batch_docs, embedding_model, request.collection_name)
+            total_count += inserted
+
+        logging.info(f"スクレイプ処理完了: {request.url} (合計 {total_count} 件のチャンクをDBに挿入)")
+        return {"chunks": total_count, "filename": request.url, "message": "処理完了"}
 
     except HTTPException:
         raise
     except Exception as e:
         logging.error(f"スクレイプ処理エラー: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/collections/{collection_name}/documents")
+async def get_documents(collection_name: str):
+    if not database.db_client:
+        raise HTTPException(503, "DB not initialized")
+    return {
+        "documents": database.db_client.get_documents_by_collection(collection_name),
+        "count": database.db_client.count_chunks_in_collection(collection_name)
+    }
