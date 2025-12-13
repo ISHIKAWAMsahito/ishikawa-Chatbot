@@ -5,342 +5,251 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI chatbot system</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    
+
+    <script>
+        // グローバル変数のsupabaseからcreateClientを取り出す
+        // 注意: ネットワーク状況等でSupabaseライブラリの読み込みが遅れた場合のエラーハンドリングを追加
+        window.supabaseClient = null;
+
+        async function initializeSupabase() {
+            try {
+                if (typeof supabase === 'undefined') {
+                    console.error("Supabaseライブラリがロードされていません。");
+                    return;
+                }
+                const { createClient } = supabase;
+
+                // 設定を取得
+                const response = await fetch('/api/client/chat/config');
+                
+                if (!response.ok) {
+                    console.error(`API Error: ${response.status}`);
+                    throw new Error('設定の読み込みに失敗しました。');
+                }
+                
+                const config = await response.json();
+                const SUPABASE_URL = config.supabase_url;
+                const SUPABASE_ANON_KEY = config.supabase_anon_key;
+
+                if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+                    console.error("Supabaseエラー: 環境変数が取得できませんでした");
+                    return;
+                }
+
+                // 初期化実行
+                window.supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                console.log('✅ Supabase初期化完了');
+
+            } catch (error) {
+                console.error("Supabase初期化失敗:", error);
+            }
+        }
+
+        // 初期化を開始
+        initializeSupabase();
+    </script>
+
     <style>
-        /* --- CSSスタイル設定 --- */
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            min-height: 100vh; 
-            padding: 20px; 
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        /* --- メインコンテナ --- */
-        .container { 
-            width: 100%;
-            max-width: 800px; 
-            background: rgba(255, 255, 255, 0.98); 
-            border-radius: 25px; 
-            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15); 
-            overflow: hidden; 
-            display: flex; 
-            flex-direction: column; 
-            height: 90vh; /* 画面の高さに合わせる */
-            position: relative;
-        }
-
-        /* --- ヘッダーエリア --- */
-        .header { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            color: white; 
-            padding: 20px; 
-            text-align: center; 
-            position: relative; 
-            z-index: 10;
-        }
-        .header h1 { 
-            font-size: 1.8rem; 
-            margin-bottom: 5px; 
-            text-shadow: 1px 1px 4px rgba(0, 0, 0, 0.3); 
-        }
-        .header .subtitle { 
-            font-size: 0.9rem; 
-            opacity: 0.9; 
-        }
-
-        /* ヘッダー内のコントロール群 */
-        .header-controls {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-
-        .logout-btn {
-            background-color: rgba(255, 255, 255, 0.2);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.4);
-            border-radius: 20px;
-            padding: 6px 12px;
-            text-decoration: none;
-            font-size: 0.8rem;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .logout-btn:hover { background-color: rgba(255, 255, 255, 0.4); }
-
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; overflow-x: hidden; }
+        .container { max-width: 800px; margin: 0 auto; background: rgba(255, 255, 255, 0.98); border-radius: 25px; box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15); overflow: hidden; display: flex; flex-direction: column; height: calc(100vh - 40px); }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; position: relative; }
+        .header h1 { font-size: 2rem; margin-bottom: 10px; text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3); }
+        .header .subtitle { font-size: 1rem; opacity: 0.9; }
         .settings-indicator { 
+            position: absolute; 
+            top: 60px !important; 
+            right: 15px; 
             display: flex; 
             align-items: center; 
-            gap: 6px; 
-            font-size: 0.75rem; 
-            background-color: rgba(0, 0, 0, 0.2); 
-            color: white; 
-            padding: 4px 10px; 
+            gap: 10px; 
+            font-size: 0.85rem; 
+            background-color: #ffffff; 
+            color: #333333; 
+            border: 1px solid #e0e0e0; 
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); 
+            padding: 8px 12px; 
             border-radius: 15px;
+            z-index: 9;
         }
         .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #28a745; animation: pulse-dot 2s infinite; }
         .sync-dot.disconnected { background: #dc3545; animation: none; }
         @keyframes pulse-dot { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
-
-        /* テーマセレクター */
-        .theme-selector {
-            margin-top: 15px;
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-            background: rgba(255, 255, 255, 0.1);
-            padding: 8px;
-            border-radius: 20px;
-            width: fit-content;
-            margin-left: auto;
-            margin-right: auto;
-        }
-        .theme-btn {
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            border: 2px solid white;
-            cursor: pointer;
-            transition: transform 0.2s ease;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }
-        .theme-btn:hover { transform: scale(1.2); }
-        .theme-btn[data-theme="default"] { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-        .theme-btn[data-theme="green"] { background: linear-gradient(135deg, #2AF598 0%, #009EFD 100%); }
-        .theme-btn[data-theme="orange"] { background: linear-gradient(135deg, #F6D365 0%, #FDA085 100%); }
-        .theme-btn[data-theme="pink"] { background: linear-gradient(135deg, #F093FB 0%, #F5576C 100%); }
-
-        /* コメントボタン */
+        .chat-container { display: flex; flex-direction: column; flex-grow: 1; background: white; overflow: hidden; position: relative; }
+        .chat-header { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 15px; text-align: center; font-weight: 600; font-size: 1.1rem; }
+        .chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .message { max-width: 80%; padding: 15px 20px; border-radius: 20px; position: relative; animation: slideIn 0.3s ease-out; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .message.user { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; align-self: flex-end; margin-left: auto; }
+        .message.bot { background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); color: #333; align-self: flex-start; border-left: 4px solid #4facfe; }
+        .message-content { line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; }
+        .message-content a { color: #007bff; text-decoration: underline; }
+        .message-content a:hover { color: #0056b3; }
+        .message-time { font-size: 0.8rem; opacity: 0.7; margin-top: 8px; }
+        .chat-input-container { padding: 20px; background: #f8f9fa; border-top: 1px solid #e9ecef; }
+        .chat-input-box { display: flex; gap: 10px; align-items: flex-end; }
+        .chat-input { flex: 1; padding: 15px; border: 2px solid #e9ecef; border-radius: 25px; font-size: 16px; outline: none; transition: all 0.3s ease; resize: none; min-height: 50px; max-height: 120px; }
+        .chat-input:focus { border-color: #4facfe; box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1); }
+        .send-btn { padding: 15px 25px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; border: none; border-radius: 25px; cursor: pointer; font-weight: 600; transition: all 0.3s ease; display: flex; align-items: center; gap: 8px; }
+        .send-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(79, 172, 254, 0.3); }
+        .send-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .feedback-container { margin-top: 12px; padding-top: 8px; border-top: 1px solid #ddd; }
+        .feedback-btn { background: none; border: 1px solid #ccc; border-radius: 15px; padding: 3px 8px; margin-left: 8px; cursor: pointer; transition: all 0.2s ease; }
+        .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
+        .loading-indicator { display: inline-block; width: 20px; height: 20px; border: 2px solid #f3f3f3; border-top: 2px solid #4facfe; border-radius: 50%; animation: spin 1s linear infinite; margin-right: 10px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .settings-update-notification { position: fixed; top: 20px; right: 20px; background: #28a745; color: white; padding: 15px 20px; border-radius: 10px; box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3); z-index: 1000; transform: translateX(350px); transition: transform 0.3s ease; }
+        .settings-update-notification.show { transform: translateX(0); }
+        .settings-update-notification .close-btn { background: none; border: none; color: white; font-size: 18px; margin-left: 10px; cursor: pointer; }
+        
         .comment-btn { 
-            background-color: white; 
-            color: #333; 
-            border: none;
+            position: absolute; 
+            top: 15px; 
+            left: 15px; 
+            background-color: #ffffff; 
+            color: #333333; 
+            border: 1px solid #e0e0e0;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-            border-radius: 20px; 
-            padding: 6px 15px; 
+            border-radius: 15px; 
+            padding: 8px 12px; 
             cursor: pointer; 
             font-size: 0.85rem; 
             font-weight: bold;
             transition: all 0.2s ease;
-        }
-        .comment-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); }
-
-        /* --- チャットエリア --- */
-        .chat-container { 
-            display: flex; 
-            flex-direction: column; 
-            flex-grow: 1; 
-            background: white; 
-            overflow: hidden; 
-            position: relative; 
-        }
-        .chat-messages { 
-            flex: 1; 
-            padding: 20px; 
-            overflow-y: auto; 
-            display: flex; 
-            flex-direction: column; 
-            gap: 15px; 
+            z-index: 10;
         }
 
-        /* メッセージスタイル */
-        .message { 
-            max-width: 80%; 
-            padding: 12px 18px; 
-            border-radius: 18px; 
-            position: relative; 
-            animation: slideIn 0.3s ease-out; 
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05); 
-            line-height: 1.6;
-            word-wrap: break-word;
+        .comment-btn:hover { 
+            background-color: #f2f2f2;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
         }
-        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-
-        .message.user { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            color: white; 
-            align-self: flex-end; 
-            margin-left: auto; 
-            border-bottom-right-radius: 4px;
-        }
-        .message.bot { 
-            background: #f1f3f5; 
-            color: #333; 
-            align-self: flex-start; 
-            border-left: 4px solid #4facfe; 
-            border-bottom-left-radius: 4px;
-        }
-        
-        .message-content a { color: #007bff; text-decoration: underline; }
-        .message.user .message-content a { color: white; }
-        .message-time { font-size: 0.7rem; opacity: 0.7; margin-top: 5px; text-align: right; }
-        
-        .warning-text { color: #d9534f; font-weight: bold; font-size: 0.9em; display: block; margin-top: 8px; }
-
-        /* --- 入力エリア --- */
-        .chat-input-container { 
-            padding: 15px 20px; 
-            background: #f8f9fa; 
-            border-top: 1px solid #e9ecef; 
-        }
-        .chat-input-box { display: flex; gap: 10px; align-items: flex-end; }
-        
-        .chat-input { 
-            flex: 1; 
-            padding: 12px 15px; 
-            border: 2px solid #e9ecef; 
-            border-radius: 25px; 
-            font-size: 1rem; 
-            outline: none; 
-            transition: all 0.3s ease; 
-            resize: none; 
-            min-height: 48px; 
-            max-height: 120px; 
-            font-family: inherit;
-        }
-        .chat-input:focus { border-color: #4facfe; box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1); }
-        
-        .send-btn { 
-            padding: 12px 24px; 
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
-            color: white; 
-            border: none; 
-            border-radius: 25px; 
-            cursor: pointer; 
-            font-weight: 600; 
-            transition: all 0.3s ease; 
-            display: flex; 
-            align-items: center; 
-            gap: 8px; 
-            height: 48px;
-        }
-        .send-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(79, 172, 254, 0.3); }
-        
-        /* 停止ボタン用 */
-        .send-btn.generating { background: #dc3545; box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3); }
-        .send-btn.generating:hover { background: #c82333; }
-
-        /* フィードバックボタン */
-        .feedback-container { margin-top: 10px; padding-top: 5px; border-top: 1px solid #e0e0e0; display: flex; align-items: center; gap: 10px; }
-        .feedback-btn { background: white; border: 1px solid #ccc; border-radius: 12px; padding: 2px 8px; cursor: pointer; transition: all 0.2s; }
-        .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
-
-        /* --- モーダル --- */
-        .modal { display: none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); animation: fadeIn 0.3s; }
+        .modal { display: none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); animation: fadeIn 0.3s; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        .modal-content { background-color: #fff; margin: 15% auto; padding: 25px; width: 90%; max-width: 500px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); position: relative; animation: slideDown 0.3s; }
+        .modal-content { background-color: #fefefe; margin: 15% auto; padding: 25px; border: 1px solid #888; width: 90%; max-width: 500px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); position: relative; animation: slideDown 0.3s; }
         @keyframes slideDown { from { transform: translateY(-50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        .modal-close-btn { float: right; font-size: 24px; font-weight: bold; color: #aaa; cursor: pointer; }
-        .modal-close-btn:hover { color: #333; }
-        .modal h2 { margin-bottom: 15px; color: #333; font-size: 1.2rem; }
-        .modal textarea { width: 100%; height: 120px; padding: 10px; border: 1px solid #ccc; border-radius: 8px; margin: 10px 0 20px; resize: vertical; font-family: inherit; }
-        .modal button { width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .modal-close-btn { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .modal-close-btn:hover, .modal-close-btn:focus { color: black; text-decoration: none; }
+        .modal h2 { margin-bottom: 15px; color: #333; }
+        .modal textarea { width: 100%; height: 120px; padding: 10px; border: 1px solid #ccc; border-radius: 8px; margin-top: 10px; margin-bottom: 20px; resize: vertical; font-size: 1rem; }
+        .modal button { width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; }
         .modal button:hover { opacity: 0.9; }
+        .modal button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .success-message { color: #28a745; font-weight: 600; margin-top: 10px; display: none; }
+        .error-message { color: #dc3545; font-weight: 600; margin-top: 10px; display: none; }
+
+        .warning-text { color: red; font-weight: bold; }
+        .theme-selector { margin-top: 20px; color: rgba(255, 255, 255, 0.9); font-size: 0.9rem; }
+        .theme-selector p { margin-bottom: 8px; }
+        .theme-selector div { display: flex; justify-content: center; gap: 15px; }
+        .theme-btn { width: 28px; height: 28px; border-radius: 50%; border: 2px solid white; cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        .theme-btn:hover { transform: scale(1.15); box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+
+        .theme-btn[data-theme="default"] { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .theme-btn[data-theme="green"] { background: linear-gradient(135deg, #2AF598 0%, #009EFD 100%); }
+        .theme-btn[data-theme="orange"] { background: linear-gradient(135deg, #F6D365 0%, #FDA085 100%); }
+        .theme-btn[data-theme="pink"] { background: linear-gradient(135deg, #F093FB 0%, #F5576C 100%); }
         
-        .success-message { color: #28a745; font-weight: bold; margin-top: 10px; display: none; text-align: center; }
-        .error-message { color: #dc3545; font-weight: bold; margin-top: 10px; display: none; text-align: center; }
+        .logout-btn {
+            position: absolute; top: 15px; right: 15px; z-index: 10;
+            background-color: #ffffff; color: #333333; border: 1px solid #e0e0e0;
+            border-radius: 20px; padding: 8px 16px; text-decoration: none; font-size: 0.85rem; font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); transition: all 0.2s ease; display: flex; align-items: center; gap: 5px;
+        }
+        .logout-btn:hover { background-color: #f2f2f2; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); }
 
-        /* 通知ポップアップ */
-        .settings-update-notification { position: fixed; top: 20px; right: 20px; background: #28a745; color: white; padding: 12px 20px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 2000; transform: translateX(150%); transition: transform 0.3s ease; }
-        .settings-update-notification.show { transform: translateX(0); }
-
-        /* レスポンシブ */
         @media (max-width: 480px) {
-            body { padding: 0; }
-            .container { height: 100vh; border-radius: 0; }
-            .header { padding: 15px; }
-            .header h1 { font-size: 1.4rem; }
-            .chat-messages { padding: 15px; }
-            .message { max-width: 90%; }
+            body { padding: 5px; }
+            .container { height: calc(100vh - 10px); }
+            .header { padding: 20px; display: flex; flex-direction: column; align-items: center; }
+            .header h1 { font-size: 1.6rem; }
+            .header .subtitle { font-size: 0.9rem; }
+            .logout-btn { position: static; display: inline-flex; margin: 10px auto; }
+            .settings-indicator { position: static; margin-top: 10px; justify-content: center; }
+            .chat-input-container { padding: 15px; }
+            .chat-input-box { flex-direction: column; align-items: stretch; }
+            .send-btn { justify-content: center; padding: 12px; }
+            .settings-update-notification { position: fixed; top: auto; bottom: 20px; right: 20px; left: 20px; }
+            .comment-btn { position: static; margin-top: 15px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="header-controls">
-                <a href="/logout" class="logout-btn">🚪 ログアウト</a>
-                <div class="settings-indicator" id="settingsIndicator">
-                    <div class="sync-dot disconnected" id="syncDot"></div>
-                    <span id="syncText">同期準備中...</span>
-                </div>
-            </div>
-            
-            <h1>📚 AI chatbot system</h1>
-            <p class="subtitle">学生生活に関する質問にお答えします！</p>
-            
-            <div style="display: flex; justify-content: center; gap: 15px; margin-top: 15px; align-items: center;">
-                <button id="openCommentModalBtn" class="comment-btn">✉️ 意見・要望</button>
-                <div class="theme-selector">
-                    <button class="theme-btn" data-theme="default" title="デフォルト"></button>
-                    <button class="theme-btn" data-theme="green" title="グリーン"></button>
-                    <button class="theme-btn" data-theme="orange" title="オレンジ"></button>
-                    <button class="theme-btn" data-theme="pink" title="ピンク"></button>
-                </div>
-            </div>
+    <div class="header">
+        <a href="/logout" class="logout-btn">🚪 ログアウト</a>
+        
+        <button id="openCommentModalBtn" class="comment-btn">✉️ 回答への意見・要望</button>
+        <div class="settings-indicator" id="settingsIndicator">
+            <div class="sync-dot disconnected" id="syncDot"></div>
+            <span id="syncText">設定同期準備中...</span>
         </div>
-
-        <div class="chat-container">
-            <div class="chat-messages" id="chatMessages">
-                <div class="message bot">
-                    <div class="message-content">
-                        こんにちは！学生支援チャットボットです。🤖<br>
-                        - 学生証の紛失について<br>
-                        - サークルの設立方法<br>
-                        - 休学・復学の手続き<br>
-                        など、お気軽にご質問ください。<br>
-                        <span class="warning-text">※個人情報（氏名・学籍番号等）は入力しないでください。</span>
-                    </div>
-                    <div class="message-time">System</div>
-                </div>
-            </div>
-            <div class="chat-input-container">
-                <div class="chat-input-box">
-                    <textarea id="chatInput" class="chat-input" placeholder="質問を入力してください..." rows="1"></textarea>
-                    <button id="sendBtn" class="send-btn">
-                        <span>送信</span><span>📤</span>
-                    </button>
-                </div>
+        <h1>📚 AI chatbot system</h1>
+        <p class="subtitle">学生生活に関する様々な質問にお答えします！</p>
+        
+        <div class="theme-selector">
+            <p>背景テーマを変更</p>
+            <div>
+                <button class="theme-btn" data-theme="default" title="デフォルト"></button>
+                <button class="theme-btn" data-theme="green" title="グリーン"></button>
+                <button class="theme-btn" data-theme="orange" title="オレンジ"></button>
+                <button class="theme-btn" data-theme="pink" title="ピンク"></button>
             </div>
         </div>
     </div>
-
+    <div class="chat-container">
+        <div class="chat-header">💬 AIチャット</div>
+        <div class="chat-messages" id="chatMessages">
+            <div class="message bot">
+                <div class="message-content">
+                    私は学生支援チャットボットです。🤖<br>
+                    - 学生証をなくした・盗難・汚してしまったときは？<br>
+                    - 新しいサークルを作るには？<br>
+                    - 休学・復学・退学の手続きをしたいときは？<br>
+                    様々な質問にお答えします！
+                    <span class="warning-text">
+            ※氏名・住所・学籍番号などの個人情報は入力しないでください。
+                    重要な決定をする前に、必ず公式情報を確認してください。
+                    </span>
+                </div>
+                <div class="message-time">システム起動時刻</div>
+            </div>
+        </div>
+        <div class="chat-input-container">
+            <div class="chat-input-box">
+                <textarea id="chatInput" class="chat-input" placeholder="質問を入力してください..." rows="1"></textarea>
+                <button id="sendBtn" class="send-btn">
+                    <span>送信</span>
+                    <span>📤</span>
+                </button>
+            </div>
+        </div>
+    </div>
     <div id="settingsNotification" class="settings-update-notification">
-        <span>設定が更新されました</span>
+        <span id="notificationText">設定が管理者によって更新されました</span>
+        <button class="close-btn" onclick="hideSettingsNotification()">&times;</button>
     </div>
 
     <div id="commentModal" class="modal">
         <div class="modal-content">
             <span class="modal-close-btn">&times;</span>
             <h2>AIチャットへの意見・要望</h2>
-            <p style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">今後の改善のため、お気づきの点をお聞かせください。（匿名で送信されます）</p>
-            <textarea id="commentTextarea" placeholder="ここにコメントを入力..."></textarea>
-            <button id="sendCommentBtn">送信する</button>
-            <div class="success-message" id="successMessage">✓ 送信しました。ありがとうございます！</div>
-            <div class="error-message" id="errorMessage">エラーが発生しました。</div>
+            <p>今後の改善のため、お気づきの点などをお聞かせください。（匿名で送信されます）</p>
+            
+            <textarea id="commentTextarea" placeholder="ここにコメントを入力してください..."></textarea>
+            <button id="sendCommentBtn">送信</button>
+            <div class="success-message" id="successMessage">✓ コメントを送信しました。ありがとうございます！</div>
+            <div class="error-message" id="errorMessage">エラーが発生しました。もう一度お試しください。</div>
         </div>
     </div>
 
     <script>
-    // --- グローバル設定 ---
-    const { createClient } = supabase;
-    window.supabaseClient = null;
-    const BACKEND_API_BASE_URL = window.location.origin;
-
-    // --- DOM読み込み完了後処理 ---
-    document.addEventListener('DOMContentLoaded', async function() {
-        // UI要素
+    document.addEventListener('DOMContentLoaded', function() {
+        // --- 変数定義 ---
+        const BACKEND_API_BASE_URL = window.location.origin;
         const chatMessages = document.getElementById('chatMessages');
         const chatInput = document.getElementById('chatInput');
         const sendBtn = document.getElementById('sendBtn');
+        
         const openCommentModalBtn = document.getElementById('openCommentModalBtn');
         const commentModal = document.getElementById('commentModal');
         const closeBtn = document.querySelector('.modal-close-btn');
@@ -348,131 +257,179 @@
         const commentTextarea = document.getElementById('commentTextarea');
         const successMessage = document.getElementById('successMessage');
         const errorMessage = document.getElementById('errorMessage');
-        let settingsSocket = null;
-        let abortController = null; // 生成停止用コントローラー
-
-        // --- 1. Supabase初期化 ---
-        async function initializeSupabase() {
-            try {
-                const response = await fetch('/api/client/chat/config');
-                if (!response.ok) throw new Error('Config fetch failed');
-                
-                const config = await response.json();
-                if (config.supabase_url && config.supabase_anon_key) {
-                    window.supabaseClient = createClient(config.supabase_url, config.supabase_anon_key);
-                    console.log('✅ Supabase初期化完了');
-                }
-            } catch (error) {
-                console.error("Supabase初期化失敗:", error);
-            }
-        }
-        await initializeSupabase();
-
-        // --- 2. テーマ変更機能 ---
         const themeButtons = document.querySelectorAll('.theme-btn');
+        const bodyElement = document.body;
+
+        let settingsSocket = null;
+
+        // --- テーマ変更機能 ---
         const themes = {
             default: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             green: 'linear-gradient(135deg, #2AF598 0%, #009EFD 100%)',
             orange: 'linear-gradient(135deg, #F6D365 0%, #FDA085 100%)',
             pink: 'linear-gradient(135deg, #F093FB 0%, #F5576C 100%)'
         };
-        themeButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                const themeName = button.dataset.theme;
-                if (themes[themeName]) {
-                    document.body.style.background = themes[themeName];
-                    document.querySelector('.header').style.background = themes[themeName];
-                }
+
+        if (themeButtons) {
+            themeButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const themeName = button.dataset.theme;
+                    if (themes[themeName]) {
+                        bodyElement.style.background = themes[themeName];
+                    }
+                });
             });
-        });
-
-        // --- 3. コメントモーダル機能 ---
-        openCommentModalBtn.onclick = () => { 
-            commentModal.style.display = 'block';
-            commentTextarea.value = '';
-            successMessage.style.display = 'none';
-            errorMessage.style.display = 'none';
         }
-        closeBtn.onclick = () => { commentModal.style.display = 'none'; }
-        window.onclick = (event) => { if (event.target == commentModal) commentModal.style.display = 'none'; }
 
-        sendCommentBtn.onclick = async () => {
-            const comment = commentTextarea.value.trim();
-            if (comment === '') return alert('コメントを入力してください。');
-
-            sendCommentBtn.disabled = true;
-            successMessage.style.display = 'none';
-            errorMessage.style.display = 'none';
-
-            try {
-                if (!window.supabaseClient) throw new Error("DB接続エラー");
-
-                const { error } = await window.supabaseClient
-                    .from('anonymous_comments')
-                    .insert([{ comment: comment, created_at: new Date().toISOString() }]);
-
-                if (error) throw error;
-
-                successMessage.style.display = 'block';
+        // --- コメントモーダル機能 ---
+        if (openCommentModalBtn && commentModal) {
+            openCommentModalBtn.onclick = () => { 
+                commentModal.style.display = 'block';
                 commentTextarea.value = '';
-                setTimeout(() => {
-                    commentModal.style.display = 'none';
-                    successMessage.style.display = 'none';
-                }, 2000);
-            } catch (error) {
-                console.error('コメント送信エラー:', error);
-                errorMessage.style.display = 'block';
-            } finally {
-                sendCommentBtn.disabled = false;
+                successMessage.style.display = 'none';
+                errorMessage.style.display = 'none';
             }
-        };
+        }
 
-        // --- 4. WebSocket設定同期 ---
+        if (closeBtn && commentModal) {
+            closeBtn.onclick = () => { commentModal.style.display = 'none'; }
+        }
+
+        window.onclick = (event) => {
+            if (commentModal && event.target == commentModal) {
+                commentModal.style.display = 'none';
+            }
+        }
+        
+        if (sendCommentBtn) {
+            sendCommentBtn.onclick = async () => {
+                const comment = commentTextarea.value.trim();
+                
+                if (comment === '') {
+                    alert('コメントを入力してください。');
+                    return;
+                }
+
+                sendCommentBtn.disabled = true;
+                successMessage.style.display = 'none';
+                errorMessage.style.display = 'none';
+
+                try {
+                    if (!window.supabaseClient) {
+                        console.error("❌ エラー: Supabaseクライアントが null です");
+                        alert("システム接続エラー: コメント機能は現在利用できません。");
+                        sendCommentBtn.disabled = false;
+                        return;
+                    }
+
+                    const table = window.supabaseClient.from('anonymous_comments');
+                    const insertData = {
+                        comment: comment,
+                        created_at: new Date().toISOString()
+                    };
+
+                    const response = await table.insert([insertData]);
+
+                    if (response.error) {
+                        throw new Error(response.error.message || JSON.stringify(response.error));
+                    }
+
+                    successMessage.style.display = 'block';
+                    commentTextarea.value = '';
+
+                    setTimeout(() => {
+                        commentModal.style.display = 'none';
+                        successMessage.style.display = 'none';
+                    }, 2000);
+
+                } catch (error) {
+                    console.error('❌ コメント送信エラー:', error);
+                    errorMessage.style.display = 'block';
+                } finally {
+                    sendCommentBtn.disabled = false;
+                }
+            };
+        }
+
+        // --- WebSocket機能 ---
         function connectSettingsWebSocket() {
             try {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
                 settingsSocket = new WebSocket(wsUrl);
                 
-                settingsSocket.onopen = () => updateSyncIndicator(true, '設定同期中');
+                settingsSocket.onopen = () => {
+                    console.log('設定同期WebSocket接続完了');
+                    updateSyncIndicator(true, '設定同期接続中');
+                };
+                
                 settingsSocket.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
                         if (data.type === 'settings_update') {
-                            const notif = document.getElementById('settingsNotification');
-                            notif.classList.add('show');
-                            setTimeout(() => notif.classList.remove('show'), 5000);
+                            console.log('設定更新を受信:', data.data);
+                            showSettingsUpdateNotification();
                         }
-                    } catch(e) {}
+                    } catch (e) {
+                        console.error('WebSocketメッセージ解析エラー:', e);
+                    }
                 };
+                
                 settingsSocket.onclose = () => {
-                    updateSyncIndicator(false, '同期切断');
+                    console.log('設定同期WebSocket切断');
+                    updateSyncIndicator(false, '設定同期切断');
                     setTimeout(connectSettingsWebSocket, 5000);
                 };
-                settingsSocket.onerror = () => updateSyncIndicator(false, '同期エラー');
+                
+                settingsSocket.onerror = (error) => {
+                    console.error('設定同期WebSocketエラー:', error);
+                    updateSyncIndicator(false, '設定同期エラー');
+                };
             } catch (error) {
+                console.error('WebSocket接続エラー:', error);
+                updateSyncIndicator(false, '設定同期接続失敗');
                 setTimeout(connectSettingsWebSocket, 5000);
             }
         }
+
         function updateSyncIndicator(connected, message) {
-            const dot = document.getElementById('syncDot');
-            const text = document.getElementById('syncText');
-            if(dot && text) {
-                dot.className = connected ? 'sync-dot' : 'sync-dot disconnected';
-                text.textContent = message;
+            const syncDot = document.getElementById('syncDot');
+            const syncText = document.getElementById('syncText');
+            if (syncDot && syncText) {
+                syncDot.className = connected ? 'sync-dot' : 'sync-dot disconnected';
+                syncText.textContent = message;
             }
         }
-        connectSettingsWebSocket();
 
-        // --- 5. チャット機能 ---
+        function showSettingsUpdateNotification() {
+            const notification = document.getElementById('settingsNotification');
+            if (notification) {
+                notification.classList.add('show');
+                setTimeout(() => hideSettingsNotification(), 5000);
+            }
+        }
+
+        function hideSettingsNotification() {
+            const notification = document.getElementById('settingsNotification');
+            if (notification) {
+                notification.classList.remove('show');
+            }
+        }
+        window.hideSettingsNotification = hideSettingsNotification;
+
         function addMessage(text, type) {
+            if (!chatMessages) return null;
+
             const messageWrapper = document.createElement('div');
             messageWrapper.className = `message ${type}`;
             const messageContent = document.createElement('div');
             messageContent.className = 'message-content';
             
             if (text.includes('<a href=')) {
-                messageContent.innerHTML = text.replace(/\n/g, '<br>');
+                let processedText = text
+                    .replace(/<(?!\/?(a|br)\b)[^>]*>/gi, '') 
+                    .replace(/\n/g, '<br>');
+                messageContent.innerHTML = processedText;
             } else {
                 messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
             }
@@ -480,80 +437,83 @@
             messageWrapper.appendChild(messageContent);
             const messageTime = document.createElement('div');
             messageTime.className = 'message-time';
-            messageTime.textContent = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            messageTime.textContent = new Date().toLocaleTimeString();
             messageWrapper.appendChild(messageTime);
             chatMessages.appendChild(messageWrapper);
             chatMessages.scrollTop = chatMessages.scrollHeight;
             return messageWrapper;
         }
 
+        // --- フィードバック送信機能 ---
         async function sendFeedback(element, rating) {
+            console.log(`フィードバック送信開始: ${rating}`);
+            
             try {
-                if (!window.supabaseClient) return;
-                const { error } = await window.supabaseClient
-                    .from('anonymous_comments')
-                    .insert([{ rating: rating, comment: "ボタン評価", created_at: new Date().toISOString() }]);
-                if (!error) {
-                    element.parentElement.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">ありがとうございます！</span>';
+                if (!window.supabaseClient) {
+                    console.error("Supabaseクライアントが初期化されていません");
+                    alert("通信エラー: フィードバックを送信できませんでした。");
+                    return;
                 }
-            } catch(e) { console.error(e); }
+
+                const insertData = {
+                    rating: rating,
+                    comment: "ボタンによる評価",
+                    created_at: new Date().toISOString() 
+                };
+
+                const { data, error } = await window.supabaseClient
+                    .from('anonymous_comments')
+                    .insert([insertData]);
+
+                if (error) {
+                    throw error;
+                }
+
+                console.log("Supabaseへの保存成功:", data);
+                const feedbackContainer = element.parentElement;
+                feedbackContainer.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
+                
+            } catch(error) {
+                console.error("フィードバック送信エラー:", error);
+                alert("送信に失敗しました。");
+            }
         }
 
-        // フィードバックボタンのイベント委譲
-        chatMessages.addEventListener('click', function(e) {
-            if (e.target.classList.contains('feedback-btn')) {
-                sendFeedback(e.target, e.target.dataset.rating);
-            }
-        });
-
+        // --- チャットメッセージ送信機能 ---
         async function sendMessage() {
+            if (!chatInput) return;
             const userInput = chatInput.value.trim();
-
-            // --- 停止処理 ---
-            if (abortController) {
-                abortController.abort();
-                abortController = null;
-                sendBtn.classList.remove('generating');
-                sendBtn.innerHTML = '<span>送信</span><span>📤</span>';
-                
-                // Botメッセージに停止を表示
-                const generatingMsgs = document.querySelectorAll('.message.bot');
-                if(generatingMsgs.length > 0) {
-                    const last = generatingMsgs[generatingMsgs.length - 1];
-                    if(!last.dataset.finished) {
-                        last.querySelector('.message-content').innerHTML += '<br><span style="color:#dc3545;font-size:0.8rem;">(停止されました)</span>';
-                        last.dataset.finished = "true";
-                    }
-                }
-                return;
-            }
-
-            // --- 送信処理 ---
             if (!userInput) return;
 
-            // UI更新
-            sendBtn.classList.add('generating');
-            sendBtn.innerHTML = '<span>停止</span><span>⏹</span>';
-            abortController = new AbortController();
-
+            // ユーザーのメッセージを表示
             addMessage(userInput, 'user');
             chatInput.value = '';
             chatInput.style.height = 'auto';
 
+            // ボットの応答準備
             const botMessageElement = addMessage('考え中...', 'bot');
+            // addMessageが失敗した場合（chatMessagesが無いなど）のガード
+            if (!botMessageElement) return;
+
             const botMessageContent = botMessageElement.querySelector('.message-content');
             let fullResponse = '';
 
             try {
+                // APIリクエスト
                 const response = await fetch(`${BACKEND_API_BASE_URL}/api/client/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: userInput }),
-                    signal: abortController.signal
+                    body: JSON.stringify({
+                        query: userInput
+                    })
                 });
 
-                if (!response.ok) throw new Error(`APIエラー: ${response.statusText}`);
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: `APIエラー: ${response.statusText}` }));
+                    throw new Error(errorData.detail);
+                }
 
+                // レスポンスのストリーミング読み込み
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 botMessageContent.innerHTML = '';
@@ -562,13 +522,16 @@
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
-                        botMessageElement.dataset.finished = "true";
-                        // フィードバックボタン表示
+                        // 回答完了時にフィードバックボタンを表示
                         if (botMessageElement.dataset.logId) {
-                            const fbDiv = document.createElement('div');
-                            fbDiv.className = 'feedback-container';
-                            fbDiv.innerHTML = `<span>役に立ちましたか？</span><button class="feedback-btn" data-rating="good">👍</button><button class="feedback-btn" data-rating="bad">👎</button>`;
-                            botMessageElement.appendChild(fbDiv);
+                            const feedbackContainer = document.createElement('div');
+                            feedbackContainer.className = 'feedback-container';
+                            feedbackContainer.innerHTML = `
+                                <span>この回答は役に立ちましたか？</span>
+                                <button class="feedback-btn" data-rating="good">👍</button>
+                                <button class="feedback-btn" data-rating="bad">👎</button>
+                            `;
+                            botMessageElement.appendChild(feedbackContainer);
                         }
                         break;
                     }
@@ -583,49 +546,83 @@
                             if (jsonString) {
                                 try {
                                     const data = JSON.parse(jsonString);
+                                    
+                                    // フィードバックID（ログID）の保存
                                     if (data.feedback_id) {
                                         botMessageElement.dataset.feedbackId = data.feedback_id;
                                         botMessageElement.dataset.logId = data.feedback_id;
                                     }
+
+                                    // テキストコンテンツの追記
                                     if (data.content) {
                                         fullResponse += data.content;
-                                        let htmlText = fullResponse.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+                                        let htmlText = fullResponse.replace(
+                                            /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
+                                            '<a href="$2" target="_blank">$1</a>'
+                                        );
                                         htmlText = htmlText.replace(/\n/g, '<br>');
                                         botMessageContent.innerHTML = htmlText;
-                                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                                        if (chatMessages) {
+                                            chatMessages.scrollTop = chatMessages.scrollHeight;
+                                        }
                                     }
-                                } catch (e) {}
+                                } catch (e) {
+                                    console.error("Error parsing stream data:", e);
+                                }
                             }
                         }
                     }
                 }
             } catch (error) {
-                if (error.name !== 'AbortError') {
-                    botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
-                }
-            } finally {
-                if (abortController) {
-                    abortController = null;
-                    sendBtn.classList.remove('generating');
-                    sendBtn.innerHTML = '<span>送信</span><span>📤</span>';
-                }
+                console.error('メッセージ送信エラー:', error);
+                botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
             }
         }
 
-        // イベントリスナー
-        sendBtn.addEventListener('click', sendMessage);
-        chatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-        chatInput.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-        });
+        // --- イベントリスナー設定 (Nullチェック付き) ---
+        
+        // フィードバックボタンのイベント委譲
+        if (chatMessages) {
+            chatMessages.addEventListener('click', function(e) {
+                if (e.target.classList.contains('feedback-btn')) {
+                    const rating = e.target.dataset.rating;
+                    sendFeedback(e.target, rating);
+                }
+            });
+        } else {
+            console.error("❌ Error: chatMessages element not found in DOM.");
+        }
 
-    });
+        // 送信ボタンクリックイベント
+        if (sendBtn) {
+            sendBtn.addEventListener('click', sendMessage);
+        } else {
+            console.error("❌ Error: sendBtn element not found in DOM.");
+        }
+
+        // 入力エリアのイベント
+        if (chatInput) {
+            chatInput.addEventListener('input', () => {
+                chatInput.style.height = 'auto';
+                chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+            });
+
+            chatInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+        } else {
+            console.error("❌ Error: chatInput element not found in DOM.");
+        }
+
+        // 設定WebSocket開始
+        connectSettingsWebSocket();
+
+    }); // End of DOMContentLoaded
+
+    console.log("✅ スクリプトが読み込まれました");
     </script>
 </body>
 </html>
