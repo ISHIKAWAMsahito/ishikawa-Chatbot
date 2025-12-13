@@ -374,5 +374,45 @@
 
     }); // <-- DOMContentLoaded の閉じ括弧
     </script>
-                                </body>
-                                </html>
+<body>
+
+    <div class="header-controls">
+        <div id="syncStatus">
+            <span id="syncDot" class="sync-dot disconnected"></span>
+            <span id="syncText">未接続</span>
+        </div>
+        
+        <div class="theme-controls">
+            <button class="theme-btn" data-theme="default">青</button>
+            <button class="theme-btn" data-theme="green">緑</button>
+            <button class="theme-btn" data-theme="orange">橙</button>
+            <button class="theme-btn" data-theme="pink">桃</button>
+        </div>
+        
+        <button id="openCommentModalBtn">💬 コメント</button>
+    </div>
+
+    <div id="chatMessages" class="chat-container"></div>
+
+    <div class="input-area">
+        <textarea id="chatInput" placeholder="メッセージを入力..."></textarea>
+        <button id="sendBtn">
+            <span>送信</span><span>📤</span>
+        </button>
+    </div>
+
+    <div id="settingsNotification" class="notification">設定が更新されました</div>
+
+    <div id="commentModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="modal-close-btn">&times;</span>
+            <h3>フィードバック・コメント</h3>
+            <textarea id="commentTextarea" placeholder="コメントを入力してください"></textarea>
+            <button id="sendCommentBtn">送信する</button>
+            <p id="successMessage" style="display:none; color: green;">送信しました！</p>
+            <p id="errorMessage" style="display:none; color: red;">送信エラーが発生しました。</p>
+        </div>
+    </div>
+
+</body>
+</html>
