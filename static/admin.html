@@ -7,6 +7,18 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     
 <style>
+     /* --- 追加: 生成停止ボタンのスタイル --- */  /*12/14チャット送信停止ボタンのスタイル追加*/
+.send-btn.generating {
+    background: #dc3545; /* 赤色 */
+    box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+}
+.send-btn.generating:hover {
+    background: #c82333;
+    box-shadow: 0 6px 16px rgba(220, 53, 69, 0.4);
+}
+/* ローディングアニメーション（送信中アイコン用） */
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+.fa-spinner { animation: spin 1s linear infinite; }
     /* ... (CSSスタイルは変更なしのため省略。元のCSSをそのまま使用してください) ... */
     /* --- 基本設定 --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -817,101 +829,162 @@
         }
 
         // --- チャット機能 ---
-        async function sendMessage() {
-            const userInput = chatInput.value.trim();
-            if (!userInput) return;
-            if (!currentCollection) {
-                addMessage('❌ コレクションが選択されていません。', 'bot');
-                return;
-            }
+        // 12/14 チャット停止機能追加
+       // ▼▼▼ この変数を sendMessage 関数の「外側」（直前）に追加してください ▼▼▼
+let abortController = null; 
 
-            addMessage(userInput, 'user');
-            chatInput.value = '';
-            chatInput.style.height = 'auto';
+async function sendMessage() {
+    const userInput = chatInput.value.trim();
 
-            const botMessageElement = addMessage('思考中...', 'bot');
-            const botMessageContent = botMessageElement.querySelector('.message-content');
-            let fullResponse = '';
-
-            try {
-                // ▼▼▼ 修正箇所: /chat を1つ削除しました ▼▼▼
-                const response = await fetch(`/api/admin/chat`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        query: userInput,
-                        model: modelSelect.value,
-                        collection: currentCollection,
-                        embedding_model: embeddingModelSelect.value,
-                        top_k: parseInt(topKSelect.value, 10)
-                    })
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({ detail: `APIエラー: ${response.statusText}` }));
-                    throw new Error(errorData.detail);
-                }
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                botMessageContent.innerHTML = '';
-                let buffer = ''; 
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        if (botMessageElement.dataset.logId) {
-                            const feedbackContainer = document.createElement('div');
-                            feedbackContainer.className = 'feedback-container';
-                            feedbackContainer.innerHTML = `
-                                <span>この回答は役に立ちましたか？</span>
-                                <button class="feedback-btn" data-rating="good">👍</button>
-                                <button class="feedback-btn" data-rating="bad">👎</button>
-                            `;
-                            botMessageElement.appendChild(feedbackContainer);
-                        }
-                        break;
-                    }
-                    
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop(); 
-                    
-                    for (const line of lines) {
-                        if (line.trim().startsWith('data: ')) {
-                            const jsonString = line.substring(6).trim();
-
-                            if (jsonString) { 
-                                try {
-                                    const data = JSON.parse(jsonString);
-                                    
-                                    if (data.feedback_id) {
-                                        botMessageElement.dataset.feedbackId = data.feedback_id; 
-                                        botMessageElement.dataset.logId = data.feedback_id;     
-                                    }
-                                    
-                                    if (data.content) {
-                                        fullResponse += data.content;
-                                        let htmlText = fullResponse.replace(
-                                            /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
-                                            '<a href="$2" target="_blank">$1</a>'
-                                        );
-                                        htmlText = htmlText.replace(/\n/g, '<br>');
-                                        botMessageContent.innerHTML = htmlText;
-                                        chatMessages.scrollTop = chatMessages.scrollHeight;
-                                    }
-                                } catch (e) {
-                                    console.error("Error parsing stream data:", e);
-                                }
-                            }
-                        }
-                    }
-                } 
-            } catch (error) {
-                console.error('メッセージ送信エラー:', error);
-                botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
+    // ============================================================
+    // 【停止ロジック】すでに生成中（コントローラーがある）場合
+    // ============================================================
+    if (abortController) {
+        abortController.abort(); // 通信を強制切断
+        abortController = null;  // リセット
+        
+        // UIを「送信」ボタンに戻す
+        sendBtn.classList.remove('generating');
+        sendBtn.innerHTML = '<span>送信</span><span>🔍</span>';
+        
+        // メッセージに「(停止しました)」と追記
+        const generatingMsgs = document.querySelectorAll('.message.bot');
+        if(generatingMsgs.length > 0) {
+            const lastMsg = generatingMsgs[generatingMsgs.length - 1];
+            // まだ完了フラグがない場合のみ追記
+            if(!lastMsg.dataset.finished) {
+                const contentDiv = lastMsg.querySelector('.message-content');
+                contentDiv.innerHTML += '<br><span style="color:#dc3545; font-size:0.8rem; font-weight:bold;">(ユーザーにより停止されました)</span>';
+                lastMsg.dataset.finished = "true";
             }
         }
+        return; // ここで処理を終了
+    }
+
+    // ============================================================
+    // 【送信ロジック】ここからは通常の送信処理
+    // ============================================================
+    if (!userInput) return;
+    
+    if (!currentCollection) {
+        addMessage('❌ コレクションが選択されていません。', 'bot');
+        return;
+    }
+
+    // UI: ボタンを「停止」モードに変更（赤色にするクラスを追加）
+    sendBtn.classList.add('generating');
+    sendBtn.innerHTML = '<span>停止</span><span>⏹</span>'; // ■のアイコンに変更
+
+    // AbortControllerの初期化
+    abortController = new AbortController();
+    const signal = abortController.signal; // これをfetchに渡す
+
+    addMessage(userInput, 'user');
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
+
+    const botMessageElement = addMessage('思考中...', 'bot');
+    const botMessageContent = botMessageElement.querySelector('.message-content');
+    let fullResponse = '';
+
+    try {
+        const response = await fetch(`/api/admin/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query: userInput,
+                model: modelSelect.value,            // 管理者設定: モデル
+                collection: currentCollection,       // 管理者設定: コレクション
+                embedding_model: embeddingModelSelect.value, // 管理者設定: 埋め込みモデル
+                top_k: parseInt(topKSelect.value, 10) // 管理者設定: 検索数
+            }),
+            signal: signal // <--- ★重要: これにより中断が可能になります
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ detail: `APIエラー: ${response.statusText}` }));
+            throw new Error(errorData.detail);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        botMessageContent.innerHTML = '';
+        let buffer = ''; 
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                // 完了処理
+                botMessageElement.dataset.finished = "true";
+                
+                if (botMessageElement.dataset.logId) {
+                    const feedbackContainer = document.createElement('div');
+                    feedbackContainer.className = 'feedback-container';
+                    feedbackContainer.innerHTML = `
+                        <span>この回答は役に立ちましたか？</span>
+                        <button class="feedback-btn" data-rating="good">👍</button>
+                        <button class="feedback-btn" data-rating="bad">👎</button>
+                    `;
+                    botMessageElement.appendChild(feedbackContainer);
+                }
+                break;
+            }
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); 
+            
+            for (const line of lines) {
+                if (line.trim().startsWith('data: ')) {
+                    const jsonString = line.substring(6).trim();
+
+                    if (jsonString) { 
+                        try {
+                            const data = JSON.parse(jsonString);
+                            
+                            if (data.feedback_id) {
+                                botMessageElement.dataset.feedbackId = data.feedback_id; 
+                                botMessageElement.dataset.logId = data.feedback_id;     
+                            }
+                            
+                            if (data.content) {
+                                fullResponse += data.content;
+                                let htmlText = fullResponse.replace(
+                                    /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
+                                    '<a href="$2" target="_blank">$1</a>'
+                                );
+                                htmlText = htmlText.replace(/\n/g, '<br>');
+                                botMessageContent.innerHTML = htmlText;
+                                chatMessages.scrollTop = chatMessages.scrollHeight;
+                            }
+                        } catch (e) {
+                            console.error("Error parsing stream data:", e);
+                        }
+                    }
+                }
+            }
+        } 
+    } catch (error) {
+        // エラーハンドリング
+        if (error.name === 'AbortError') {
+            console.log('Fetch aborted by admin');
+            // 中断時のUI更新は冒頭のifブロックで行われるため、ここでは何もしない
+        } else {
+            console.error('メッセージ送信エラー:', error);
+            botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
+        }
+    } finally {
+        // ============================================================
+        // 【終了処理】正常完了した場合のボタンリセット
+        // ============================================================
+        // まだコントローラーが存在する＝（中断ではなく）最後まで読み切った場合
+        if (abortController) {
+            abortController = null;
+            sendBtn.classList.remove('generating');
+            sendBtn.innerHTML = '<span>送信</span><span>🔍</span>';
+        }
+    }
+}
 
         async function handleFileUpload(event) {
             const files = Array.from(event.target.files);
