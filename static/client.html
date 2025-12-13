@@ -5,7 +5,310 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI chatbot system</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
+<style>
+    /* --- 基本設定 (Adminと共通) --- */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        /* デフォルト背景（JSで上書き可能） */
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+    }
 
+    /* --- レイアウトコンテナ --- */
+    .container {
+        width: 100%;
+        max-width: 800px; /* クライアント用は少し幅を狭めてチャットに集中させる */
+        background: rgba(255, 255, 255, 0.98);
+        border-radius: 16px;
+        box-shadow: 0 32px 64px rgba(0, 0, 0, 0.15);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: 85vh; /* 画面の85%の高さ */
+        position: relative;
+    }
+
+    /* --- ヘッダーエリア (Sync, Theme, Comment) --- */
+    .header-controls {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        padding: 15px 24px;
+        border-bottom: 1px solid #ddd;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    /* 同期ステータス */
+    #syncStatus {
+        font-size: 0.85rem;
+        color: #666;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .sync-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background-color: #28a745;
+        box-shadow: 0 0 5px #28a745;
+    }
+    .sync-dot.disconnected {
+        background-color: #dc3545;
+        box-shadow: none;
+    }
+
+    /* テーマボタン */
+    .theme-controls {
+        display: flex;
+        gap: 8px;
+    }
+    .theme-btn {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        border: 2px solid white;
+        cursor: pointer;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        transition: transform 0.2s;
+        text-indent: -9999px; /* 文字を隠す */
+        overflow: hidden;
+    }
+    .theme-btn:hover { transform: scale(1.2); }
+    /* 各テーマの色 */
+    .theme-btn[data-theme="default"] { background: linear-gradient(135deg, #667eea, #764ba2); }
+    .theme-btn[data-theme="green"] { background: linear-gradient(135deg, #2AF598, #009EFD); }
+    .theme-btn[data-theme="orange"] { background: linear-gradient(135deg, #F6D365, #FDA085); }
+    .theme-btn[data-theme="pink"] { background: linear-gradient(135deg, #F093FB, #F5576C); }
+
+    /* コメントボタン */
+    #openCommentModalBtn {
+        background: white;
+        border: 1px solid #ccc;
+        color: #555;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+    #openCommentModalBtn:hover {
+        background: #f0f0f0;
+        transform: translateY(-1px);
+    }
+
+    /* --- チャットエリア --- */
+    .chat-container {
+        flex: 1;
+        padding: 24px;
+        overflow-y: auto;
+        background: white;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    /* メッセージスタイル (Adminと共通) */
+    .message {
+        max-width: 80%;
+        padding: 12px 16px;
+        border-radius: 16px;
+        position: relative;
+        animation: slideIn 0.3s ease-out;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        line-height: 1.6;
+        word-wrap: break-word;
+    }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+
+    .message.user {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        align-self: flex-end;
+        margin-left: auto;
+        border-bottom-right-radius: 4px;
+    }
+    
+    .message.bot {
+        background: #f1f3f5;
+        color: #333;
+        align-self: flex-start;
+        border-left: 4px solid #4facfe;
+        border-bottom-left-radius: 4px;
+    }
+    
+    .message-content a { color: inherit; text-decoration: underline; font-weight: bold; }
+    .message.bot .message-content a { color: #007bff; }
+    
+    .message-time {
+        font-size: 0.7rem;
+        opacity: 0.7;
+        margin-top: 6px;
+        text-align: right;
+    }
+
+    /* --- 入力エリア --- */
+    .input-area {
+        padding: 24px;
+        background: #f8f9fa;
+        border-top: 1px solid #e9ecef;
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+    }
+
+    #chatInput {
+        flex: 1;
+        padding: 12px 16px;
+        border: 2px solid #e9ecef;
+        border-radius: 24px;
+        font-size: 1rem;
+        outline: none;
+        transition: all 0.3s ease;
+        resize: none;
+        min-height: 48px;
+        max-height: 120px;
+        font-family: inherit;
+    }
+    #chatInput:focus {
+        border-color: #4facfe;
+        box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1);
+    }
+
+    #sendBtn {
+        padding: 12px 24px;
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        border: none;
+        border-radius: 24px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 48px;
+    }
+    #sendBtn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(79, 172, 254, 0.3);
+    }
+    /* 生成停止ボタン用スタイル */
+    #sendBtn.generating {
+        background: #dc3545;
+        box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+    }
+    #sendBtn.generating:hover {
+        background: #c82333;
+    }
+
+    /* --- フィードバックボタン --- */
+    .feedback-container { margin-top: 12px; padding-top: 8px; border-top: 1px solid #ddd; display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #666; }
+    .feedback-btn { background: none; border: 1px solid #ccc; border-radius: 12px; padding: 2px 8px; cursor: pointer; transition: all 0.2s; font-size: 1rem; }
+    .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
+
+    /* --- 通知ポップアップ --- */
+    .notification {
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%) translateY(-100px);
+        background: #28a745;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 30px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        transition: transform 0.3s ease;
+        z-index: 2000;
+        font-weight: bold;
+    }
+    .notification.show { transform: translateX(-50%) translateY(0); }
+
+    /* --- モーダル (Adminのスタイルに合わせる) --- */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 3000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.6);
+        animation: fadeIn 0.2s;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .modal-content {
+        background-color: #fefefe;
+        margin: 15% auto;
+        padding: 30px;
+        border-radius: 16px;
+        width: 90%;
+        max-width: 400px;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        position: relative;
+        text-align: center;
+    }
+
+    .modal-close-btn {
+        position: absolute;
+        top: 15px;
+        right: 20px;
+        color: #aaa;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: color 0.2s;
+    }
+    .modal-close-btn:hover { color: #333; }
+
+    .modal h3 { margin-bottom: 20px; color: #333; }
+
+    #commentTextarea {
+        width: 100%;
+        height: 100px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        resize: vertical;
+        font-family: inherit;
+    }
+    #commentTextarea:focus { border-color: #4facfe; outline: none; }
+
+    #sendCommentBtn {
+        width: 100%;
+        padding: 12px;
+        background: #28a745;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+    #sendCommentBtn:hover { background: #218838; }
+
+    /* --- レスポンシブ --- */
+    @media (max-width: 600px) {
+        body { padding: 0; }
+        .container { height: 100vh; border-radius: 0; }
+        .header-controls { padding: 10px 16px; }
+        .message { max-width: 90%; }
+    }
+</style>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const BACKEND_API_BASE_URL = window.location.origin;
@@ -108,6 +411,23 @@
                 }
             };
         }
+        
+        // Supabase初期化
+        async function initializeSupabase() {
+            try {
+                const response = await fetch('/api/client/chat/config');
+                if (!response.ok) return;
+                
+                const config = await response.json();
+                if (config.supabase_url && config.supabase_anon_key) {
+                    window.supabaseClient = supabase.createClient(config.supabase_url, config.supabase_anon_key);
+                    console.log('✅ Supabase初期化完了 (Client)');
+                }
+            } catch (error) {
+                console.error("Supabase初期化失敗:", error);
+            }
+        }
+        initializeSupabase();
 
         // WebSocket接続
         function connectSettingsWebSocket() {
@@ -118,7 +438,7 @@
                 
                 settingsSocket.onopen = () => {
                     console.log('設定同期WebSocket接続完了');
-                    updateSyncIndicator(true, '設定同期接続中');
+                    updateSyncIndicator(true, '設定同期中');
                 };
                 
                 settingsSocket.onmessage = (event) => {
@@ -133,15 +453,15 @@
                 };
                 
                 settingsSocket.onclose = () => {
-                    updateSyncIndicator(false, '設定同期切断');
+                    updateSyncIndicator(false, '同期切断');
                     setTimeout(connectSettingsWebSocket, 5000);
                 };
                 
                 settingsSocket.onerror = (error) => {
-                    updateSyncIndicator(false, '設定同期エラー');
+                    updateSyncIndicator(false, '同期エラー');
                 };
             } catch (error) {
-                updateSyncIndicator(false, '設定同期接続失敗');
+                updateSyncIndicator(false, '接続失敗');
                 setTimeout(connectSettingsWebSocket, 5000);
             }
         }
@@ -229,7 +549,7 @@
         });
         
         // --- ここから sendMessage 関数 ---
-        let abortController = null; // コントローラー変数の定義
+        let abortController = null;
 
         async function sendMessage() {
             const userInput = chatInput.value.trim();
@@ -297,7 +617,7 @@
                             const feedbackContainer = document.createElement('div');
                             feedbackContainer.className = 'feedback-container';
                             feedbackContainer.innerHTML = `
-                                <span>この回答は役に立ちましたか？</span>
+                                <span>回答は役に立ちましたか？</span>
                                 <button class="feedback-btn" data-rating="good">👍</button>
                                 <button class="feedback-btn" data-rating="bad">👎</button>
                             `;
@@ -372,45 +692,54 @@
         // 設定同期の開始
         connectSettingsWebSocket();
 
-    }); // <-- DOMContentLoaded の閉じ括弧
-    </script>
+    });
+</script>
+</head>
 <body>
 
-    <div class="header-controls">
-        <div id="syncStatus">
-            <span id="syncDot" class="sync-dot disconnected"></span>
-            <span id="syncText">未接続</span>
+    <div class="container">
+        <div class="header-controls">
+            <div id="syncStatus">
+                <span id="syncDot" class="sync-dot disconnected"></span>
+                <span id="syncText">未接続</span>
+            </div>
+            
+            <div class="theme-controls">
+                <button class="theme-btn" data-theme="default" title="青テーマ">青</button>
+                <button class="theme-btn" data-theme="green" title="緑テーマ">緑</button>
+                <button class="theme-btn" data-theme="orange" title="橙テーマ">橙</button>
+                <button class="theme-btn" data-theme="pink" title="桃テーマ">桃</button>
+            </div>
+            
+            <button id="openCommentModalBtn">💬 コメント</button>
         </div>
-        
-        <div class="theme-controls">
-            <button class="theme-btn" data-theme="default">青</button>
-            <button class="theme-btn" data-theme="green">緑</button>
-            <button class="theme-btn" data-theme="orange">橙</button>
-            <button class="theme-btn" data-theme="pink">桃</button>
+
+        <div id="chatMessages" class="chat-container">
+            <div class="message bot">
+                <div class="message-content">こんにちは！何かお手伝いできることはありますか？</div>
+                <div class="message-time">System</div>
+            </div>
         </div>
-        
-        <button id="openCommentModalBtn">💬 コメント</button>
-    </div>
 
-    <div id="chatMessages" class="chat-container"></div>
-
-    <div class="input-area">
-        <textarea id="chatInput" placeholder="メッセージを入力..."></textarea>
-        <button id="sendBtn">
-            <span>送信</span><span>📤</span>
-        </button>
+        <div class="input-area">
+            <textarea id="chatInput" placeholder="メッセージを入力..." rows="1"></textarea>
+            <button id="sendBtn">
+                <span>送信</span><span>📤</span>
+            </button>
+        </div>
     </div>
 
     <div id="settingsNotification" class="notification">設定が更新されました</div>
 
-    <div id="commentModal" class="modal" style="display: none;">
+    <div id="commentModal" class="modal">
         <div class="modal-content">
             <span class="modal-close-btn">&times;</span>
-            <h3>フィードバック・コメント</h3>
-            <textarea id="commentTextarea" placeholder="コメントを入力してください"></textarea>
+            <h3>💬 フィードバック・コメント</h3>
+            <p style="margin-bottom: 10px; font-size: 0.9rem; color: #666;">開発者への感想や要望をお送りください</p>
+            <textarea id="commentTextarea" placeholder="ここにコメントを入力..."></textarea>
             <button id="sendCommentBtn">送信する</button>
-            <p id="successMessage" style="display:none; color: green;">送信しました！</p>
-            <p id="errorMessage" style="display:none; color: red;">送信エラーが発生しました。</p>
+            <p id="successMessage" style="display:none; color: green; margin-top: 10px;">送信しました！ありがとうございます。</p>
+            <p id="errorMessage" style="display:none; color: red; margin-top: 10px;">送信エラーが発生しました。</p>
         </div>
     </div>
 
