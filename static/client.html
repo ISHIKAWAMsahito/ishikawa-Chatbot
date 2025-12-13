@@ -8,7 +8,6 @@
 
     <script>
         // グローバル変数のsupabaseからcreateClientを取り出す
-        // 注意: ネットワーク状況等でSupabaseライブラリの読み込みが遅れた場合のエラーハンドリングを追加
         window.supabaseClient = null;
 
         async function initializeSupabase() {
@@ -50,6 +49,16 @@
     </script>
 
     <style>
+        /* --- 追加: 生成停止ボタンのスタイル --- */
+        .send-btn.generating {
+            background: #dc3545 !important; /* 赤色 (importantで強制) */
+            box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+        }
+        .send-btn.generating:hover {
+            background: #c82333 !important;
+            box-shadow: 0 6px 16px rgba(220, 53, 69, 0.4);
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; overflow-x: hidden; }
         .container { max-width: 800px; margin: 0 auto; background: rgba(255, 255, 255, 0.98); border-radius: 25px; box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15); overflow: hidden; display: flex; flex-direction: column; height: calc(100vh - 40px); }
@@ -261,6 +270,7 @@
         const bodyElement = document.body;
 
         let settingsSocket = null;
+        let abortController = null; // 生成停止用のコントローラー
 
         // --- テーマ変更機能 ---
         const themes = {
@@ -479,11 +489,47 @@
             }
         }
 
-        // --- チャットメッセージ送信機能 ---
+        // --- チャットメッセージ送信機能 (停止機能付き) ---
         async function sendMessage() {
-            if (!chatInput) return;
             const userInput = chatInput.value.trim();
-            if (!userInput) return;
+
+            // ============================================================
+            // 【停止ロジック】すでに生成中（コントローラーがある）場合
+            // ============================================================
+            if (abortController) {
+                abortController.abort(); // 通信を強制切断
+                abortController = null;  // リセット
+                
+                // UIを「送信」ボタンに戻す
+                sendBtn.classList.remove('generating');
+                sendBtn.innerHTML = '<span>送信</span><span>📤</span>';
+                
+                // メッセージに「(停止しました)」と追記
+                const generatingMsgs = document.querySelectorAll('.message.bot');
+                if(generatingMsgs.length > 0) {
+                    const lastMsg = generatingMsgs[generatingMsgs.length - 1];
+                    // まだ完了フラグがない場合のみ追記
+                    if(!lastMsg.dataset.finished) {
+                        const contentDiv = lastMsg.querySelector('.message-content');
+                        contentDiv.innerHTML += '<br><span style="color:#dc3545; font-size:0.8rem; font-weight:bold;">(ユーザーにより停止されました)</span>';
+                        lastMsg.dataset.finished = "true";
+                    }
+                }
+                return; // ここで処理を終了
+            }
+
+            // ============================================================
+            // 【送信ロジック】ここからは通常の送信処理
+            // ============================================================
+            if (!userInput || !chatInput) return;
+
+            // UI: ボタンを「停止」モードに変更（赤色にするクラスを追加）
+            sendBtn.classList.add('generating');
+            sendBtn.innerHTML = '<span>停止</span><span>⏹</span>'; // ■のアイコンに変更
+
+            // AbortControllerの初期化
+            abortController = new AbortController();
+            const signal = abortController.signal; // これをfetchに渡す
 
             // ユーザーのメッセージを表示
             addMessage(userInput, 'user');
@@ -492,8 +538,14 @@
 
             // ボットの応答準備
             const botMessageElement = addMessage('考え中...', 'bot');
-            // addMessageが失敗した場合（chatMessagesが無いなど）のガード
-            if (!botMessageElement) return;
+            // addMessageが失敗した場合のガード
+            if (!botMessageElement) {
+                // ボタンを戻して終了
+                sendBtn.classList.remove('generating');
+                sendBtn.innerHTML = '<span>送信</span><span>📤</span>';
+                abortController = null;
+                return;
+            }
 
             const botMessageContent = botMessageElement.querySelector('.message-content');
             let fullResponse = '';
@@ -505,7 +557,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         query: userInput
-                    })
+                    }),
+                    signal: signal // ★重要: これにより中断が可能になります
                 });
 
                 if (!response.ok) {
@@ -522,6 +575,9 @@
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
+                        // 完了処理
+                        botMessageElement.dataset.finished = "true";
+
                         // 回答完了時にフィードバックボタンを表示
                         if (botMessageElement.dataset.logId) {
                             const feedbackContainer = document.createElement('div');
@@ -574,8 +630,24 @@
                     }
                 }
             } catch (error) {
-                console.error('メッセージ送信エラー:', error);
-                botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
+                // エラーハンドリング
+                if (error.name === 'AbortError') {
+                    console.log('Fetch aborted by user');
+                    // UI更新は冒頭のifブロックで行われるため、ここでは何もしない
+                } else {
+                    console.error('メッセージ送信エラー:', error);
+                    botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
+                }
+            } finally {
+                // ============================================================
+                // 【終了処理】正常完了した場合のボタンリセット
+                // ============================================================
+                // まだコントローラーが存在する＝（中断ではなく）最後まで読み切った場合
+                if (abortController) {
+                    abortController = null;
+                    sendBtn.classList.remove('generating');
+                    sendBtn.innerHTML = '<span>送信</span><span>📤</span>';
+                }
             }
         }
 
