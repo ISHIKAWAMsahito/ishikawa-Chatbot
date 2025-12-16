@@ -11,6 +11,14 @@ from core.config import GEMINI_API_KEY
 
 router = APIRouter()
 
+# RAG検索がうまくいかない場合や、頻出質問に対応するための固定Q&A（フォールバック）を管理します。
+
+# CRUD操作: Q&Aの作成、読み取り、更新、削除を行います。
+
+# 自動ベクトル化: 質問文（Question）が登録・更新されると、即座にEmbedding APIを叩いてベクトル化し、類似度検索にかかるようにしています。
+
+# 修復機能: /vectorize-all エンドポイントにより、何らかの理由でベクトルが欠落したQ&Aデータを一括で再計算するメンテナンス機能を備えています。
+
 # APIキーの設定
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)

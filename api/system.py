@@ -10,6 +10,12 @@ from models.schemas import Settings
 
 router = APIRouter()
 
+# ヘルスチェックや設定管理を行います。
+
+# ヘルスチェック: DB接続やGemini APIのステータスを確認します。Kubernetes用の /healthz もあります。
+
+# 設定変更: 使用するAIモデル（gemini-2.5-flashなど）やRAGのパラメータを動的に変更するAPIを提供しています。
+
 @router.get("/health")
 async def health_check():
     """ヘルスチェック"""

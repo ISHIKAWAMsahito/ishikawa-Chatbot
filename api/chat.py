@@ -10,6 +10,20 @@ from models.schemas import ChatQuery, ClientChatQuery
 # ★追加: analyze_feedback_trends をインポート
 from services.chat_logic import enhanced_chat_logic, get_or_create_session_id, history_manager, analyze_feedback_trends
 
+# #ユーザーおよび管理者との対話を処理する中核部分です。
+
+# ストリーミング応答: StreamingResponse を使用しており、Geminiからの生成テキストをリアルタイムでフロントエンドに流す仕組みになっています。
+
+# 管理者機能 (admin_router):
+
+# 通常のチャットに加え、新規追加された /analyze エンドポイントがあります。これはDB内のフィードバックログを収集し、Geminiに分析・要約させる機能のようです。
+
+# 学生（クライアント）機能 (client_router):
+
+# 会話履歴の取得・削除機能が含まれています。
+
+# enhanced_chat_logic という外部サービス関数（未添付）を呼び出し、RAGや履歴考慮などの複雑なロジックを委譲しています。
+
 # ルーター定義
 admin_router = APIRouter()   # 管理者用
 client_router = APIRouter()  # 学生用
