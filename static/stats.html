@@ -36,7 +36,7 @@
     }
     .header h1 { margin-bottom: 10px; text-shadow: 2px 2px 8px rgba(0,0,0,0.3); }
     
-    .nav-btn {
+     .nav-btn { /*管理画面へ戻る、ログアウトボタンの背景を白、文字を黒に変更 */
         position: absolute;
         top: 25px;
         padding: 10px 24px;
@@ -44,10 +44,15 @@
         text-decoration: none;
         font-weight: bold;
         font-size: 0.95rem;
-        background-color: rgba(255,255,255,0.2);
-        color: white;
+        
+        /* ▼ ここを変更しました（背景白、文字黒） */
+        background-color: white; 
+        color: #333; 
+        /* ▲ 変更ここまで */
+
         transition: all 0.3s ease;
-        border: 1px solid rgba(255,255,255,0.4);
+        border: 1px solid rgba(255,255,255,0.4); /* 枠線が不要ならこの行を削除 */
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); /* 白背景なので少し影をつけると見やすいです */
     }
     .nav-btn:hover { background-color: white; color: #667eea; }
     .logout-btn { right: 25px; }
