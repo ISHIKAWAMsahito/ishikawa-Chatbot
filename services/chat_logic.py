@@ -373,18 +373,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 best_qa = None
 
                 # --- 【高速化ロジック】圧倒的に似ている場合はAIリランクをスキップ ---
-                # --- 【修正版】Stage 1 採用ロジック ---
+               # --- 【修正版】Stage 1 採用ロジックの統合 ---
                 top_sim = qa_results[0].get('similarity', 0)
                 is_qa_accepted = False
+                best_qa = None
+                qa_score = 0  # NameError防止のための初期化
 
-                # 閾値を 0.96 -> 0.98 に引き上げ、かつ「意図の確認」を必須に近づける
+                # 1. 閾値 0.98 以上なら即採用（AIを呼ばず高速化）
                 if top_sim >= 0.98: 
-                    logging.info(f"  -> [Stage 1 超高類似度] ほぼ完全一致のため即採用します。({top_sim:.4f})")
+                    logging.info(f"  -> [Stage 1 超高類似度] 即採用します。({top_sim:.4f})")
                     best_qa = qa_results[0]
                     is_qa_accepted = True
                 else:
-                    # 0.98未満（今回のケースなど）は必ず Gemini 2.5 Flash でリランク
-                    logging.info(f"  -> [Stage 1 慎重精査] 類似度 {top_sim:.4f}。意図のズレがないかAIで確認します。")
+                    # 2. 0.98未満は必ず Gemini 2.5 Flash で精査
+                    logging.info(f"  -> [Stage 1 慎重精査] 類似度 {top_sim:.4f}。意図を確認します。")
                     reranked_qa = await rerank_documents_with_gemini(
                         query=user_input,
                         documents=qa_results,
@@ -393,39 +395,34 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     
                     if reranked_qa:
                         best_qa = reranked_qa[0]
-                        # AIが「これは10点満点中8点以上の関連性がある」と言った場合のみ採用
-                        if best_qa.get('rerank_score', 0) >= 8:
+                        qa_score = best_qa.get('rerank_score', 0)
+                        qa_sim = best_qa.get('similarity', 0)
+                        
+                        # AIスコアまたは類似度で採用判定
+                        if qa_score >= QA_RERANK_SCORE_THRESHOLD:
                             is_qa_accepted = True
-                            logging.info(f"  -> [Stage 1 合格] AIスコア {best_qa.get('rerank_score')} で採用。")
+                            logging.info(f"  -> [Stage 1 合格] AIスコア {qa_score} により採用。")
+                        elif qa_sim >= QA_SIMILARITY_THRESHOLD:
+                            is_qa_accepted = True
+                            logging.info(f"  -> [Stage 1 合格] 類似度 {qa_sim:.4f} により採用。")
                         else:
-                            logging.info(f"  -> [Stage 1 不合格] AIスコアが低いため Stage 2 (RAG) へ移行します。")
+                            logging.info(f"  -> [Stage 1 不合格] スコア不足のため Stage 2 へ。")
 
-                    # 採用判定（AIのスコアを重視）
-                    if qa_score is not None and qa_score >= QA_RERANK_SCORE_THRESHOLD:
-                        is_qa_accepted = True
-                        logging.info(f"  -> [Stage 1 採用] AIスコア {qa_score} により採用。")
-                    elif qa_sim >= QA_SIMILARITY_THRESHOLD:
-                        is_qa_accepted = True
-                        logging.info(f"  -> [Stage 1 採用] 類似度 {qa_sim:.4f} により採用。")
-
-                # --- 回答の送信 ---
-                if is_qa_accepted:
-                    # ユーザーへの案内文。リンクなどがある場合は format_urls_as_links を適用
+                # 3. 採用された場合のみ回答を送信
+                if is_qa_accepted and best_qa:
                     qa_response_content = f"""よくあるご質問（FAQ）に一致する回答が見つかりました。
 
 ---
 {best_qa['content']}
 """
                     full_qa_response = format_urls_as_links(qa_response_content)
-                    
                     yield f"data: {json.dumps({'content': full_qa_response})}\n\n"
                     
-                    # 完了処理
+                    # 履歴保存とフィードバック表示
                     history_manager.add_to_history(session_id, "user", user_input)
                     history_manager.add_to_history(session_id, "assistant", full_qa_response)
                     yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
-                    
-                    return # Stage 1で解決
+                    return # Stage 1で処理を終了
 
         except Exception as e_qa:
             logging.error(f"Stage 1 (Q&A検索) でエラーが発生: {e_qa}", exc_info=True)
