@@ -576,10 +576,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 
                 full_response = format_urls_as_links(response_text.strip() or "回答を生成できませんでした。")
 
-            except Exception as e:
+            except Exception as e:#12/18 サーバーが混んでいるから後で送ってね伝わるように追加
                 logging.error(f"Stage 2 回答生成エラー: {e}", exc_info=True)
-                full_response = "回答の生成中にエラーが発生しました。" 
-            
+                # エラーの種類に応じてメッセージを分ける
+                if "503" in str(e) or "overloaded" in str(e).lower():
+                    full_response = "現在、AIの回答生成機能が非常に混み合っています。少し時間を置いてから再度お試しください。"
+                else:
+                    full_response = "申し訳ありません。回答の生成中に一時的な問題が発生しました。"
+
             # 最終的な回答送信
             if AI_NOT_FOUND_MESSAGE in full_response:
                 # 生成AIも「わからない」と言った場合
