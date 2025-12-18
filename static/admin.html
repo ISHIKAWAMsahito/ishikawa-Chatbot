@@ -990,9 +990,14 @@ async function sendMessage() {
             console.log('Fetch aborted by admin');
             // 中断時のUI更新は冒頭のifブロックで行われるため、ここでは何もしない
         } else {
-            console.error('メッセージ送信エラー:', error);
-            botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
-        }
+    console.error('メッセージ送信エラー:', error);
+    // Google側の503エラー(Overloaded)を判定
+    if (error.message.includes("503") || error.message.includes("overloaded")) {
+        botMessageContent.innerHTML = `<span style="color:#dc3545; font-weight:bold;">⚠️ Gemini APIが過負荷状態です。</span><br>Google側のリソース不足のため、リトライ上限を超えました。しばらく待ってから再試行してください。`;
+    } else {
+        botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
+    }
+}
     } finally {
         // ============================================================
         // 【終了処理】正常完了した場合のボタンリセット
@@ -1203,6 +1208,14 @@ async function sendMessage() {
         window.deleteCollection = deleteCollection;
         window.refreshCollections = refreshCollections;
         window.scrapeWebsite = scrapeWebsite;
+        
+        // --- 追加: レコード管理画面を開く関数 ---
+        window.openDocumentManager = function() {
+            // 別タブでレコード一覧画面（既存または新規作成予定）を開く
+            // ファイル名が異なる場合はここを修正してください
+            window.open('document_manager.html', '_blank');
+        };
+
         window.setScrapeUrl = function(url) {
             scrapeUrlInput.value = url;
         }
