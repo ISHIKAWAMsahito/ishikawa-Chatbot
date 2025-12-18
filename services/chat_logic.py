@@ -231,7 +231,7 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
                 except Exception:
                     pass 
                 if wait_time == 0:
-                    wait_time = (2 ** attempt) * 5 + random.uniform(0, 1)
+                    wait_time = (2 ** attempt) * 2 + random.uniform(0, 1)#合計待ち時間: 約14〜20秒にするため
                 logging.warning(f"API制限により {wait_time:.1f} 秒待機中... (試行 {attempt + 1}/{max_retries})")
                 await asyncio.sleep(wait_time)
                 continue
