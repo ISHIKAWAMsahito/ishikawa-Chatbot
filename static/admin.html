@@ -1211,10 +1211,9 @@ async function sendMessage() {
         
         // --- 追加: レコード管理画面を開く関数 ---
         window.openDocumentManager = function() {
-            // 別タブでレコード一覧画面（既存または新規作成予定）を開く
-            // ファイル名が異なる場合はここを修正してください
-            window.open('document_manager.html', '_blank');
-        };
+    // ファイル名を 'DB.html' に合わせる #12/19 DB.htmlを開くため
+    window.open('DB.html', '_blank'); 
+};
 
         window.setScrapeUrl = function(url) {
             scrapeUrlInput.value = url;
