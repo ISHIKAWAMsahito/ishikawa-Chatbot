@@ -568,50 +568,62 @@
         let currentCollection = '';
         let backendConnected = false;
         let settingsSocket = null;
-
-        function openDocumentManager() {
-            const url = `${window.location.origin}/DB.html`;
-            window.open(url, '_blank');
-        }
-        window.openDocumentManager = openDocumentManager;
+        let wsRetryCount = 0; // 再接続の試行回数を管理する変数
 
         function connectSettingsWebSocket() {
             try {
+                // 通信プロトコルの決定（httpsならwss、httpならws）
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
+                
+                // WebSocketインスタンスの生成
                 settingsSocket = new WebSocket(wsUrl);
 
+                // 接続成功時の処理
                 settingsSocket.onopen = function() {
-                    console.log('設定同期WebSocket接続完了');
+                    console.log('✅ 設定同期WebSocket接続完了');
                     updateSyncStatus(true, '設定同期接続済み');
+                    wsRetryCount = 0; // 接続に成功したらカウントをリセット
                 };
- 
+
+                // メッセージ受信時の処理（サーバーからの設定変更を反映）
                 settingsSocket.onmessage = function(event) {
                     try {
                         const data = JSON.parse(event.data);
                         if (data.type === 'settings_update') {
-                            console.log('設定更新を受信:', data.data);
+                            console.log('📥 設定更新を受信:', data.data);
                             applyReceivedSettings(data.data);
                         }
                     } catch (e) {
-                        console.log('WebSocketメッセージ:', event.data);
+                        console.log('WebSocketメッセージ（非JSON）:', event.data);
                     }
                 };
 
+                // 接続切断時の処理（再起動時など）
                 settingsSocket.onclose = function() {
-                    console.log('設定同期WebSocket切断');
+                    console.log('⚠️ 設定同期WebSocket切断');
                     updateSyncStatus(false, '設定同期切断');
-                    setTimeout(connectSettingsWebSocket, 5000);
+                    
+                    // 指数バックオフによる再接続ロジック
+                    // 1秒, 2秒, 4秒...と増やし、最大30秒（30000ms）で固定する
+                    wsRetryCount++;
+                    const delay = Math.min(1000 * Math.pow(2, wsRetryCount), 30000); 
+                    
+                    console.log(`🔄 ${delay/1000}秒後に再接続を試みます... (試行回数: ${wsRetryCount})`);
+                    setTimeout(connectSettingsWebSocket, delay);
                 };
 
+                // エラー発生時の処理
                 settingsSocket.onerror = function(error) {
-                    console.error('設定同期WebSocketエラー:', error);
+                    console.error('❌ 設定同期WebSocketエラー:', error);
                     updateSyncStatus(false, '設定同期エラー');
+                    // onerrorの直後にoncloseが呼ばれるため、ここでの再接続処理は不要
                 };
 
             } catch (error) {
-                console.error('WebSocket接続エラー:', error);
-                updateSyncStatus(false, '設定同期接続失敗');
+                console.error('🚨 WebSocket初期化エラー:', error);
+                updateSyncStatus(false, '接続開始失敗');
+                // 初期化失敗時も5秒後にリトライ
                 setTimeout(connectSettingsWebSocket, 5000);
             }
         }
