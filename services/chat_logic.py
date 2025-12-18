@@ -143,7 +143,7 @@ QA_SIMILARITY_THRESHOLD = 0.90
 QA_RERANK_SCORE_THRESHOLD = 8 # リランクスコア(10点満点)の閾値。FAQは厳密一致のみ採用したい。
 
 # RAGコンテキストの最大文字数 (トークン制限超過を避けるための簡易的な制限)
-MAX_CONTEXT_CHAR_LENGTH = 15000
+MAX_CONTEXT_CHAR_LENGTH = 5000 #12/19 AIに渡すテキスト数を減らすために5000文字に削減
 
 # 履歴の最大保持数 (永続化の際に利用)
 MAX_HISTORY_LENGTH = 20
@@ -460,7 +460,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 #    上位5件だけをリランクにかけて、AIに「どれが質問に一番近いか」判断させる
                 search_results = await rerank_documents_with_gemini(
                     query=user_input,
-                    documents=unique_results[:5], # 12/19動作が安定するか確認。上位5件をリランクにかける 強制クラッシュメモリ不足を防ぐため
+                    documents=unique_results[:3], # 12/19動作が安定するか確認。上位3件をリランクにかける 強制クラッシュメモリ不足を防ぐため
                     top_k=chat_req.top_k
                 )
                 
