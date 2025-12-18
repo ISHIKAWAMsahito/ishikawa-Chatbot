@@ -576,54 +576,62 @@
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
                 
-                // WebSocketインスタンスの生成
+                console.log(`📡 WebSocket接続試行中... (${wsUrl})`);
                 settingsSocket = new WebSocket(wsUrl);
 
-                // 接続成功時の処理
+                // --- 1. 接続成功時の処理 ---
                 settingsSocket.onopen = function() {
                     console.log('✅ 設定同期WebSocket接続完了');
                     updateSyncStatus(true, '設定同期接続済み');
-                    wsRetryCount = 0; // 接続に成功したらカウントをリセット
+                    wsRetryCount = 0; // 接続に成功したらリトライカウントをリセット
                 };
 
-                // メッセージ受信時の処理（サーバーからの設定変更を反映）
+                // --- 2. メッセージ受信時の処理 ---
                 settingsSocket.onmessage = function(event) {
                     try {
                         const data = JSON.parse(event.data);
                         if (data.type === 'settings_update') {
-                            console.log('📥 設定更新を受信:', data.data);
+                            console.log('📥 サーバーから設定更新を受信:', data.data);
                             applyReceivedSettings(data.data);
                         }
                     } catch (e) {
-                        console.log('WebSocketメッセージ（非JSON）:', event.data);
+                        // JSONでないメッセージ（Keep-alive等）は無視
+                        console.debug('WebSocketメッセージ受信:', event.data);
                     }
                 };
 
-                // 接続切断時の処理（再起動時など）
+                // --- 3. 接続切断時の処理（ここが指数バックオフの肝） ---
                 settingsSocket.onclose = function() {
-                    console.log('⚠️ 設定同期WebSocket切断');
-                    updateSyncStatus(false, '設定同期切断');
+                    console.log('⚠️ 設定同期WebSocketが切断されました');
+                    updateSyncStatus(false, '設定同期切断（再接続待機中）');
                     
-                    // 指数バックオフによる再接続ロジック
-                    // 1秒, 2秒, 4秒...と増やし、最大30秒（30000ms）で固定する
+                    // 指数バックオフの計算
+                    // 1秒(2^1) → 2秒(2^2) → 4秒(2^3) ... と増やし、最大30秒でキャップ(固定)
                     wsRetryCount++;
                     const delay = Math.min(1000 * Math.pow(2, wsRetryCount), 30000); 
                     
-                    console.log(`🔄 ${delay/1000}秒後に再接続を試みます... (試行回数: ${wsRetryCount})`);
-                    setTimeout(connectSettingsWebSocket, delay);
+                    console.log(`🔄 ${delay/1000}秒後に再接続を試みます... (試行回数: ${wsRetryCount}回)`);
+                    
+                    // 指定した秒数後に自分自身を再実行
+                    setTimeout(() => {
+                        // 切断状態で、かつ新しいインスタンスが作られていない場合のみ再接続
+                        if (!settingsSocket || settingsSocket.readyState === WebSocket.CLOSED) {
+                            connectSettingsWebSocket();
+                        }
+                    }, delay);
                 };
 
-                // エラー発生時の処理
+                // --- 4. エラー発生時の処理 ---
                 settingsSocket.onerror = function(error) {
-                    console.error('❌ 設定同期WebSocketエラー:', error);
-                    updateSyncStatus(false, '設定同期エラー');
-                    // onerrorの直後にoncloseが呼ばれるため、ここでの再接続処理は不要
+                    // onerrorの直後には必ずoncloseが呼ばれるため、
+                    // ここで再接続ロジックを書くと二重に実行されてしまうのでログ出力のみに留める
+                    console.error('❌ 設定同期WebSocketエラーが発生しました');
                 };
 
             } catch (error) {
-                console.error('🚨 WebSocket初期化エラー:', error);
-                updateSyncStatus(false, '接続開始失敗');
-                // 初期化失敗時も5秒後にリトライ
+                console.error('🚨 WebSocket初期化中に重大なエラーが発生:', error);
+                updateSyncStatus(false, '接続初期化失敗');
+                // 初期化失敗時も5秒後に一度リトライ
                 setTimeout(connectSettingsWebSocket, 5000);
             }
         }
