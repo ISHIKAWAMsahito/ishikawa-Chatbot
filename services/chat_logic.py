@@ -231,7 +231,7 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
                 except Exception:
                     pass 
                 if wait_time == 0:
-                    wait_time = (2 ** attempt) * 2 + random.uniform(0, 1)#合計待ち時間: 約14〜20秒にするため
+                    wait_time = (1.5 ** attempt) * 1.5 + random.uniform(0, 1)#合計待ち時間: 約14〜20秒にするため
                 logging.warning(f"API制限により {wait_time:.1f} 秒待機中... (試行 {attempt + 1}/{max_retries})")
                 await asyncio.sleep(wait_time)
                 continue
@@ -359,65 +359,62 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         # =========================================================
         logging.info("--- Stage 1: Q&A(FAQ)検索を開始します ---")
         qa_hit_found = False
-        
         try:
-            # 候補を少し多めに取得
-            qa_results = core_database.db_client.search_fallback_qa(#よくある質問（FAQ）データベースから高速に検索する処理
+            # 1. FAQ候補を取得
+            qa_results = core_database.db_client.search_fallback_qa(
                 embedding=query_embedding,
                 match_count=5
             )
 
             if qa_results:
-                # Geminiでリランク (Q&A用)
-                reranked_qa = await rerank_documents_with_gemini(
-                    query=user_input,
-                    documents=qa_results,
-                    top_k=1
-                )
-                
-                best_qa = reranked_qa[0] if reranked_qa else qa_results[0]
-                
-                qa_sim = best_qa.get('similarity', 0)
-                qa_score = best_qa.get('rerank_score') 
-                
-                logging.info(f"  Stage 1 Best Match: [Sim: {qa_sim:.4f}] [Score: {qa_score}] Content: {best_qa.get('content')[:30]}...")
-
-                # 採用判定: スコアが高い、または類似度が非常に高い場合
+                top_qa = qa_results[0]
+                top_sim = top_qa.get('similarity', 0)
                 is_qa_accepted = False
-                
-                if qa_score is not None:
-                    # リランクスコアがある場合: 厳しめに判定 (FAQなので間違った答えは出したくない)
-                    if qa_score >= QA_RERANK_SCORE_THRESHOLD: 
-                        is_qa_accepted = True
-                        logging.info(f"  -> [Stage 1 採用] リランクスコア {qa_score} が閾値を超えました。")
-                    elif qa_score >= 3 and qa_sim >= QA_SIMILARITY_THRESHOLD:
-                         # スコアがそこそこで、類似度が非常に高い場合も採用
-                        is_qa_accepted = True
-                        logging.info(f"  -> [Stage 1 採用] スコア {qa_score} かつ高類似度 {qa_sim:.4f} なので採用します。")
-                else:
-                    # リランク失敗時: 類似度のみで判定
-                    if qa_sim >= QA_SIMILARITY_THRESHOLD:
-                        is_qa_accepted = True
-                        logging.info(f"  -> [Stage 1 採用] (リランクなし) 類似度 {qa_sim:.4f} が高いため採用します。")
+                best_qa = None
 
+                # --- 【高速化ロジック】圧倒的に似ている場合はAIリランクをスキップ ---
+                if top_sim >= 0.96:
+                    logging.info(f"  -> [Stage 1 即採用] 類似度が極めて高い({top_sim:.4f})ため、AIリランクをスキップします。")
+                    best_qa = top_qa
+                    is_qa_accepted = True
+                else:
+                    # 確信が持てない（0.96未満）場合のみ、AIに精査を依頼する
+                    logging.info(f"  -> [Stage 1 精査] 類似度 {top_sim:.4f}。Gemini 2.5 Flash でリランクを実行します。")
+                    reranked_qa = await rerank_documents_with_gemini(
+                        query=user_input,
+                        documents=qa_results,
+                        top_k=1
+                    )
+                    best_qa = reranked_qa[0] if reranked_qa else top_qa
+                    qa_sim = best_qa.get('similarity', 0)
+                    qa_score = best_qa.get('rerank_score')
+
+                    # 採用判定（AIのスコアを重視）
+                    if qa_score is not None and qa_score >= QA_RERANK_SCORE_THRESHOLD:
+                        is_qa_accepted = True
+                        logging.info(f"  -> [Stage 1 採用] AIスコア {qa_score} により採用。")
+                    elif qa_sim >= QA_SIMILARITY_THRESHOLD:
+                        is_qa_accepted = True
+                        logging.info(f"  -> [Stage 1 採用] 類似度 {qa_sim:.4f} により採用。")
+
+                # --- 回答の送信 ---
                 if is_qa_accepted:
-                    qa_response_content = f"""よくあるご質問に関連する情報が見つかりました。
+                    # ユーザーへの案内文。リンクなどがある場合は format_urls_as_links を適用
+                    qa_response_content = f"""よくあるご質問（FAQ）に一致する回答が見つかりました。
 
 ---
 {best_qa['content']}
 """
                     full_qa_response = format_urls_as_links(qa_response_content)
                     
-                    # レスポンス送信
                     yield f"data: {json.dumps({'content': full_qa_response})}\n\n"
                     
-                    # 履歴保存 & フィードバックトリガー
+                    # 完了処理
                     history_manager.add_to_history(session_id, "user", user_input)
                     history_manager.add_to_history(session_id, "assistant", full_qa_response)
                     yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
                     
-                    qa_hit_found = True
-                    return # Stage 1で解決したので終了
+                    return # Stage 1で解決
 
         except Exception as e_qa:
             logging.error(f"Stage 1 (Q&A検索) でエラーが発生: {e_qa}", exc_info=True)
