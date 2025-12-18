@@ -373,21 +373,32 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 best_qa = None
 
                 # --- 【高速化ロジック】圧倒的に似ている場合はAIリランクをスキップ ---
-                if top_sim >= 0.96:
-                    logging.info(f"  -> [Stage 1 即採用] 類似度が極めて高い({top_sim:.4f})ため、AIリランクをスキップします。")
-                    best_qa = top_qa
+                # --- 【修正版】Stage 1 採用ロジック ---
+                top_sim = qa_results[0].get('similarity', 0)
+                is_qa_accepted = False
+
+                # 閾値を 0.96 -> 0.98 に引き上げ、かつ「意図の確認」を必須に近づける
+                if top_sim >= 0.98: 
+                    logging.info(f"  -> [Stage 1 超高類似度] ほぼ完全一致のため即採用します。({top_sim:.4f})")
+                    best_qa = qa_results[0]
                     is_qa_accepted = True
                 else:
-                    # 確信が持てない（0.96未満）場合のみ、AIに精査を依頼する
-                    logging.info(f"  -> [Stage 1 精査] 類似度 {top_sim:.4f}。Gemini 2.5 Flash でリランクを実行します。")
+                    # 0.98未満（今回のケースなど）は必ず Gemini 2.5 Flash でリランク
+                    logging.info(f"  -> [Stage 1 慎重精査] 類似度 {top_sim:.4f}。意図のズレがないかAIで確認します。")
                     reranked_qa = await rerank_documents_with_gemini(
                         query=user_input,
                         documents=qa_results,
                         top_k=1
                     )
-                    best_qa = reranked_qa[0] if reranked_qa else top_qa
-                    qa_sim = best_qa.get('similarity', 0)
-                    qa_score = best_qa.get('rerank_score')
+                    
+                    if reranked_qa:
+                        best_qa = reranked_qa[0]
+                        # AIが「これは10点満点中8点以上の関連性がある」と言った場合のみ採用
+                        if best_qa.get('rerank_score', 0) >= 8:
+                            is_qa_accepted = True
+                            logging.info(f"  -> [Stage 1 合格] AIスコア {best_qa.get('rerank_score')} で採用。")
+                        else:
+                            logging.info(f"  -> [Stage 1 不合格] AIスコアが低いため Stage 2 (RAG) へ移行します。")
 
                     # 採用判定（AIのスコアを重視）
                     if qa_score is not None and qa_score >= QA_RERANK_SCORE_THRESHOLD:
