@@ -75,7 +75,7 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
     candidates_text = ""
     for i, doc in enumerate(documents):
         # 300文字ではなく、1000文字～全文渡して判断させる
-        content_snippet = doc.get('content', '')[:1000].replace('\n', ' ')
+        content_snippet = doc.get('content', '')[:300].replace('\n', ' ') #12/19 300文字で特徴をつかむのに十分そうなので検証
         source = doc.get('metadata', {}).get('source', 'unknown')
         candidates_text += f"ID:{i} Source:{source} Content:{content_snippet}\n\n"
 
