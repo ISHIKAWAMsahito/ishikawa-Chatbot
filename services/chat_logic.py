@@ -338,7 +338,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             yield f"data: {json.dumps({'content': suggestion_text})}\n\n"
             yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
             return
-        try:
+        try:#ユーザーの質問文をAIが理解できる数値（ベクトル）に変換する処理
             query_embedding_response = genai.embed_content(
     model=chat_req.embedding_model,  # これで自動的に設定ファイルから読み込まれる
     content=user_input,
@@ -362,7 +362,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         
         try:
             # 候補を少し多めに取得
-            qa_results = core_database.db_client.search_fallback_qa(
+            qa_results = core_database.db_client.search_fallback_qa(#よくある質問（FAQ）データベースから高速に検索する処理
                 embedding=query_embedding,
                 match_count=5
             )
@@ -440,7 +440,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 initial_fetch_count = 30
                 
                 # 1. 広めに検索
-                raw_search_results = core_database.db_client.search_documents_by_vector(
+                raw_search_results = core_database.db_client.search_documents_by_vector(#FAQで見つからなかった場合、大量のドキュメントからベクトル検索を行う処理
                     collection_name=chat_req.collection,
                     embedding=query_embedding,
                     match_count=initial_fetch_count
@@ -455,7 +455,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 #    上位5件だけをリランクにかけて、AIに「どれが質問に一番近いか」判断させる
                 search_results = await rerank_documents_with_gemini(
                     query=user_input,
-                    documents=unique_results[:50], # 上位50件をリランクにかける
+                    documents=unique_results[:10], # 12/18動作が安定するか確認。上位10件をリランクにかける
                     top_k=chat_req.top_k
                 )
                 
@@ -512,7 +512,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 context_parts.append(f"<document source='{display_source}'>{parent_text}</document>")
                 current_char_length += len(parent_text)
             
-            context = "\n\n".join(context_parts)
+            context = "\n\n".join(context_parts)#検索して集めた情報（relevant_docs）をプロンプトに埋め込み、Geminiに回答を生成させる処理
 
             # --- プロンプト構築 ---
             prompt = f"""あなたは札幌学院大学の学生サポートAIです。  
