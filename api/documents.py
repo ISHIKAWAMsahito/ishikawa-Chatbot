@@ -314,135 +314,155 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/scrape")
+@router.post("/scrape")#12/24 pdfをダウンロード解析できるように改良
 async def scrape_website(
     request: ScrapeRequest, 
     user: dict = Depends(require_auth)
 ):
     """
-    URLからHTMLを取得し、Gemini APIを使用して本文テキストのみを賢く抽出します。
-    その後、ベクトル化してDBに保存します。
+    URLからコンテンツ(HTML or PDF)を取得し、Gemini APIを使用してテキストを抽出します。
     """
     if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
 
-    logging.info(f"AI Scrapeリクエスト受信: {request.url} (Collection: {request.collection_name})")
+    logging.info(f"AI Scrapeリクエスト受信: {request.url}")
 
     try:
-        # 1. WebサイトからHTMLを取得 (httpxを使用)
-        # ※ブラウザのふりをするためにUser-Agentを設定
+        # 1. URLからデータを取得
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         async with httpx.AsyncClient(verify=False, headers=headers) as client:
             try:
-                response = await client.get(request.url, follow_redirects=True, timeout=15.0)
+                # PDFなどバイナリの可能性もあるため、まずはヘッダーだけ確認しても良いが、
+                # ここではシンプルにgetしてcontent-typeを確認する
+                response = await client.get(request.url, follow_redirects=True, timeout=30.0) # PDF用にタイムアウト少し長め
                 response.raise_for_status()
             except httpx.RequestError as e:
                 logging.error(f"URL取得エラー: {e}")
                 raise HTTPException(status_code=400, detail=f"URLの取得に失敗しました: {e}")
+
+        content_type = response.headers.get("content-type", "").lower()
+        extracted_text = ""
         
-        # 2. HTMLの軽量化 (トークン節約のためBeautifulSoupで最低限のゴミ掃除)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 明らかに不要なタグを削除
-        for element in soup(["script", "style", "noscript", "iframe", "svg", "header", "footer"]):
-            element.decompose()
+        # モデル準備 (Gemini 1.5 Flash)
+        extract_model = genai.GenerativeModel("gemini-1.5-flash")
+
+        # ---------------------------------------------------------
+        # 分岐 A: PDFの場合
+        # ---------------------------------------------------------
+        if "application/pdf" in content_type:
+            logging.info("PDFファイルを検知しました。Geminiで解析します...")
             
-        # HTMLを文字列化（長すぎる場合はカットする安全策を入れる例）
-        # gemini-1.5-flash は100万トークン扱えるので基本的にはそのままでOKですが、
-        # 極端に巨大なページ対策としてbodyのみに絞ります。
-        target_html = str(soup.body) if soup.body else str(soup)
-        
-        # 3. Gemini API を叩いて本文抽出 (ここが変更点)
-        logging.info("GeminiによるHTML解析を実行中...")
-        
-        # 高速な Flash モデルを指定
-        extract_model = genai.GenerativeModel("gemini-2.5-flash")
-        
-        prompt = """
-        以下のHTMLソースコードから、Webページの「メインコンテンツ（本文）」のみを抽出してください。
-        
-        # 指示:
-        - メニュー、ナビゲーション、広告、著作権表示、サイドバーのリンク集などは全て除外してください。
-        - 記事のタイトル、見出し、本文の段落構造は維持してください。
-        - 出力はMarkdown形式ではなく、読みやすいプレーンテキストにしてください。
-        - HTMLタグは残さないでください。
-        
-        HTMLソース:
-        """
-        
-        try:
-            # HTMLとプロンプトを送信
-            ai_response = await extract_model.generate_content_async(
-                [prompt, target_html],
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            prompt = """
+            このPDFファイルの内容を読み取り、全てのテキストを抽出してください。
+            図表が含まれている場合は、その内容も言葉で説明してテキストに含めてください。
+            ヘッダーやフッター（ページ番号など）は除外してください。
+            """
+            
+            try:
+                # バイナリデータを直接渡すためのdictを作成
+                pdf_data_part = {
+                    "mime_type": "application/pdf",
+                    "data": response.content
                 }
-            )
-            body_text = ai_response.text
-            
-        except Exception as e:
-            logging.error(f"Gemini解析エラー: {e}")
-            # エラー時はフォールバックとして従来の単純抽出を行う
-            logging.warning("Gemini解析に失敗したため、従来の抽出処理を行います。")
-            body_text = soup.get_text(separator=' ', strip=True)
+                
+                ai_response = await extract_model.generate_content_async(
+                    [prompt, pdf_data_part]
+                )
+                extracted_text = ai_response.text
+            except Exception as e:
+                logging.error(f"PDF解析エラー: {e}")
+                raise HTTPException(status_code=500, detail=f"PDFの解析に失敗しました: {e}")
 
-        if not body_text:
+        # ---------------------------------------------------------
+        # 分岐 B: HTMLの場合 (Webサイト)
+        # ---------------------------------------------------------
+        else:
+            logging.info("HTMLコンテンツとして解析します...")
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 不要タグ削除
+            for element in soup(["script", "style", "noscript", "iframe", "svg", "header", "footer"]):
+                element.decompose()
+            
+            target_html = str(soup.body) if soup.body else str(soup)
+            
+            prompt = """
+            以下のHTMLソースから、Webページの「メインコンテンツ（本文）」のみを抽出してください。
+            メニュー、広告、サイドバーは除外してください。
+            """
+            
+            try:
+                ai_response = await extract_model.generate_content_async(
+                    [prompt, target_html]
+                )
+                extracted_text = ai_response.text
+            except Exception as e:
+                logging.warning(f"AI解析失敗、フォールバック実行: {e}")
+                extracted_text = soup.get_text(separator=' ', strip=True)
+
+        # 共通: テキストが取れなかった場合
+        if not extracted_text:
             raise HTTPException(status_code=400, detail="テキストを抽出できませんでした。")
-            
-        logging.info(f"抽出されたテキストサイズ: {len(body_text)} 文字")
 
-        # 4. ファイル名定義と古いデータの削除
-        filename_from_url = request.url.split('/')[-1] or "index.html"
-        # URLパラメータなどを削除してクリーンなファイル名にする簡易処理
-        filename_from_url = filename_from_url.split('?')[0] 
-        source_name = f"scrape_{filename_from_url}.txt"
+        # ---------------------------------------------------------
+        # 以下、保存処理 (既存ロジックと同じ)
+        # ---------------------------------------------------------
+        logging.info(f"抽出テキストサイズ: {len(extracted_text)} 文字")
 
-        logging.info(f"古いチャンク (source: {source_name}) を削除しています...")
+        filename_from_url = request.url.split('/')[-1] or "downloaded_file"
+        filename_from_url = filename_from_url.split('?')[0]
+        # 拡張子調整
+        if "application/pdf" in content_type and not filename_from_url.endswith(".pdf"):
+            filename_from_url += ".pdf"
+        elif not filename_from_url.endswith((".html", ".htm", ".txt", ".pdf")):
+             filename_from_url += ".txt"
+
+        source_name = f"scrape_{filename_from_url}"
+
+        # (省略: 古いデータの削除ロジック)
         try:
             database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
-        except Exception as e:
-            logging.warning(f"古いチャンク削除時の軽微なエラー: {e}")
+        except Exception:
+            pass
 
-        # 5. ジェネレータを取得 (既存ロジック)
+        # チャンク分割 & 保存
         doc_generator = document_processor.simple_processor.process_and_chunk(
             filename=source_name, 
-            content=body_text.encode('utf-8'), 
-            category="WebScrape", 
+            content=extracted_text.encode('utf-8'), 
+            category="WebScrape(PDF)" if "pdf" in content_type else "WebScrape", 
             collection_name=request.collection_name
         )
         
-        # 6. ストリーミング・バッチ処理 (既存ロジック)
+        # バッチインサート処理
         batch_docs = []
         batch_size = 50
         total_count = 0
-        embedding_model = request.embedding_model
-
+        
         for doc in doc_generator:
             batch_docs.append(doc)
-            
             if len(batch_docs) >= batch_size:
-                inserted = await process_batch_insert(batch_docs, embedding_model, request.collection_name)
+                inserted = await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
                 total_count += inserted
-                batch_docs = [] # メモリ解放
+                batch_docs = []
                 await asyncio.sleep(0.5)
 
-        # 端数処理
         if batch_docs:
-            inserted = await process_batch_insert(batch_docs, embedding_model, request.collection_name)
+            inserted = await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
             total_count += inserted
 
-        logging.info(f"スクレイプ処理完了: {request.url} (合計 {total_count} 件のチャンクをDBに挿入)")
-        return {"chunks": total_count, "filename": request.url, "message": "処理完了", "preview": body_text[:200] + "..."}
-
+        return {
+            "chunks": total_count, 
+            "filename": filename_from_url, 
+            "message": "処理完了", 
+            "type": "PDF" if "pdf" in content_type else "HTML"
+        }
+        
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"スクレイプ処理エラー: {e}\n{traceback.format_exc()}")
+        logging.error(f"スクレイプ処理エラー: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
