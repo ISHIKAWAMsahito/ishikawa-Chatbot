@@ -431,13 +431,21 @@ async def scrape_website(
         # ---------------------------------------------------------
         # 以下、保存処理 (そのまま)
         # ---------------------------------------------------------
-        filename_from_url = request.url.split('/')[-1].split('?')[0] or "downloaded_file"
-        if target_type == "PDF" and not filename_from_url.endswith(".pdf"):
-            filename_from_url += ".pdf"
-        elif target_type == "HTML" and not filename_from_url.endswith((".html", ".txt")):
-             filename_from_url += ".txt"
+        filename_from_url = request.url.split('/')[-1].split('?')[0] or "downloaded_file"#AIで抽出した後は、元がPDFであっても**「ファイル名は .txt として保存処理に回す」**ように変更
         
-        source_name = f"scrape_{filename_from_url}"
+        # 拡張子を強制的に .txt に変更する
+        if filename_from_url.lower().endswith(".pdf"):
+            filename_for_processor = filename_from_url[:-4] + ".txt"
+        elif not filename_from_url.lower().endswith(".txt"):
+            filename_for_processor = filename_from_url + ".txt"
+        else:
+            filename_for_processor = filename_from_url
+
+        # メタデータとしてのソース名は元のままでOK（参照用）
+        source_name = f"scrape_{filename_from_url}" 
+        
+        # 保存用の内部ファイル名（衝突防止）
+        internal_filename = f"scrape_{filename_for_processor}"
 
         # 古いデータの削除
         try:
@@ -446,8 +454,9 @@ async def scrape_website(
             pass
 
         # チャンク化と保存
+        # point: filename引数には .txt で終わる名前を渡す！
         doc_generator = document_processor.simple_processor.process_and_chunk(
-            filename=source_name, 
+            filename=internal_filename, 
             content=extracted_text.encode('utf-8'), 
             category=f"WebScrape({target_type})", 
             collection_name=request.collection_name
