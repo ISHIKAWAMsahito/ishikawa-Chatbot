@@ -377,7 +377,7 @@ async def scrape_website(
             target_type = "HTML"
 
         extracted_text = ""
-        extract_model = genai.GenerativeModel("gemini-1.5-flash")
+        extract_model = genai.GenerativeModel("gemini-2.5-flash")
 
         # ---------------------------------------------------------
         # 分岐 A: PDF処理
