@@ -6,6 +6,19 @@ from fastapi.responses import RedirectResponse, FileResponse, Response
 from core.config import oauth, AUTH0_DOMAIN, AUTH0_CLIENT_ID, SUPER_ADMIN_EMAILS, ALLOWED_CLIENT_EMAILS, BASE_DIR
 
 router = APIRouter()
+# #システムの入り口となる認証と、HTMLファイルの配信を担当しています。
+
+# Auth0連携: /login でAuth0へリダイレクトし、/auth でコールバックを受け取ります。
+
+# 権限管理:
+
+# SUPER_ADMIN_EMAILS: 管理者（admin.htmlなどへのアクセス権）
+
+# ALLOWED_CLIENT_EMAILS: 一般ユーザー（学生など、client.htmlへのアクセス権）
+
+# これらリストに含まれないメールアドレスはログアウトさせられます。
+
+# 静的ファイル配信: 認証状態に基づいて、SPA（Single Page Application）のHTMLファイル（client.html, admin.html, DB.html 等）を直接返しています。
 
 # =========================================================
 #  URL生成ヘルパー

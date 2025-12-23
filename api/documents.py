@@ -251,7 +251,7 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
             raise e
 
 
-@router.post("/upload")
+@router.post("/upload")#12/24 GeminiAPIをたたいてスクレイピングできるように改良
 async def upload_document(
     file: UploadFile = File(...), 
     category: str = Form("その他"), 
@@ -319,35 +319,87 @@ async def scrape_website(
     request: ScrapeRequest, 
     user: dict = Depends(require_auth)
 ):
-    """URLからテキストを抽出し、メモリ効率よくバッチ処理でベクトル化してDBに挿入"""
+    """
+    URLからHTMLを取得し、Gemini APIを使用して本文テキストのみを賢く抽出します。
+    その後、ベクトル化してDBに保存します。
+    """
     if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
 
-    logging.info(f"Scrapeリクエスト受信: {request.url} (Collection: {request.collection_name})")
+    logging.info(f"AI Scrapeリクエスト受信: {request.url} (Collection: {request.collection_name})")
 
     try:
-        # 1. Webサイトからコンテンツを取得
-        async with httpx.AsyncClient(verify=False) as client:
+        # 1. WebサイトからHTMLを取得 (httpxを使用)
+        # ※ブラウザのふりをするためにUser-Agentを設定
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        async with httpx.AsyncClient(verify=False, headers=headers) as client:
             try:
-                response = await client.get(request.url, follow_redirects=True, timeout=10.0)
+                response = await client.get(request.url, follow_redirects=True, timeout=15.0)
                 response.raise_for_status()
             except httpx.RequestError as e:
                 logging.error(f"URL取得エラー: {e}")
                 raise HTTPException(status_code=400, detail=f"URLの取得に失敗しました: {e}")
         
-        # 2. HTMLからテキストを抽出
+        # 2. HTMLの軽量化 (トークン節約のためBeautifulSoupで最低限のゴミ掃除)
         soup = BeautifulSoup(response.text, 'html.parser')
-        for script_or_style in soup(["script", "style"]):
-            script_or_style.decompose()
         
-        target_element = soup.body if soup.body else soup
-        body_text = target_element.get_text(separator=' ', strip=True) 
+        # 明らかに不要なタグを削除
+        for element in soup(["script", "style", "noscript", "iframe", "svg", "header", "footer"]):
+            element.decompose()
+            
+        # HTMLを文字列化（長すぎる場合はカットする安全策を入れる例）
+        # gemini-1.5-flash は100万トークン扱えるので基本的にはそのままでOKですが、
+        # 極端に巨大なページ対策としてbodyのみに絞ります。
+        target_html = str(soup.body) if soup.body else str(soup)
+        
+        # 3. Gemini API を叩いて本文抽出 (ここが変更点)
+        logging.info("GeminiによるHTML解析を実行中...")
+        
+        # 高速な Flash モデルを指定
+        extract_model = genai.GenerativeModel("gemini-2.5-flash")
+        
+        prompt = """
+        以下のHTMLソースコードから、Webページの「メインコンテンツ（本文）」のみを抽出してください。
+        
+        # 指示:
+        - メニュー、ナビゲーション、広告、著作権表示、サイドバーのリンク集などは全て除外してください。
+        - 記事のタイトル、見出し、本文の段落構造は維持してください。
+        - 出力はMarkdown形式ではなく、読みやすいプレーンテキストにしてください。
+        - HTMLタグは残さないでください。
+        
+        HTMLソース:
+        """
+        
+        try:
+            # HTMLとプロンプトを送信
+            ai_response = await extract_model.generate_content_async(
+                [prompt, target_html],
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+            )
+            body_text = ai_response.text
+            
+        except Exception as e:
+            logging.error(f"Gemini解析エラー: {e}")
+            # エラー時はフォールバックとして従来の単純抽出を行う
+            logging.warning("Gemini解析に失敗したため、従来の抽出処理を行います。")
+            body_text = soup.get_text(separator=' ', strip=True)
 
         if not body_text:
-            raise HTTPException(status_code=400, detail="Webサイトからテキストを抽出できませんでした。")
-        
-        # 3. ファイル名定義と古いデータの削除
+            raise HTTPException(status_code=400, detail="テキストを抽出できませんでした。")
+            
+        logging.info(f"抽出されたテキストサイズ: {len(body_text)} 文字")
+
+        # 4. ファイル名定義と古いデータの削除
         filename_from_url = request.url.split('/')[-1] or "index.html"
+        # URLパラメータなどを削除してクリーンなファイル名にする簡易処理
+        filename_from_url = filename_from_url.split('?')[0] 
         source_name = f"scrape_{filename_from_url}.txt"
 
         logging.info(f"古いチャンク (source: {source_name}) を削除しています...")
@@ -356,7 +408,7 @@ async def scrape_website(
         except Exception as e:
             logging.warning(f"古いチャンク削除時の軽微なエラー: {e}")
 
-        # 4. ジェネレータを取得
+        # 5. ジェネレータを取得 (既存ロジック)
         doc_generator = document_processor.simple_processor.process_and_chunk(
             filename=source_name, 
             content=body_text.encode('utf-8'), 
@@ -364,7 +416,7 @@ async def scrape_website(
             collection_name=request.collection_name
         )
         
-        # 5. ストリーミング・バッチ処理
+        # 6. ストリーミング・バッチ処理 (既存ロジック)
         batch_docs = []
         batch_size = 50
         total_count = 0
@@ -385,7 +437,7 @@ async def scrape_website(
             total_count += inserted
 
         logging.info(f"スクレイプ処理完了: {request.url} (合計 {total_count} 件のチャンクをDBに挿入)")
-        return {"chunks": total_count, "filename": request.url, "message": "処理完了"}
+        return {"chunks": total_count, "filename": request.url, "message": "処理完了", "preview": body_text[:200] + "..."}
 
     except HTTPException:
         raise

@@ -16,6 +16,7 @@ router = APIRouter()
 
 # 設定変更: 使用するAIモデル（gemini-2.5-flashなど）やRAGのパラメータを動的に変更するAPIを提供しています。
 
+
 @router.get("/health")
 async def health_check():
     """ヘルスチェック"""
