@@ -314,13 +314,16 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/scrape")#12/24 pdfをダウンロード解析できるように改良
+# api/documents.py
+
+@router.post("/scrape")#12/24 「ダウンロードしたデータが本当にPDFなのか（%PDFで始まっているか）を厳密にチェックし、ダメなら処理を中断して理由を教えてくれる」 安全装置付きのコードに書き換え
 async def scrape_website(
     request: ScrapeRequest, 
     user: dict = Depends(require_auth)
 ):
     """
-    URLからコンテンツ(HTML or PDF)を取得し、Gemini APIを使用してテキストを抽出します。
+    URLからコンテンツを取得し、PDFかどうか厳密に判定してからGeminiで解析します。
+    大学サイトなどのBot対策(403/Blocked)を回避するためのヘッダー強化版です。
     """
     if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
@@ -328,157 +331,154 @@ async def scrape_website(
     logging.info(f"AI Scrapeリクエスト受信: {request.url}")
 
     try:
-        # 1. URLからデータを取得
-        headers = { #大学の学事暦pdfをスクレイピングできるように改良
-            # ChromeのUser-Agent (最新版に近いもの)
+        # 1. 人間のブラウザになりすましてアクセス (大学サイト対策)
+        headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            # リファラー（どこから来たか）を大学のトップページに偽装する
-            "Referer": "https://www.sgu.ac.jp/",
-            # HTMLやPDFを受け入れることを明示
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            # 言語設定（日本語）
+            "Referer": "https://www.google.com/",  # Google検索から来たふりをする
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            # キャッシュを使わない設定
-            "Cache-Control": "no-cache",
-            # アップグレード要求
+            "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1"
         }
-
-        logging.info(f"アクセス開始: {request.url}")
 
         async with httpx.AsyncClient(verify=False, headers=headers, follow_redirects=True) as client:
             try:
                 response = await client.get(request.url, timeout=30.0)
-                response.raise_for_status()
+                response.raise_for_status() # 404や500ならここでエラー
                 content_body = response.content
-                
-                # デバッグ用ログ: 何が返ってきたか確認
-                logging.info(f"Status Code: {response.status_code}")
-                logging.info(f"Content-Type: {response.headers.get('content-type')}")
-                # 先頭50バイトだけログに出す（<%PDF... ならOK、<html... ならブロックされている）
-                logging.info(f"File Head: {content_body[:50]}") 
-
             except httpx.RequestError as e:
+                logging.error(f"接続エラー: {e}")
+                raise HTTPException(status_code=400, detail=f"URLに接続できませんでした: {e}")
+            except httpx.HTTPStatusError as e:
+                logging.error(f"HTTPエラー: {e.response.status_code}")
+                raise HTTPException(status_code=400, detail=f"Webサイトへのアクセスが拒否されました(Status: {e.response.status_code})")
+
+        # 2. 【最重要】中身が本当にPDFかチェックする
+        # PDFファイルは必ずバイナリの先頭が "%PDF" で始まります。
+        # 始まっていない場合、それは「アクセス拒否画面のHTML」である可能性が高いです。
         
-        # モデル準備 (Gemini 1.5 Flash)
-             extract_model = genai.GenerativeModel("gemini-2.5-flash")
+        is_pdf_signature = content_body.startswith(b'%PDF')
+        content_type_header = response.headers.get("content-type", "").lower()
+        
+        # ログに先頭50バイトを出力して確認できるようにする
+        file_head_preview = content_body[:50].decode('utf-8', errors='ignore').replace('\n', ' ')
+        logging.info(f"ダウンロードデータの先頭: {file_head_preview}")
+
+        # PDF判定ロジック
+        if is_pdf_signature:
+            # マジックナンバーが合致すれば確実にPDF
+            target_type = "PDF"
+        elif "application/pdf" in content_type_header:
+            # ヘッダーはPDFだが中身が違う -> 破損かブロック
+            logging.error(f"ヘッダーはPDFですが、データ構造がPDFではありません。先頭データ: {file_head_preview}")
+            raise HTTPException(status_code=400, detail="PDFとしてダウンロードされましたが、ファイルが破損しているか、アクセス拒否ページの可能性があります。")
+        else:
+            # それ以外はHTMLとして扱う
+            target_type = "HTML"
+
+        extracted_text = ""
+        extract_model = genai.GenerativeModel("gemini-1.5-flash")
 
         # ---------------------------------------------------------
-        # 分岐 A: PDFの場合
+        # 分岐 A: PDF処理
         # ---------------------------------------------------------
-        if "application/pdf" in content_type:
-            logging.info("PDFファイルを検知しました。Geminiで解析します...")
+        if target_type == "PDF":
+            logging.info(f"有効なPDFファイルを検知しました ({len(content_body)} bytes)。解析を開始します。")
             
             prompt = """
             このPDFファイルの内容を読み取り、全てのテキストを抽出してください。
             図表が含まれている場合は、その内容も言葉で説明してテキストに含めてください。
             ヘッダーやフッター（ページ番号など）は除外してください。
             """
-            
             try:
-                # バイナリデータを直接渡すためのdictを作成
-                pdf_data_part = {
-                    "mime_type": "application/pdf",
-                    "data": response.content
-                }
-                
                 ai_response = await extract_model.generate_content_async(
-                    [prompt, pdf_data_part]
+                    [prompt, {"mime_type": "application/pdf", "data": content_body}]
                 )
                 extracted_text = ai_response.text
             except Exception as e:
-                logging.error(f"PDF解析エラー: {e}")
-                raise HTTPException(status_code=500, detail=f"PDFの解析に失敗しました: {e}")
+                logging.error(f"Gemini解析エラー(PDF): {e}")
+                # AI側でエラーが出た場合の詳細
+                raise HTTPException(status_code=500, detail=f"AIによるPDF解析に失敗しました。ファイルが重すぎるか、保護されています。: {str(e)}")
 
         # ---------------------------------------------------------
-        # 分岐 B: HTMLの場合 (Webサイト)
+        # 分岐 B: HTML処理
         # ---------------------------------------------------------
         else:
-            logging.info("HTMLコンテンツとして解析します...")
-            soup = BeautifulSoup(response.text, 'html.parser')
+            logging.info("HTMLコンテンツとして解析します。")
             
-            # 不要タグ削除
+            # HTMLなのに中身が空っぽ、あるいは短すぎる場合のエラーチェック
+            if len(content_body) < 100:
+                raise HTTPException(status_code=400, detail="取得したWebページの内容が短すぎます（アクセスがブロックされた可能性があります）。")
+
+            soup = BeautifulSoup(response.text, 'html.parser')
             for element in soup(["script", "style", "noscript", "iframe", "svg", "header", "footer"]):
                 element.decompose()
             
             target_html = str(soup.body) if soup.body else str(soup)
             
-            prompt = """
-            以下のHTMLソースから、Webページの「メインコンテンツ（本文）」のみを抽出してください。
-            メニュー、広告、サイドバーは除外してください。
-            """
+            prompt = "以下のHTMLから本文テキストのみを抽出してください（メニュー等は除外）。"
             
             try:
-                ai_response = await extract_model.generate_content_async(
-                    [prompt, target_html]
-                )
+                ai_response = await extract_model.generate_content_async([prompt, target_html])
                 extracted_text = ai_response.text
             except Exception as e:
-                logging.warning(f"AI解析失敗、フォールバック実行: {e}")
+                logging.warning(f"AI解析失敗、フォールバック: {e}")
                 extracted_text = soup.get_text(separator=' ', strip=True)
 
-        # 共通: テキストが取れなかった場合
         if not extracted_text:
             raise HTTPException(status_code=400, detail="テキストを抽出できませんでした。")
 
         # ---------------------------------------------------------
-        # 以下、保存処理 (既存ロジックと同じ)
+        # 以下、保存処理 (そのまま)
         # ---------------------------------------------------------
-        logging.info(f"抽出テキストサイズ: {len(extracted_text)} 文字")
-
-        filename_from_url = request.url.split('/')[-1] or "downloaded_file"
-        filename_from_url = filename_from_url.split('?')[0]
-        # 拡張子調整
-        if "application/pdf" in content_type and not filename_from_url.endswith(".pdf"):
+        filename_from_url = request.url.split('/')[-1].split('?')[0] or "downloaded_file"
+        if target_type == "PDF" and not filename_from_url.endswith(".pdf"):
             filename_from_url += ".pdf"
-        elif not filename_from_url.endswith((".html", ".htm", ".txt", ".pdf")):
+        elif target_type == "HTML" and not filename_from_url.endswith((".html", ".txt")):
              filename_from_url += ".txt"
-
+        
         source_name = f"scrape_{filename_from_url}"
 
-        # (省略: 古いデータの削除ロジック)
+        # 古いデータの削除
         try:
             database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
         except Exception:
             pass
 
-        # チャンク分割 & 保存
+        # チャンク化と保存
         doc_generator = document_processor.simple_processor.process_and_chunk(
             filename=source_name, 
             content=extracted_text.encode('utf-8'), 
-            category="WebScrape(PDF)" if "pdf" in content_type else "WebScrape", 
+            category=f"WebScrape({target_type})", 
             collection_name=request.collection_name
         )
         
-        # バッチインサート処理
         batch_docs = []
-        batch_size = 50
         total_count = 0
         
         for doc in doc_generator:
             batch_docs.append(doc)
-            if len(batch_docs) >= batch_size:
-                inserted = await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
-                total_count += inserted
+            if len(batch_docs) >= 50:
+                total_count += await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
                 batch_docs = []
                 await asyncio.sleep(0.5)
-
+        
         if batch_docs:
-            inserted = await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
-            total_count += inserted
+            total_count += await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
 
         return {
             "chunks": total_count, 
             "filename": filename_from_url, 
             "message": "処理完了", 
-            "type": "PDF" if "pdf" in content_type else "HTML"
+            "type": target_type
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"スクレイプ処理エラー: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # 想定外のクラッシュも500エラーとして詳細を返す
+        logging.error(f"システムエラー: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"システム内部エラー: {str(e)}")
 
 
 @router.get("/collections/{collection_name}/documents")
