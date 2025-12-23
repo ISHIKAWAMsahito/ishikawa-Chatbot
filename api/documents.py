@@ -329,24 +329,39 @@ async def scrape_website(
 
     try:
         # 1. URLからデータを取得
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        headers = { #大学の学事暦pdfをスクレイピングできるように改良
+            # ChromeのUser-Agent (最新版に近いもの)
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            # リファラー（どこから来たか）を大学のトップページに偽装する
+            "Referer": "https://www.sgu.ac.jp/",
+            # HTMLやPDFを受け入れることを明示
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            # 言語設定（日本語）
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            # キャッシュを使わない設定
+            "Cache-Control": "no-cache",
+            # アップグレード要求
+            "Upgrade-Insecure-Requests": "1"
         }
-        async with httpx.AsyncClient(verify=False, headers=headers) as client:
-            try:
-                # PDFなどバイナリの可能性もあるため、まずはヘッダーだけ確認しても良いが、
-                # ここではシンプルにgetしてcontent-typeを確認する
-                response = await client.get(request.url, follow_redirects=True, timeout=30.0) # PDF用にタイムアウト少し長め
-                response.raise_for_status()
-            except httpx.RequestError as e:
-                logging.error(f"URL取得エラー: {e}")
-                raise HTTPException(status_code=400, detail=f"URLの取得に失敗しました: {e}")
 
-        content_type = response.headers.get("content-type", "").lower()
-        extracted_text = ""
+        logging.info(f"アクセス開始: {request.url}")
+
+        async with httpx.AsyncClient(verify=False, headers=headers, follow_redirects=True) as client:
+            try:
+                response = await client.get(request.url, timeout=30.0)
+                response.raise_for_status()
+                content_body = response.content
+                
+                # デバッグ用ログ: 何が返ってきたか確認
+                logging.info(f"Status Code: {response.status_code}")
+                logging.info(f"Content-Type: {response.headers.get('content-type')}")
+                # 先頭50バイトだけログに出す（<%PDF... ならOK、<html... ならブロックされている）
+                logging.info(f"File Head: {content_body[:50]}") 
+
+            except httpx.RequestError as e:
         
         # モデル準備 (Gemini 1.5 Flash)
-        extract_model = genai.GenerativeModel("gemini-2.5-flash")
+             extract_model = genai.GenerativeModel("gemini-2.5-flash")
 
         # ---------------------------------------------------------
         # 分岐 A: PDFの場合
