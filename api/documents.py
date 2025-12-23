@@ -316,6 +316,7 @@ async def upload_document(
 
 # api/documents.py
  #12/24 Geminiに送るプロンプト（指示書）に、以下の**「カレンダー整形ルール」**を追加しました。丸数字や記号の除去: ① や < > を削除させる。日付の補完: 文脈から「2025年」などを読み取り、YYYY年M月D日 形式に統一させる。重複の削除: 1 (金): 1 金 のような重複を整理させる。
+ #12/24 Geminiに送るプロンプト（指示書）に、以下の**「カレンダー整形ルール」**を追加しました。丸数字や記号の除去: ① や < > を削除させる。日付の補完: 文脈から「2025年」などを読み取り、YYYY年M月D日 形式に統一させる。重複の削除: 1 (金): 1 金 のような重複を整理させる。
 @router.post("/scrape")
 async def scrape_website(
     request: ScrapeRequest, 
@@ -390,7 +391,7 @@ async def scrape_website(
 
         extracted_text = ""
         # バージョン指定付きモデル名を使用
-        extract_model = genai.GenerativeModel("gemini2.5-flash")
+        extract_model = genai.GenerativeModel("gemini-3-flash")
 
         if target_type == "PDF":
             logging.info("PDF解析モード: 整形ルール適用中...")
