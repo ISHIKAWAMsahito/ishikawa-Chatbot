@@ -315,15 +315,14 @@ async def upload_document(
 
 
 # api/documents.py
-
-@router.post("/scrape")#12/24 「ダウンロードしたデータが本当にPDFなのか（%PDFで始まっているか）を厳密にチェックし、ダメなら処理を中断して理由を教えてくれる」 安全装置付きのコードに書き換え
+ #12/24 Geminiに送るプロンプト（指示書）に、以下の**「カレンダー整形ルール」**を追加しました。丸数字や記号の除去: ① や < > を削除させる。日付の補完: 文脈から「2025年」などを読み取り、YYYY年M月D日 形式に統一させる。重複の削除: 1 (金): 1 金 のような重複を整理させる。
+@router.post("/scrape")
 async def scrape_website(
     request: ScrapeRequest, 
     user: dict = Depends(require_auth)
 ):
     """
-    URLからコンテンツを取得し、PDFかどうか厳密に判定してからGeminiで解析します。
-    大学サイトなどのBot対策(403/Blocked)を回避するためのヘッダー強化版です。
+    URLからHTML/PDFを取得し、行事予定であれば整形ルールに基づいてキレイなデータにして保存します。
     """
     if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
@@ -331,64 +330,73 @@ async def scrape_website(
     logging.info(f"AI Scrapeリクエスト受信: {request.url}")
 
     try:
-        # 1. 人間のブラウザになりすましてアクセス (大学サイト対策)
+        # 1. 接続処理 (大学サイト対策ヘッダー付き)
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": "https://www.google.com/",  # Google検索から来たふりをする
+            "Referer": "https://www.google.com/",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-            "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1"
         }
 
         async with httpx.AsyncClient(verify=False, headers=headers, follow_redirects=True) as client:
             try:
                 response = await client.get(request.url, timeout=30.0)
-                response.raise_for_status() # 404や500ならここでエラー
+                response.raise_for_status()
                 content_body = response.content
             except httpx.RequestError as e:
                 logging.error(f"接続エラー: {e}")
                 raise HTTPException(status_code=400, detail=f"URLに接続できませんでした: {e}")
             except httpx.HTTPStatusError as e:
                 logging.error(f"HTTPエラー: {e.response.status_code}")
-                raise HTTPException(status_code=400, detail=f"Webサイトへのアクセスが拒否されました(Status: {e.response.status_code})")
+                raise HTTPException(status_code=400, detail=f"アクセス拒否: {e.response.status_code}")
 
-        # 2. 【最重要】中身が本当にPDFかチェックする
-        # PDFファイルは必ずバイナリの先頭が "%PDF" で始まります。
-        # 始まっていない場合、それは「アクセス拒否画面のHTML」である可能性が高いです。
-        
+        # 2. PDF/HTML判定
         is_pdf_signature = content_body.startswith(b'%PDF')
         content_type_header = response.headers.get("content-type", "").lower()
         
-        # ログに先頭50バイトを出力して確認できるようにする
-        file_head_preview = content_body[:50].decode('utf-8', errors='ignore').replace('\n', ' ')
-        logging.info(f"ダウンロードデータの先頭: {file_head_preview}")
-
-        # PDF判定ロジック
+        target_type = "HTML"
         if is_pdf_signature:
-            # マジックナンバーが合致すれば確実にPDF
             target_type = "PDF"
         elif "application/pdf" in content_type_header:
-            # ヘッダーはPDFだが中身が違う -> 破損かブロック
-            logging.error(f"ヘッダーはPDFですが、データ構造がPDFではありません。先頭データ: {file_head_preview}")
-            raise HTTPException(status_code=400, detail="PDFとしてダウンロードされましたが、ファイルが破損しているか、アクセス拒否ページの可能性があります。")
-        else:
-            # それ以外はHTMLとして扱う
-            target_type = "HTML"
+            if b'<html' in content_body[:1000].lower():
+                logging.warning("PDFヘッダーですが中身はHTMLです")
+                target_type = "HTML"
+            else:
+                target_type = "PDF"
+
+        # ---------------------------------------------------------
+        # 3. 整形ロジックを組み込んだプロンプトの作成
+        # ---------------------------------------------------------
+        # ここに先ほどのロジックを「自然言語の指示」として組み込みます
+        cleaning_instruction = """
+        【重要：出力フォーマットの指定】
+        入力データが「行事予定表」や「カレンダー」である場合は、以下のルールで整形してください。
+        
+        1. **フォーマット統一**: 各行を必ず「YYYY年M月D日(曜): イベント内容」の形式にする。
+           - 年や月がヘッダーにある場合は、それを各行の日付に適用して補完すること。
+           - 例: "2025年8月1日(金): 定期試験"
+        
+        2. **ノイズ除去**:
+           - 丸数字（①, ⑬など）はすべて削除する。
+           - 記号（< > など）は削除する。
+           - 日付の重複表記（例: "1 (金): 1 金"）は整理して1つにする。
+           - "定期試験" や "夏期休業" などの重要なキーワードは残す。
+
+        3. **対象外データ**: 
+           - 予定が入っていない空白の日や、単なる罫線データは出力しない。
+           - カレンダー以外の一般的な文章の場合は、読みやすいMarkdown形式で出力する。
+        """
 
         extracted_text = ""
-        extract_model = genai.GenerativeModel("gemini-2.5-flash")
+        # バージョン指定付きモデル名を使用
+        extract_model = genai.GenerativeModel("gemini2.5-flash")
 
-        # ---------------------------------------------------------
-        # 分岐 A: PDF処理
-        # ---------------------------------------------------------
         if target_type == "PDF":
-            logging.info(f"有効なPDFファイルを検知しました ({len(content_body)} bytes)。解析を開始します。")
-            
-            prompt = """
-            このPDFファイルの内容を読み取り、全てのテキストを抽出してください。
-            図表が含まれている場合は、その内容も言葉で説明してテキストに含めてください。
-            ヘッダーやフッター（ページ番号など）は除外してください。
+            logging.info("PDF解析モード: 整形ルール適用中...")
+            prompt = f"""
+            このPDFファイルの内容を読み取り、テキストを抽出してください。
+            {cleaning_instruction}
             """
             try:
                 ai_response = await extract_model.generate_content_async(
@@ -397,27 +405,20 @@ async def scrape_website(
                 extracted_text = ai_response.text
             except Exception as e:
                 logging.error(f"Gemini解析エラー(PDF): {e}")
-                # AI側でエラーが出た場合の詳細
-                raise HTTPException(status_code=500, detail=f"AIによるPDF解析に失敗しました。ファイルが重すぎるか、保護されています。: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"PDF解析失敗: {e}")
 
-        # ---------------------------------------------------------
-        # 分岐 B: HTML処理
-        # ---------------------------------------------------------
-        else:
-            logging.info("HTMLコンテンツとして解析します。")
-            
-            # HTMLなのに中身が空っぽ、あるいは短すぎる場合のエラーチェック
-            if len(content_body) < 100:
-                raise HTTPException(status_code=400, detail="取得したWebページの内容が短すぎます（アクセスがブロックされた可能性があります）。")
-
+        else: # HTML
+            logging.info("HTML解析モード: 整形ルール適用中...")
             soup = BeautifulSoup(response.text, 'html.parser')
             for element in soup(["script", "style", "noscript", "iframe", "svg", "header", "footer"]):
                 element.decompose()
-            
             target_html = str(soup.body) if soup.body else str(soup)
             
-            prompt = "以下のHTMLから本文テキストのみを抽出してください（メニュー等は除外）。"
-            
+            prompt = f"""
+            以下のHTMLからメインコンテンツを抽出してください。
+            メニューや広告は除外してください。
+            {cleaning_instruction}
+            """
             try:
                 ai_response = await extract_model.generate_content_async([prompt, target_html])
                 extracted_text = ai_response.text
@@ -429,11 +430,11 @@ async def scrape_website(
             raise HTTPException(status_code=400, detail="テキストを抽出できませんでした。")
 
         # ---------------------------------------------------------
-        # 以下、保存処理 (そのまま)
+        # 4. 保存処理 (.txtとして保存)
         # ---------------------------------------------------------
-        filename_from_url = request.url.split('/')[-1].split('?')[0] or "downloaded_file"#AIで抽出した後は、元がPDFであっても**「ファイル名は .txt として保存処理に回す」**ように変更
+        filename_from_url = request.url.split('/')[-1].split('?')[0] or "downloaded_file"
         
-        # 拡張子を強制的に .txt に変更する
+        # 拡張子は必ず .txt にする (中身は整形済みテキストなので)
         if filename_from_url.lower().endswith(".pdf"):
             filename_for_processor = filename_from_url[:-4] + ".txt"
         elif not filename_from_url.lower().endswith(".txt"):
@@ -441,20 +442,18 @@ async def scrape_website(
         else:
             filename_for_processor = filename_from_url
 
-        # メタデータとしてのソース名は元のままでOK（参照用）
-        source_name = f"scrape_{filename_from_url}" 
-        
-        # 保存用の内部ファイル名（衝突防止）
+        source_name = f"scrape_{filename_from_url}"
         internal_filename = f"scrape_{filename_for_processor}"
 
-        # 古いデータの削除
+        logging.info(f"保存開始: {source_name} (プレビュー: {extracted_text[:50].replace(chr(10), ' ')}...)")
+
+        # 旧データ削除
         try:
             database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
         except Exception:
             pass
 
         # チャンク化と保存
-        # point: filename引数には .txt で終わる名前を渡す！
         doc_generator = document_processor.simple_processor.process_and_chunk(
             filename=internal_filename, 
             content=extracted_text.encode('utf-8'), 
@@ -462,9 +461,9 @@ async def scrape_website(
             collection_name=request.collection_name
         )
         
+        # バッチ挿入処理
         batch_docs = []
         total_count = 0
-        
         for doc in doc_generator:
             batch_docs.append(doc)
             if len(batch_docs) >= 50:
@@ -478,16 +477,16 @@ async def scrape_website(
         return {
             "chunks": total_count, 
             "filename": filename_from_url, 
-            "message": "処理完了", 
-            "type": target_type
+            "message": "処理完了（整形済み）", 
+            "type": target_type,
+            "preview": extracted_text[:200]  # レスポンスで冒頭を確認できるようにする
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        # 想定外のクラッシュも500エラーとして詳細を返す
         logging.error(f"システムエラー: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"システム内部エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"エラーが発生しました: {str(e)}")
 
 
 @router.get("/collections/{collection_name}/documents")
