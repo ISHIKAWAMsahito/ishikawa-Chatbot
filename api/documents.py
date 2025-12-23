@@ -391,7 +391,7 @@ async def scrape_website(
 
         extracted_text = ""
         # バージョン指定付きモデル名を使用
-        extract_model = genai.GenerativeModel("gemini-3-flash")
+        extract_model = genai.GenerativeModel("gemini-2.5-flash")
 
         if target_type == "PDF":
             logging.info("PDF解析モード: 整形ルール適用中...")
