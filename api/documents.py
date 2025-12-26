@@ -251,66 +251,134 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
             raise e
 
 
-@router.post("/upload")#12/24 GeminiAPIをたたいてスクレイピングできるように改良
+# 12/26 既存の cleaning_instruction を upload でも使えるように関数の外、または共通化して定義。upload と scrape の両方で、処理開始直後に 「同じファイル名（source）のデータがあれば削除する」 処理
+COMMON_CLEANING_INSTRUCTION = """
+【整形ルール】
+1. テキストは読みやすいMarkdown形式に整形してください。
+2. もしカレンダーや行事予定表の場合は、「YYYY年M月D日(曜): 内容」の形式に統一してください。
+3. 無意味な記号や、単なる装飾（ヘッダー・フッターの繰り返しなど）は削除してください。
+"""
+
+@router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...), 
     category: str = Form("その他"), 
     embedding_model: str = Form("models/gemini-embedding-001"), 
     user: dict = Depends(require_auth)
 ):
-    """ファイルを受け取り、メモリ効率よくバッチ処理でチャンキング・ベクトル化してDBに挿入"""
+    """
+    ファイルを受け取り、Geminiで内容を整形した上で、
+    メモリ効率よくバッチ処理でチャンキング・ベクトル化してDBに挿入
+    """
     if not database.db_client or not settings.settings_manager or not document_processor.simple_processor:
         raise HTTPException(503, "システムが初期化されていません")
     
     try:
         filename = file.filename
         content = await file.read()
+        mime_type = file.content_type
         
-        logging.info(f"ファイルアップロード受信: {filename} (カテゴリ: {category}, モデル: {embedding_model})")
+        logging.info(f"ファイルアップロード受信: {filename} (MIME: {mime_type})")
 
-        # 1. 古いデータを削除
-        logging.info(f"古いチャンク (source: {filename}) を削除しています...")
+        # -------------------------------------------------------
+        # 1. 重複防止: 古いデータを完全に削除
+        # -------------------------------------------------------
+        # ファイル名をユニークIDとして扱い、同名ファイルがあれば削除してから登録します
+        logging.info(f"重複チェック: 古いデータ (source: {filename}) を削除中...")
         try:
             database.db_client.client.table("documents").delete().eq("metadata->>source", filename).execute()
         except Exception as e:
-            logging.warning(f"古いチャンク削除時の軽微なエラー (無視可): {e}")
+            logging.warning(f"削除時の軽微なエラー (初回登録時は無視可): {e}")
 
-        # 2. ジェネレータを取得 (ここではまだチャンク生成は始まらない)
+        # -------------------------------------------------------
+        # 2. Geminiによる読み取り & 整形 (ここが追加・変更点)
+        # -------------------------------------------------------
+        logging.info("Geminiによるファイル解析と整形を開始します...")
+        
+        # 解析用モデル (高速なFlashモデル推奨)
+        extract_model = genai.GenerativeModel("gemini-2.5-flash")
+        
+        # ファイルタイプに応じたプロンプト構成
+        prompt = f"""
+        以下のファイルのテキストを読み取り、整形して出力してください。
+        
+        {COMMON_CLEANING_INSTRUCTION}
+        """
+
+        cleaned_text = ""
+        
+        try:
+            # PDF または テキスト/CSV などをGeminiに渡す
+            if "pdf" in mime_type or "text" in mime_type or "csv" in mime_type:
+                ai_response = await extract_model.generate_content_async(
+                    [prompt, {"mime_type": mime_type, "data": content}]
+                )
+                cleaned_text = ai_response.text
+            else:
+                # 画像などその他の場合もトライ、あるいはエラーハンドリング
+                ai_response = await extract_model.generate_content_async(
+                    [prompt, {"mime_type": mime_type, "data": content}]
+                )
+                cleaned_text = ai_response.text
+                
+        except Exception as e:
+            logging.error(f"Gemini解析エラー: {e}")
+            # エラー時はフェイルセーフとして、生のテキスト抽出を試みるかエラーを返す
+            # ここでは簡易的に生データをutf-8デコードして使う例（PDFだと文字化けするので注意）
+            if "text" in mime_type:
+                cleaned_text = content.decode("utf-8", errors="ignore")
+            else:
+                raise HTTPException(status_code=500, detail="AIによるファイル読み取りに失敗しました。")
+
+        logging.info(f"AI整形完了: {len(cleaned_text)} 文字")
+
+        # -------------------------------------------------------
+        # 3. チャンク化 & 保存 (整形済みテキストを使用)
+        # -------------------------------------------------------
+        # ここで、ファイルの中身そのものではなく、AIが作った cleaned_text を渡すのがポイント
         collection_name = settings.settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
-        doc_generator = document_processor.simple_processor.process_and_chunk(filename, content, category, collection_name)
+        
+        # 拡張子を .txt に変更して保存（中身はマークダウンテキストになっているため）
+        processed_filename = filename
+        if not processed_filename.endswith(".txt"):
+            processed_filename += ".txt"
+
+        doc_generator = document_processor.simple_processor.process_and_chunk(
+            filename=processed_filename, # 内部的にはtxtとして扱う
+            content=cleaned_text.encode('utf-8'), # AIのテキストをエンコードして渡す
+            category=category, 
+            collection_name=collection_name
+        )
         
         if doc_generator is None:
              raise HTTPException(status_code=400, detail="ファイル処理の初期化に失敗しました")
 
-        # 3. ストリーミング・バッチ処理
-        #    リストに全データを溜め込まず、少しずつ処理してメモリを解放する
+        # 以下、バッチ処理は既存コードと同じ
         batch_docs = []
-        batch_size = 50 # Render (512MB) 環境では 50程度が安全
+        batch_size = 50
         total_count = 0
         
-        # ジェネレータから1つずつ取り出す
         for doc in doc_generator:
-            batch_docs.append(doc)
+            # 元のファイル名情報をメタデータに残したい場合はここで上書き
+            doc.metadata["source"] = filename 
             
-            # バッチサイズに達したら処理実行
+            batch_docs.append(doc)
             if len(batch_docs) >= batch_size:
                 inserted = await process_batch_insert(batch_docs, embedding_model, collection_name)
                 total_count += inserted
-                batch_docs = [] # メモリ解放！
-                await asyncio.sleep(0.5) # APIレート制限対策
+                batch_docs = []
+                await asyncio.sleep(0.5)
 
-        # 端数（ループ終了後に残っている分）を処理
         if batch_docs:
             inserted = await process_batch_insert(batch_docs, embedding_model, collection_name)
             total_count += inserted
 
-        logging.info(f"ファイル処理完了: {filename} (合計 {total_count} 件のチャンクをDBに挿入)")
-        return {"chunks": total_count, "filename": filename, "message": "処理完了"}
+        return {"chunks": total_count, "filename": filename, "message": "AI整形・保存完了"}
 
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"ファイルアップロード処理エラー: {e}\n{traceback.format_exc()}")
+        logging.error(f"アップロード処理エラー: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
