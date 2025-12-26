@@ -74,8 +74,8 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
     # 1. AIに渡すためのリストテキストを作成
     candidates_text = ""
     for i, doc in enumerate(documents):
-        # 300文字ではなく、1000文字～全文渡して判断させる
-        content_snippet = doc.get('content', '')[:300].replace('\n', ' ') #12/19 300文字で特徴をつかむのに十分そうなので検証
+        # コンテキスト拡張に伴い、判断材料も少し多めに渡す
+        content_snippet = doc.get('content', '')[:1000].replace('\n', ' ')
         source = doc.get('metadata', {}).get('source', 'unknown')
         candidates_text += f"ID:{i} Source:{source} Content:{content_snippet}\n\n"
 
@@ -110,8 +110,13 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
             generation_config={"response_mime_type": "application/json"}
         )
         
+        # --- 修正: マークダウン記法の除去（JSONパースエラー対策） ---
+        raw_text = response.text
+        # ```json や ``` を削除して純粋なJSON文字列にする
+        cleaned_text = re.sub(r"```json|```", "", raw_text).strip()
+        
         # JSONをパース
-        ranked_results = json.loads(response.text)
+        ranked_results = json.loads(cleaned_text)
         
         # 4. 結果に基づいてドキュメントを並べ替え
         reranked_docs = []
@@ -143,13 +148,16 @@ QA_SIMILARITY_THRESHOLD = 0.90
 QA_RERANK_SCORE_THRESHOLD = 8 # リランクスコア(10点満点)の閾値。FAQは厳密一致のみ採用したい。
 
 # RAGコンテキストの最大文字数 (トークン制限超過を避けるための簡易的な制限)
-MAX_CONTEXT_CHAR_LENGTH = 5000 #12/19 AIに渡すテキスト数を減らすために5000文字に削減
+# 修正: Gemini 1.5/2.5 Flashのロングコンテキストを活かすため拡張
+MAX_CONTEXT_CHAR_LENGTH = 30000 
 
 # 履歴の最大保持数 (永続化の際に利用)
 MAX_HISTORY_LENGTH = 20
 
 # AIが「見つからない」と判断したときのマジックストリング
-AI_NOT_FOUND_MESSAGE = "ご質問いただいた内容については、関連する情報が見つかりませんでした。お手数ですが、大学の公式サイトをご確認いただくか、窓口までお問い合わせください。"
+# 修正: AI判定用の内部トークンと、ユーザー表示用メッセージを分離
+AI_NOT_FOUND_TOKEN = "[[NO_RELEVANT_INFO_FOUND]]"
+AI_NOT_FOUND_MESSAGE_USER = "ご質問いただいた内容については、関連する情報が見つかりませんでした。お手数ですが、大学の公式サイトをご確認いただくか、窓口までお問い合わせください。"
 
 # -----------------------------------------------
 # チャット履歴管理
@@ -170,11 +178,11 @@ class ChatHistoryManager:
         # 試作品段階のため、履歴保存を一時的に停止（必要に応じてコメントアウトを外してください）
         return
         
-        history = self._histories.get(session_id, [])
-        history.append({"role": role, "content": content})
-        if len(history) > MAX_HISTORY_LENGTH:
-            history = history[-MAX_HISTORY_LENGTH:]
-        self._histories[session_id] = history
+        # history = self._histories.get(session_id, [])
+        # history.append({"role": role, "content": content})
+        # if len(history) > MAX_HISTORY_LENGTH:
+        #     history = history[-MAX_HISTORY_LENGTH:]
+        # self._histories[session_id] = history
 
     def clear_history(self, session_id: str):
         """指定されたセッションIDの履歴を削除"""
@@ -231,7 +239,7 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
                 except Exception:
                     pass 
                 if wait_time == 0:
-                    wait_time = (1.5 ** attempt) * 1.5 + random.uniform(0, 1)#合計待ち時間: 約14〜20秒にするため
+                    wait_time = (1.5 ** attempt) * 1.5 + random.uniform(0, 1)
                 logging.warning(f"API制限により {wait_time:.1f} 秒待機中... (試行 {attempt + 1}/{max_retries})")
                 await asyncio.sleep(wait_time)
                 continue
@@ -244,9 +252,6 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
 
 # -----------------------------------------------
 # メインのチャットロジック
-# -----------------------------------------------
-# -----------------------------------------------
-#  [追加] 質問の曖昧性判定・絞り込み関数
 # -----------------------------------------------
 # -----------------------------------------------
 #  [修正] 質問の曖昧性判定・絞り込み関数
@@ -298,6 +303,7 @@ async def check_ambiguity_and_suggest_options(query: str) -> Dict[str, Any]:
     except Exception as e:
         logging.error(f"曖昧性判定でエラー: {e}")
         return {"is_ambiguous": False}
+
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     """
     Stage 1: Q&A (FAQ) 検索
@@ -319,41 +325,42 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             return
     
         # =========================================================
-        # [追加] ステップ0: 質問の絞り込み（曖昧性チェック）
+        # [修正] ステップ0: 質問の絞り込み（曖昧性チェックの最適化）
         # =========================================================
-        # 質問が曖昧（単語のみ等）な場合、ここで選択肢を提示して処理を終了します
-        ambiguity_result = await check_ambiguity_and_suggest_options(user_input)
+        # ルールベースによる事前チェックで、不要なAPI呼び出しを削減
+        is_likely_specific = len(user_input) > 15 and any(k in user_input for k in ["?", "？", "とは", "教えて", "方法", "場所"])
         
-        if ambiguity_result.get("is_ambiguous"):
-            # 曖昧判定時の処理
-            suggestion_text = ambiguity_result.get("response_text", "もう少し具体的に教えていただけますか？")
-            candidates = ambiguity_result.get("candidates", [])
+        if not is_likely_specific:
+            # 短い、またはキーワードだけの入力の場合のみAI判定にかける
+            ambiguity_result = await check_ambiguity_and_suggest_options(user_input)
+            
+            if ambiguity_result.get("is_ambiguous"):
+                # 曖昧判定時の処理
+                suggestion_text = ambiguity_result.get("response_text", "もう少し具体的に教えていただけますか？")
+                candidates = ambiguity_result.get("candidates", [])
 
-            # ★ここが重要: 候補リスト(candidates)がある場合、テキスト末尾に箇条書きで追加する
-            if candidates:
-                suggestion_text += "\n\n"  # 改行を入れる
-                for item in candidates:
-                    suggestion_text += f"・{item}\n"
+                if candidates:
+                    suggestion_text += "\n\n"
+                    for item in candidates:
+                        suggestion_text += f"・{item}\n"
 
-            yield f"data: {json.dumps({'content': suggestion_text})}\n\n"
-            yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
-            return
-        try:#ユーザーの質問文をAIが理解できる数値（ベクトル）に変換する処理
+                yield f"data: {json.dumps({'content': suggestion_text})}\n\n"
+                yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+                return
+
+        # ベクトル化処理
+        try:
             query_embedding_response = genai.embed_content(
-    model=chat_req.embedding_model,  # これで自動的に設定ファイルから読み込まれる
-    content=user_input,
-    task_type="retrieval_query"
-    # output_dimensionality は指定しない（モデルのデフォルト次元を使用）
-)
+                model=chat_req.embedding_model,
+                content=user_input,
+                task_type="retrieval_query"
+            )
             query_embedding = query_embedding_response["embedding"]
         except Exception as e:
             logging.error(f"ベクトル化エラー: {e}")
             yield f"data: {json.dumps({'content': '入力の処理中にエラーが発生しました。'})}\n\n"
             return
         
-            
-
-
         # =========================================================
         # Stage 1: Q&A (FAQ) データベース検索
         # =========================================================
@@ -367,25 +374,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             )
 
             if qa_results:
+                # [修正] 変数の初期化位置を整理し、重複コードを排除
                 top_qa = qa_results[0]
                 top_sim = top_qa.get('similarity', 0)
                 is_qa_accepted = False
                 best_qa = None
-
-                # --- 【高速化ロジック】圧倒的に似ている場合はAIリランクをスキップ ---
-               # --- 【修正版】Stage 1 採用ロジックの統合 ---
-                top_sim = qa_results[0].get('similarity', 0)
-                is_qa_accepted = False
-                best_qa = None
-                qa_score = 0  # NameError防止のための初期化
+                qa_score = 0 
 
                 # 1. 閾値 0.98 以上なら即採用（AIを呼ばず高速化）
                 if top_sim >= 0.98: 
                     logging.info(f"  -> [Stage 1 超高類似度] 即採用します。({top_sim:.4f})")
-                    best_qa = qa_results[0]
+                    best_qa = top_qa
                     is_qa_accepted = True
                 else:
-                    # 2. 0.98未満は必ず Gemini 2.5 Flash で精査
+                    # 2. 0.98未満は必ず Gemini で精査
                     logging.info(f"  -> [Stage 1 慎重精査] 類似度 {top_sim:.4f}。意図を確認します。")
                     reranked_qa = await rerank_documents_with_gemini(
                         query=user_input,
@@ -428,9 +430,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             logging.error(f"Stage 1 (Q&A検索) でエラーが発生: {e_qa}", exc_info=True)
             # エラーならStage 2へ進む
         
-        if not qa_hit_found:
-            logging.info("Stage 1 で有効な回答が見つかりませんでした。Stage 2 (Document RAG) に移行します。")
-
+        logging.info("Stage 1 で有効な回答が見つかりませんでした。Stage 2 (Document RAG) に移行します。")
 
         # =========================================================
         # Stage 2: Document RAG (ドキュメント検索 + 生成)
@@ -445,41 +445,30 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 initial_fetch_count = 30
                 
                 # 1. 広めに検索
-                raw_search_results = core_database.db_client.search_documents_by_vector(#FAQで見つからなかった場合、大量のドキュメントからベクトル検索を行う処理
+                raw_search_results = core_database.db_client.search_documents_by_vector(
                     collection_name=chat_req.collection,
                     embedding=query_embedding,
                     match_count=initial_fetch_count
                 )
-                for doc in raw_search_results:
-                    # flush=Trueをつけることで、バッファされずに即座にターミナルに出ます
-                    # print(f"★デバッグ★ ID:{doc.get('id')} Sim:{doc.get('similarity'):.4f} Content:{doc.get('content')[:20]}...", flush=True)
+                
                 # 2. 多様性フィルタ（内容が被っているものを間引く）
-                    unique_results = filter_results_by_diversity(raw_search_results, threshold=0.7)
+                unique_results = filter_results_by_diversity(raw_search_results, threshold=0.7)
                 
                 # 3. Geminiリランク（精度の高い順位付け）
-                #    上位5件だけをリランクにかけて、AIに「どれが質問に一番近いか」判断させる
+                # 修正: エラー回避のため上位3件程度に絞る
                 search_results = await rerank_documents_with_gemini(
                     query=user_input,
-                    documents=unique_results[:3], # 12/19動作が安定するか確認。上位3件をリランクにかける 強制クラッシュメモリ不足を防ぐため
+                    documents=unique_results[:3], 
                     top_k=chat_req.top_k
                 )
-                
             
             # -------------------------------------------------------
-            # 【修正版】 閾値判定ロジック (Gemini救済措置つき)
+            # 閾値判定ロジック
             # -------------------------------------------------------
-            
-            relevant_docs = []
-            
-            # 採用基準の確認ループ
             for d in search_results:
                 sim = d.get('similarity', 0)
                 score = d.get('rerank_score', 0) # Geminiがつけた点数 (0-10)
                 
-                # 合格基準:
-                # 1. 類似度が厳格閾値(STRICT)を超えている
-                # 2. または、類似度が関連閾値(RELATED)を超えている
-                # 3. ★重要★ Geminiのリランクスコアが「7点以上」なら、類似度が低くても強制採用！
                 if sim >= STRICT_THRESHOLD:
                     relevant_docs.append(d)
                 elif sim >= RELATED_THRESHOLD:
@@ -488,7 +477,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     logging.info(f"★Gemini救済採用: {d.get('content')[:20]}... (Score: {score}, Sim: {sim})")
                     relevant_docs.append(d)
 
-            # 重複を除去 (ロジック上発生しにくいが念のため)
+            # 重複を除去
             relevant_docs = list({v['id']: v for v in relevant_docs}.values())
 
             if relevant_docs:
@@ -511,13 +500,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 display_source = '履修要項2024' if source_name == 'output_gakubu.txt' else source_name
                 parent_text = d.get('metadata', {}).get('parent_content', d.get('content', ''))
 
+                # [修正] 拡張したMAX_CONTEXT_CHAR_LENGTHを使用
                 if current_char_length + len(parent_text) > MAX_CONTEXT_CHAR_LENGTH and context_parts:
                     break
                 
                 context_parts.append(f"<document source='{display_source}'>{parent_text}</document>")
                 current_char_length += len(parent_text)
             
-            context = "\n\n".join(context_parts)#検索して集めた情報（relevant_docs）をプロンプトに埋め込み、Geminiに回答を生成させる処理
+            context = "\n\n".join(context_parts)
 
             # --- プロンプト構築 ---
             prompt = f"""あなたは札幌学院大学の学生サポートAIです。  
@@ -535,8 +525,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
    「※これは関連情報であり、ご質問の意図と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
 4. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
 5. **大学固有の事実（学費、特定のゼミ、手続き、校舎の場所など）を推測して答えてはいけません。**
-6. <context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、以下の定型文のみを回答してください。
-   「{AI_NOT_FOUND_MESSAGE}」
+6. <context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、以下の内部トークンのみを出力してください。
+   {AI_NOT_FOUND_TOKEN}
 
 # 出力形式
 - 学生に分かりやすい「です・ます調」で回答すること。
@@ -575,36 +565,31 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     try:
                         if chunk.text:
                             response_text += chunk.text
-                            # バッファリング処理（フロントエンドが対応していればここでyield可能）
-                            # yield f"data: {json.dumps({'content': chunk.text})}\n\n" 
                     except ValueError:
                         pass
                 
-                full_response = format_urls_as_links(response_text.strip() or "回答を生成できませんでした。")
+                # [修正] 回答不能トークンの判定ロジック
+                if AI_NOT_FOUND_TOKEN in response_text:
+                    logging.info("Stage 2 AIも回答不能と判断しました。")
+                    yield f"data: {json.dumps({'content': AI_NOT_FOUND_MESSAGE_USER})}\n\n"
+                else:
+                    full_response = format_urls_as_links(response_text.strip() or "回答を生成できませんでした。")
+                    yield f"data: {json.dumps({'content': full_response})}\n\n"
+                    history_manager.add_to_history(session_id, "user", user_input)
+                    history_manager.add_to_history(session_id, "assistant", full_response)
 
-            except Exception as e:#12/18 サーバーが混んでいるから後で送ってね伝わるように追加
+            except Exception as e:
                 logging.error(f"Stage 2 回答生成エラー: {e}", exc_info=True)
-                # エラーの種類に応じてメッセージを分ける
                 if "503" in str(e) or "overloaded" in str(e).lower():
                     full_response = "現在、AIの回答生成機能が非常に混み合っています。少し時間を置いてから再度お試しください。"
                 else:
                     full_response = "申し訳ありません。回答の生成中に一時的な問題が発生しました。"
-
-            # 最終的な回答送信
-            if AI_NOT_FOUND_MESSAGE in full_response:
-                # 生成AIも「わからない」と言った場合
-                logging.info("Stage 2 AIも回答不能と判断しました。")
-                yield f"data: {json.dumps({'content': AI_NOT_FOUND_MESSAGE})}\n\n"
-            else:
-                # 回答が見つかった場合
                 yield f"data: {json.dumps({'content': full_response})}\n\n"
-                history_manager.add_to_history(session_id, "user", user_input)
-                history_manager.add_to_history(session_id, "assistant", full_response)
 
         else:
             # Stage 2 でもドキュメントがヒットしなかった場合
             logging.info("Stage 2 でも関連文書が見つかりませんでした。")
-            yield f"data: {json.dumps({'content': AI_NOT_FOUND_MESSAGE})}\n\n"
+            yield f"data: {json.dumps({'content': AI_NOT_FOUND_MESSAGE_USER})}\n\n"
 
     except Exception as e:
         err_msg = f"エラーが発生しました: {e}"
@@ -620,23 +605,17 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
     """
     管理者画面の「分析を実行」ボタンから呼ばれる関数。
-    SupabaseのログデータをGeminiに渡し、傾向分析レポートをストリーミング生成する。
-    
-    Args:
-        logs: Supabaseから取得した 'anonymous_comments' テーブルのデータリスト
     """
     if not logs:
         yield f"data: {json.dumps({'content': '分析対象のデータがありません。'})}\n\n"
         return
 
     # 1. AIに読ませるためのテキストデータを構築
-    # date, rating, comment (中身は会話ログ) を列挙する
     formatted_logs = ""
     for log in logs:
         date = log.get('created_at', '不明な日時')
         rating = log.get('rating', 'なし')
-        # commentカラムに「質問と回答」が入っている前提
-        content = log.get('comment', '').replace('\n', ' ')[:500] # 長すぎるとトークン溢れるのでカット
+        content = log.get('comment', '').replace('\n', ' ')[:500] 
         
         formatted_logs += f"- 日時: {date} | 評価: {rating} | 内容: {content}\n"
 
@@ -669,13 +648,10 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
     # 3. Geminiに分析させる
     try:
         model = genai.GenerativeModel("gemini-2.5-flash") 
-        
-        # ストリーミングで回答生成
         stream = await safe_generate_content(model, prompt, stream=True)
         
         async for chunk in stream:
             if chunk.text:
-                # フロントエンド(stats.html)は data: {"content": ...} を待っている
                 yield f"data: {json.dumps({'content': chunk.text})}\n\n"
 
     except Exception as e:
