@@ -540,7 +540,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
 # 出力形式
 - 学生に分かりやすい「です・ます調」で回答すること。
-- <context> 内にURLがあれば「参考URL:」として末尾にまとめること。その際、必ず **Markdown 形式（例: `[リンクテキスト](URL)`）** を使用すること。
+- **出典や参考URLを記載する際は、同じものが複数回表示されないように重複を排除して1つにまとめること。**
+- <context> 内にURLがあれば「参考URL:」として末尾にまとめること。その際、必ず Markdown 形式（例: `[リンクテキスト](URL)`） を使用すること。
 
 <context>
 {context}
