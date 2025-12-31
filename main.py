@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_fastapi_instrumentation import Instrumentator
 
 # Core & Config
 from core.config import APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY, SUPABASE_ANON_KEY
@@ -32,17 +32,15 @@ logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(
 async def lifespan(app: FastAPI):
     """アプリケーションのライフサイクル管理"""
     logging.info("--- アプリケーション起動 ---")
-    
     # 1. 設定マネージャー初期化（高速）
     from core import settings as settings_module
     settings_module.settings_manager = SettingsManager()
     logging.info("✅ 設定マネージャー初期化完了")
-    
     # 2. ドキュメントプロセッサ初期化（高速）
     # ★修正: 親子チャンキング用に引数を変更
     from services import document_processor
     document_processor.simple_processor = SimpleDocumentProcessor(
-        parent_chunk_size=1500, 
+        parent_chunk_size=1500,
         child_chunk_size=400
     )
     logging.info("✅ ドキュメントプロセッサ初期化完了 (Parent-Child Chunking)")
@@ -54,7 +52,6 @@ async def lifespan(app: FastAPI):
             # ★修正: タイムアウト時間を10秒に設定
             def init_supabase():
                 return SupabaseClientManager(url=SUPABASE_URL, key=SUPABASE_KEY)
-            
             try:
                 database.db_client = await asyncio.wait_for(
                     asyncio.to_thread(init_supabase),
@@ -86,7 +83,7 @@ app.add_middleware(
 
 # セッション設定 (Brave対策: same_site='lax'に変更)
 app.add_middleware(
-    SessionMiddleware, 
+    SessionMiddleware,
     secret_key=APP_SECRET_KEY,
     https_only=True,
     same_site='lax'
@@ -138,15 +135,12 @@ async def get_admin_stats_data():
     if not database.db_client:
         logging.error("❌ Database client is not initialized")
         raise HTTPException(status_code=503, detail="Database not initialized")
-    
     try:
         # 2. 【ここが修正点】ラッパークラスから本物のクライアントを取り出す
         client = database.db_client
-        
         # もし client属性の中に本体が入っているなら、それを取り出す
-        if hasattr(client, "client"): 
+        if hasattr(client, "client"):
             client = client.client
-            
         logging.info("⏳ Admin Stats: Fetching data from Supabase...")
 
         # 3. データ取得実行
@@ -155,7 +149,6 @@ async def get_admin_stats_data():
             .order("created_at", desc=True)\
             .limit(100)\
             .execute()
-            
         logging.info(f"✅ Data fetched successfully: {len(response.data)} items")
         return response.data
 
@@ -176,9 +169,7 @@ async def websocket_endpoint(websocket: WebSocket):
     if not core_settings.settings_manager:
         await websocket.close(code=1011, reason="Settings manager not initialized")
         return
-    
     await core_settings.settings_manager.add_websocket(websocket)
-    
     try:
         current_settings = core_settings.settings_manager.settings
         await websocket.send_json({
