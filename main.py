@@ -10,8 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_fastapi_instrumentation import Instrumentator
-
+import Instrumentator
+#1/1prometheus-fastapi-instrumentationを削除
 # Core & Config
 from core.config import APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY, SUPABASE_ANON_KEY
 from core.database import SupabaseClientManager
