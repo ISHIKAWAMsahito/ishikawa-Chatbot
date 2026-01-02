@@ -1,4 +1,4 @@
-from difflib import SequenceMatcher 
+from difflib import SequenceMatcher
 import logging
 import uuid
 import json
@@ -10,8 +10,8 @@ from typing import List, Dict, Any, AsyncGenerator
 from fastapi import Request, HTTPException
 import google.generativeai as genai
 from google.generativeai.types import (
-    GenerationConfig, 
-    HarmCategory, 
+    GenerationConfig,
+    HarmCategory,
     HarmBlockThreshold
 )
 # -----------------------------------------------
@@ -32,27 +32,21 @@ def filter_results_by_diversity(results: List[Dict[str, Any]], threshold: float 
     内容が酷似しているドキュメントを間引き、情報のバリエーションを確保する。
     """
     unique_results = []
-    
     for doc in results:
         content = doc.get('content', '')
         is_duplicate = False
-        
         # すでに選ばれたリスト(unique_results)の中身と比較
         for selected_doc in unique_results:
             selected_content = selected_doc.get('content', '')
-            
             # 文章の類似度を計算 (0.0〜1.0)
             similarity = SequenceMatcher(None, content, selected_content).ratio()
-            
             # 閾値を超えたら重複とみなす
             if similarity > threshold:
                 is_duplicate = True
-                break 
-        
+                break
         # 重複じゃなければ採用リストに入れる
         if not is_duplicate:
             unique_results.append(doc)
-            
     return unique_results
 
 # -----------------------------------------------
@@ -97,8 +91,8 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
 
 # 出力フォーマット (JSONのみ)
 [
-  {{"id": ドキュメントID(数字), "score": 関連度(0-10)}},
-  ...
+{{"id": ドキュメントID(数字), "score": 関連度(0-10)}},
+...
 ]
 """
 
@@ -106,18 +100,15 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
     try:
         model = genai.GenerativeModel("gemini-2.5-flash") # 高速なモデル推奨
         response = await model.generate_content_async(
-            prompt, 
+            prompt,
             generation_config={"response_mime_type": "application/json"}
         )
-        
         # --- 修正: マークダウン記法の除去（JSONパースエラー対策） ---
         raw_text = response.text
         # ```json や ``` を削除して純粋なJSON文字列にする
         cleaned_text = re.sub(r"```json|```", "", raw_text).strip()
-        
         # JSONをパース
         ranked_results = json.loads(cleaned_text)
-        
         # 4. 結果に基づいてドキュメントを並べ替え
         reranked_docs = []
         for result in ranked_results:
@@ -127,7 +118,6 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
                 # スコアをログに出して確認できるようにする
                 doc['rerank_score'] = result.get("score")
                 reranked_docs.append(doc)
-        
         # 指定数だけ返す
         return reranked_docs[:top_k]
 
@@ -149,7 +139,7 @@ QA_RERANK_SCORE_THRESHOLD = 8 # リランクスコア(10点満点)の閾値。FA
 
 # RAGコンテキストの最大文字数 (トークン制限超過を避けるための簡易的な制限)
 # 修正: Gemini 1.5/2.5 Flashのロングコンテキストを活かすため拡張
-MAX_CONTEXT_CHAR_LENGTH = 30000 
+MAX_CONTEXT_CHAR_LENGTH = 30000
 
 # 履歴の最大保持数 (永続化の際に利用)
 MAX_HISTORY_LENGTH = 20
@@ -177,7 +167,6 @@ class ChatHistoryManager:
         """履歴に新しいメッセージを追加"""
         # 試作品段階のため、履歴保存を一時的に停止（必要に応じてコメントアウトを外してください）
         return
-        
         # history = self._histories.get(session_id, [])
         # history.append({"role": role, "content": content})
         # if len(history) > MAX_HISTORY_LENGTH:
@@ -228,16 +217,16 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
         except Exception as e:
             error_str = str(e)
             if (
-                ("429" in error_str or "quota" in error_str.lower()) or 
+                ("429" in error_str or "quota" in error_str.lower()) or
                 ("503" in error_str or "overloaded" in error_str.lower())
             ) and attempt < max_retries - 1:
                 wait_time = 0
                 try:
                     match = re.search(r'retry in (\d+(?:\.\d+)?)s', error_str)
                     if match:
-                        wait_time = float(match.group(1)) + random.uniform(1, 3) 
+                        wait_time = float(match.group(1)) + random.uniform(1, 3)
                 except Exception:
-                    pass 
+                    pass
                 if wait_time == 0:
                     wait_time = (1.5 ** attempt) * 1.5 + random.uniform(0, 1)
                 logging.warning(f"API制限により {wait_time:.1f} 秒待機中... (試行 {attempt + 1}/{max_retries})")
@@ -246,22 +235,22 @@ async def safe_generate_content(model, prompt, stream=False, max_retries=3):
             else:
                 logging.error(f"API生成エラー (リトライ {attempt}): {e}", exc_info=True)
                 raise e
-                
     raise HTTPException(status_code=500, detail="APIの呼び出しに失敗しました（最大リトライ回数超過）。")
 
 
 # -----------------------------------------------
 # メインのチャットロジック
 # -----------------------------------------------
+
 # -----------------------------------------------
-#  [修正] 質問の曖昧性判定・絞り込み関数
+#  質問の曖昧性判定・絞り込み関数
 # -----------------------------------------------
 async def check_ambiguity_and_suggest_options(query: str) -> Dict[str, Any]:
     """
     ユーザーの質問が曖昧（単語のみなど）な場合、
     具体的な選択肢を提示するための情報を生成する。
     """
-    # 20文字以上なら具体的とみなす（変更なし）
+    # 20文字以上なら具体的とみなす
     if len(query) > 20:
         return {"is_ambiguous": False}
 
@@ -273,12 +262,12 @@ async def check_ambiguity_and_suggest_options(query: str) -> Dict[str, Any]:
 
 # 判定基準
 1. **聞き返す（Ambiguous = true）**:
-   - ユーザー入力が「証明書」「パスワード」「Wi-Fi」「履修」のような**広範な単語単体**のみの場合。
-   - 「大学について」のような漠然としすぎている場合。
+- ユーザー入力が「証明書」「パスワード」「Wi-Fi」「履修」のような**広範な単語単体**のみの場合。
+- 「大学について」のような漠然としすぎている場合。
 
 2. **検索する（Ambiguous = false）**:
    - **「在学証明書」「学内Wi-Fi」「履修登録」のような「具体的な複合語」の場合は、単語のみでも「検索する」と判定してください。**
-   - 「～の接続方法」「～について」などの文脈がある場合。
+- 「～の接続方法」「～について」などの文脈がある場合。
 
 # 候補リスト生成のルール（重要）
 - 曖昧と判定した場合、ユーザーが意図していそうな候補を3つ挙げてください。
@@ -286,9 +275,9 @@ async def check_ambiguity_and_suggest_options(query: str) -> Dict[str, Any]:
 
 # 出力フォーマット (JSON)
 {{
-  "is_ambiguous": true/false,
-  "response_text": "曖昧なときのみ、ユーザーに返す誘導メッセージ（例: 〇〇についてですね。具体的には...）",
-  "candidates": ["選択肢1", "選択肢2", "選択肢3", "上記以外（その他）"]
+"is_ambiguous": true/false,
+"response_text": "曖昧なときのみ、ユーザーに返す誘導メッセージ（例: 〇〇についてですね。具体的には...）",
+"candidates": ["選択肢1", "選択肢2", "選択肢3", "上記以外（その他）"]
 }}
 """
 
@@ -304,6 +293,44 @@ async def check_ambiguity_and_suggest_options(query: str) -> Dict[str, Any]:
         logging.error(f"曖昧性判定でエラー: {e}")
         return {"is_ambiguous": False}
 
+# -----------------------------------------------
+#  [追加] クエリ変換 (Query Transformation / HyDE)
+# -----------------------------------------------
+async def generate_search_optimized_query(user_query: str) -> str:
+    """
+    ユーザーの質問を、ベクトル検索でヒットしやすい「仮想的な回答」や「詳細なクエリ」に変換する。
+    例: "奨学金" -> "奨学金の申請手続き、給付型と貸与型の違い、募集要項について"
+    """
+    # 入力が極端に短い場合はそのまま返す（変換コスト削減）
+    if len(user_query) < 5:
+        return user_query
+
+    prompt = f"""
+あなたは検索エンジンの最適化AIです。
+以下のユーザーの質問に対して、データベース検索で最も適切なドキュメントがヒットするように、
+検索用クエリを「拡張・具体化」してください。
+
+# ユーザーの質問
+"{user_query}"
+
+# 指示
+この質問に対する「理想的な回答に含まれるであろうキーワード」や「想定される文章」を生成してください。
+質問そのものを繰り返す必要はありません。
+
+# 出力 (テキストのみ)
+"""
+    try:
+        # 高速なFlashモデルを使用
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = await model.generate_content_async(prompt)
+        optimized_query = response.text.strip()
+        logging.info(f"クエリ変換実行: '{user_query}' -> '{optimized_query}'")
+        return optimized_query
+    except Exception as e:
+        logging.error(f"クエリ変換エラー: {e}")
+        return user_query # エラー時は元のクエリを使用
+
+
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     """
     Stage 1: Q&A (FAQ) 検索
@@ -313,7 +340,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     user_input = chat_req.query.strip()
     feedback_id = str(uuid.uuid4())
     session_id = get_or_create_session_id(request)
-    query_embedding = [] 
+    query_embedding = []
 
     # 1. フィードバックIDをクライアントに即時送信
     yield f"data: {json.dumps({'feedback_id': feedback_id})}\n\n"
@@ -323,17 +350,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             logging.error("DBクライアントまたはAPIキーが設定されていません。")
             yield f"data: {json.dumps({'content': 'システムが利用できません。管理者にお問い合わせください。'})}\n\n"
             return
-    
         # =========================================================
-        # [修正] ステップ0: 質問の絞り込み（曖昧性チェックの最適化）
+        # ステップ0: 質問の絞り込み（曖昧性チェック）
         # =========================================================
         # ルールベースによる事前チェックで、不要なAPI呼び出しを削減
         is_likely_specific = len(user_input) > 15 and any(k in user_input for k in ["?", "？", "とは", "教えて", "方法", "場所"])
-        
         if not is_likely_specific:
             # 短い、またはキーワードだけの入力の場合のみAI判定にかける
             ambiguity_result = await check_ambiguity_and_suggest_options(user_input)
-            
             if ambiguity_result.get("is_ambiguous"):
                 # 曖昧判定時の処理
                 suggestion_text = ambiguity_result.get("response_text", "もう少し具体的に教えていただけますか？")
@@ -348,11 +372,17 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
                 return
 
-        # ベクトル化処理
+        # =========================================================
+        # [追加] クエリ変換 (Query Transformation)
+        # =========================================================
+        # ユーザーの入力をそのまま使うのではなく、検索用に拡張する
+        search_query_text = await generate_search_optimized_query(user_input)
+
+        # ベクトル化処理 (拡張されたクエリを使用)
         try:
             query_embedding_response = genai.embed_content(
                 model=chat_req.embedding_model,
-                content=user_input,
+                content=search_query_text, # ← user_input から変更(意味検索の精度向上)
                 task_type="retrieval_query"
             )
             query_embedding = query_embedding_response["embedding"]
@@ -360,29 +390,27 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             logging.error(f"ベクトル化エラー: {e}")
             yield f"data: {json.dumps({'content': '入力の処理中にエラーが発生しました。'})}\n\n"
             return
-        
         # =========================================================
         # Stage 1: Q&A (FAQ) データベース検索
         # =========================================================
         logging.info("--- Stage 1: Q&A(FAQ)検索を開始します ---")
         qa_hit_found = False
         try:
-            # 1. FAQ候補を取得
+            # 1. FAQ候補を取得 (拡張クエリのベクトルを使用)
             qa_results = core_database.db_client.search_fallback_qa(
                 embedding=query_embedding,
                 match_count=5
             )
 
             if qa_results:
-                # [修正] 変数の初期化位置を整理し、重複コードを排除
                 top_qa = qa_results[0]
                 top_sim = top_qa.get('similarity', 0)
                 is_qa_accepted = False
                 best_qa = None
-                qa_score = 0 
+                qa_score = 0
 
                 # 1. 閾値 0.98 以上なら即採用（AIを呼ばず高速化）
-                if top_sim >= 0.98: 
+                if top_sim >= 0.98:
                     logging.info(f"  -> [Stage 1 超高類似度] 即採用します。({top_sim:.4f})")
                     best_qa = top_qa
                     is_qa_accepted = True
@@ -390,16 +418,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     # 2. 0.98未満は必ず Gemini で精査
                     logging.info(f"  -> [Stage 1 慎重精査] 類似度 {top_sim:.4f}。意図を確認します。")
                     reranked_qa = await rerank_documents_with_gemini(
-                        query=user_input,
+                        query=user_input, # 精査には「生の質問」を使う
                         documents=qa_results,
                         top_k=1
                     )
-                    
                     if reranked_qa:
                         best_qa = reranked_qa[0]
                         qa_score = best_qa.get('rerank_score', 0)
                         qa_sim = best_qa.get('similarity', 0)
-                        
                         # AIスコアまたは類似度で採用判定
                         if qa_score >= QA_RERANK_SCORE_THRESHOLD:
                             is_qa_accepted = True
@@ -419,8 +445,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 """
                     full_qa_response = format_urls_as_links(qa_response_content)
                     yield f"data: {json.dumps({'content': full_qa_response})}\n\n"
-                    
-                    # 履歴保存とフィードバック表示
                     history_manager.add_to_history(session_id, "user", user_input)
                     history_manager.add_to_history(session_id, "assistant", full_qa_response)
                     yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
@@ -429,53 +453,71 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         except Exception as e_qa:
             logging.error(f"Stage 1 (Q&A検索) でエラーが発生: {e_qa}", exc_info=True)
             # エラーならStage 2へ進む
-        
         logging.info("Stage 1 で有効な回答が見つかりませんでした。Stage 2 (Document RAG) に移行します。")
 
         # =========================================================
-        # Stage 2: Document RAG (ドキュメント検索 + 生成)
+        # Stage 2: Document RAG (ハイブリッド検索 + 生成)
         # =========================================================
-        
         search_results: List[Dict[str, Any]] = []
         relevant_docs: List[Dict[str, Any]] = []
 
         try:
-            # 3b. ベクトルDB検索 (ドキュメント)
+            # 3b. ドキュメント検索
             if core_database.db_client:
                 initial_fetch_count = 30
-                
-                # 1. 広めに検索
-                raw_search_results = core_database.db_client.search_documents_by_vector(
-                    collection_name=chat_req.collection,
-                    embedding=query_embedding,
-                    match_count=initial_fetch_count
-                )
-                
+                # 1. 検索実行
+                try:
+                    # [追加] ハイブリッド検索 (キーワード + ベクトル)
+                    # user_input: キーワード検索用 (BM25/PGroonga) -> 固有名詞に強い
+                    # query_embedding: ベクトル検索用 (HyDE適用済み) -> 意味に強い
+                    raw_search_results = core_database.db_client.search_documents_hybrid(
+                        collection_name=chat_req.collection,
+                        query_text=user_input,
+                        query_embedding=query_embedding,
+                        match_count=initial_fetch_count
+                    )
+                    logging.info("ハイブリッド検索を実行しました。")
+
+                except AttributeError:
+                    # database.py に search_documents_hybrid が未実装の場合のフォールバック
+                    logging.warning("ハイブリッド検索メソッドが見つかりません。従来のベクトル検索を使用します。")
+                    raw_search_results = core_database.db_client.search_documents_by_vector(
+                        collection_name=chat_req.collection,
+                        embedding=query_embedding,
+                        match_count=initial_fetch_count
+                    )
+                except Exception as e:
+                    # SQLエラー等その他のエラー時のフォールバック
+                    logging.error(f"ハイブリッド検索エラー: {e} -> ベクトル検索に切り替えます")
+                    raw_search_results = core_database.db_client.search_documents_by_vector(
+                        collection_name=chat_req.collection,
+                        embedding=query_embedding,
+                        match_count=initial_fetch_count
+                    )
                 # 2. 多様性フィルタ（内容が被っているものを間引く）
                 unique_results = filter_results_by_diversity(raw_search_results, threshold=0.7)
-                
                 # 3. Geminiリランク（精度の高い順位付け）
-                # 修正: エラー回避のため上位3件程度に絞る
+                # 注意: リランクには「元の質問」と「ドキュメント」を渡す
                 search_results = await rerank_documents_with_gemini(
                     query=user_input,
-                    documents=unique_results[:3], 
+                    documents=unique_results[:3], # コスト削減のため上位3件をリランク
                     top_k=chat_req.top_k
                 )
-            
             # -------------------------------------------------------
             # 閾値判定ロジック
             # -------------------------------------------------------
             for d in search_results:
                 sim = d.get('similarity', 0)
                 score = d.get('rerank_score', 0) # Geminiがつけた点数 (0-10)
-                
-                if sim >= STRICT_THRESHOLD:
+                # ハイブリッド検索のスコア(RRF)は従来のCos類似度と尺度が異なるため、
+                # 閾値判定は主にリランクスコア(Geminiの判断)を信頼する形にするのが安全
+                if score is not None and score >= 6: # リランクで6点以上なら採用
                     relevant_docs.append(d)
-                elif sim >= RELATED_THRESHOLD:
+                elif sim >= STRICT_THRESHOLD: # 従来の類似度が高い場合も採用
                     relevant_docs.append(d)
-                elif score is not None and score >= 7: # Gemini救済条項
-                    logging.info(f"★Gemini救済採用: {d.get('content')[:20]}... (Score: {score}, Sim: {sim})")
-                    relevant_docs.append(d)
+                else:
+                    # ログに残すが採用しない
+                    logging.debug(f"却下: {d.get('content')[:10]}... Score:{score}, Sim:{sim}")
 
             # 重複を除去
             relevant_docs = list({v['id']: v for v in relevant_docs}.values())
@@ -494,23 +536,19 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             # --- コンテキスト構築 ---
             context_parts = []
             current_char_length = 0
-            
             for d in relevant_docs:
                 source_name = d.get('metadata', {}).get('source', '不明')
                 display_source = '履修要項2024' if source_name == 'output_gakubu.txt' else source_name
                 parent_text = d.get('metadata', {}).get('parent_content', d.get('content', ''))
 
-                # [修正] 拡張したMAX_CONTEXT_CHAR_LENGTHを使用
                 if current_char_length + len(parent_text) > MAX_CONTEXT_CHAR_LENGTH and context_parts:
                     break
-                
                 context_parts.append(f"<document source='{display_source}'>{parent_text}</document>")
                 current_char_length += len(parent_text)
-            
             context = "\n\n".join(context_parts)
 
             # --- プロンプト構築 ---
-            prompt = f"""あなたは札幌学院大学の学生サポートAIです。  
+            prompt = f"""あなたは札幌学院大学の学生サポートAIです。
 以下のルールとセキュリティガイドラインに従って、<context>の情報を基にユーザーの質問（<query>）に答えてください。
 
 # 重要: セキュリティと優先順位 (Meta-Rules)
@@ -522,11 +560,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 1. 回答は <context> 内の情報(大学公式情報)を**最優先**にしてください。
 2. <context> に質問と「完全に一致する答え」が見つからない場合でも、「関連する可能性のある情報」が見つかった場合は、その情報を回答してください。
 3. (ルール#2 に基づき)関連情報で回答した場合は、回答の最後に必ず以下の「注意書き」を加えてください。
-   「※これは関連情報であり、ご質問の意図と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
+「※これは関連情報であり、ご質問の意図と完全に一致しない可能性があります。詳細は大学の公式窓口にご確認ください。」
 4. 出典を引用する場合は、使用した情報の直後に `[出典: ...]` を付けてください。
 5. **大学固有の事実（学費、特定のゼミ、手続き、校舎の場所など）を推測して答えてはいけません。**
 6. <context> 内のどの情報も質問と全く関連性がないと判断した場合に限り、以下の内部トークンのみを出力してください。
-   {AI_NOT_FOUND_TOKEN}
+{AI_NOT_FOUND_TOKEN}
 
 # 出力形式
 - 学生に分かりやすい「です・ます調」で回答すること。
@@ -553,9 +591,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
             }
-            
             model = genai.GenerativeModel(chat_req.model, safety_settings=safety_settings)
-            
             response_text = ""
             full_response = ""
             try:
@@ -567,8 +603,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                             response_text += chunk.text
                     except ValueError:
                         pass
-                
-                # [修正] 回答不能トークンの判定ロジック
+                # 回答不能トークンの判定ロジック
                 if AI_NOT_FOUND_TOKEN in response_text:
                     logging.info("Stage 2 AIも回答不能と判断しました。")
                     yield f"data: {json.dumps({'content': AI_NOT_FOUND_MESSAGE_USER})}\n\n"
@@ -600,7 +635,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
 
 # -----------------------------------------------
-#  [追加] 統計・分析用のAIロジック
+#  統計・分析用のAIロジック
 # -----------------------------------------------
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
     """
@@ -615,8 +650,7 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
     for log in logs:
         date = log.get('created_at', '不明な日時')
         rating = log.get('rating', 'なし')
-        content = log.get('comment', '').replace('\n', ' ')[:500] 
-        
+        content = log.get('comment', '').replace('\n', ' ')[:500]
         formatted_logs += f"- 日時: {date} | 評価: {rating} | 内容: {content}\n"
 
     # 2. 分析官になりきらせるプロンプト
@@ -630,15 +664,15 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
 # 分析要件 (Markdown形式で出力)
 
 1. **📊 質問トレンド分析**
-   - ユーザーが「今」何について知りたがっているか、キーワードやトピックを3つ挙げて解説してください。
-   - (例: 「履修登録」に関する質問が全体の4割を占めています、等)
+- ユーザーが「今」何について知りたがっているか、キーワードやトピックを3つ挙げて解説してください。
+- (例: 「履修登録」に関する質問が全体の4割を占めています、等)
 
 2. **⚠️ 低評価(Bad)の原因分析**
-   - 低評価（Bad）がついているデータに注目し、その主な原因を分析してください。
-   - Badがない場合は「特に目立った不満は見当たりません」としてください。
+- 低評価（Bad）がついているデータに注目し、その主な原因を分析してください。
+- Badがない場合は「特に目立った不満は見当たりません」としてください。
 
 3. **💡 改善提案**
-   - 今後、回答精度を上げるためにデータベースに追加すべき情報や、改善アクションを提案してください。
+- 今後、回答精度を上げるためにデータベースに追加すべき情報や、改善アクションを提案してください。
 
 # 出力ルール
 - 見出しは見やすくMarkdownの `###` を使ってください。
@@ -647,9 +681,8 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
 
     # 3. Geminiに分析させる
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash") 
+        model = genai.GenerativeModel("gemini-2.5-flash")
         stream = await safe_generate_content(model, prompt, stream=True)
-        
         async for chunk in stream:
             if chunk.text:
                 yield f"data: {json.dumps({'content': chunk.text})}\n\n"

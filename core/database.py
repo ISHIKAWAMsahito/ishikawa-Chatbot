@@ -13,7 +13,7 @@ class SupabaseClientManager:#Supabaseに関する操作をまとめて管理す�
 
     def insert_document(self, content: str, embedding: List[float], metadata: dict):#ドキュメントをDBに登録するメソッドです。本文(content)、ベクトルデータ(embedding)、付加情報(metadata)を受け取ります 。
         self.client.table("documents").insert({#table("documents"): Supabase上の "documents" テーブルを指定します。
-                                               #insert({...}): 辞書形式で渡されたデータを挿入する準備をします。
+    #insert({...}): 辞書形式で渡されたデータを挿入する準備をします。
             "content": content,
             "embedding": embedding,
             "metadata": metadata
@@ -29,7 +29,19 @@ class SupabaseClientManager:#Supabaseに関する操作をまとめて管理す�
         result = self.client.rpc("match_documents", params).execute()#rpc(...): Remote Procedure Callの略。Supabase側にあらかじめ定義した
         # match_documents という関数を呼び出しています。これがベクトル検索の実体です 。
         return result.data or []#return result.data or []:検索結果(result.data)があればそれを返し、もし空(None)なら空リスト [] を返します
-
+    def search_documents_hybrid(self, collection_name: str, query_text: str, query_embedding: List[float], match_count: int) -> List[dict]:
+        """
+        キーワード検索とベクトル検索を組み合わせたハイブリッド検索を実行する
+        """
+        params = {
+            "p_collection_name": collection_name,
+            "p_query_text": query_text,       # ユーザーの生の質問文
+            "p_query_embedding": query_embedding, # Embeddingされたベクトル
+            "p_match_count": match_count
+        }
+        # Supabaseのmatch_documents_hybrid関数をRPCで呼び出す
+        result = self.client.rpc("match_documents_hybrid", params).execute()
+        return result.data or []
     def search_documents_by_vector(self, collection_name: str, embedding: List[float], match_count: int) -> List[dict]:#カテゴリ引数(category)が無いバージョンの検索メソッドです 。
     # パラメータから p_category がなくなっています 。
         """カテゴリで絞り込まずにベクトル検索を行う"""
