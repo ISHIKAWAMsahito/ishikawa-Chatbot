@@ -354,155 +354,141 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         # ステップ0: 質問の絞り込み（曖昧性チェック）
         # =========================================================
         # ルールベースによる事前チェックで、不要なAPI呼び出しを削減
-        is_likely_specific = len(user_input) > 15 and any(k in user_input for k in ["?", "？", "とは", "教えて", "方法", "場所"])
-        if not is_likely_specific:
-            # 短い、またはキーワードだけの入力の場合のみAI判定にかける
+        is_specific = len(user_input) > 10 and any(k in user_input for k in ["?", "？", "とは", "教えて", "方法", "場所", "いつ", "何", "どこ", "申請", "発行"])
+        if not is_specific:
+            # 短文、またはキーワードがない場合のみAI判定にかける
             ambiguity_result = await check_ambiguity_and_suggest_options(user_input)
             if ambiguity_result.get("is_ambiguous"):
-                # 曖昧判定時の処理
                 suggestion_text = ambiguity_result.get("response_text", "もう少し具体的に教えていただけますか？")
                 candidates = ambiguity_result.get("candidates", [])
-
                 if candidates:
-                    suggestion_text += "\n\n"
-                    for item in candidates:
-                        suggestion_text += f"・{item}\n"
+                    suggestion_text += "\n\n" + "\n".join([f"・{item}" for item in candidates])
 
                 yield f"data: {json.dumps({'content': suggestion_text})}\n\n"
                 yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
                 return
 
         # =========================================================
-        # [追加] クエリ変換 (Query Transformation)
+        # [高速化] Stage 1: 並列処理 (FAQ先行チェック & クエリ変換)
         # =========================================================
-        # ユーザーの入力をそのまま使うのではなく、検索用に拡張する
-        search_query_text = await generate_search_optimized_query(user_input)
-
-        # ベクトル化処理 (拡張されたクエリを使用)
-        try:
-            query_embedding_response = genai.embed_content(
+        # 1. 時間のかかる「クエリ変換」を裏でスタート (非同期タスクA)
+        task_transform = asyncio.create_task(generate_search_optimized_query(user_input))
+        # 2. FAQ用のベクトル化も裏でスタート (非同期タスクB)
+        # FAQは「生の質問(user_input)」で検索するため、クエリ変換を待つ必要がない
+        task_embed_raw = asyncio.create_task(
+            genai.embed_content_async(
                 model=chat_req.embedding_model,
-                content=search_query_text, # ← user_input から変更(意味検索の精度向上)
+                content=user_input,
                 task_type="retrieval_query"
             )
-            query_embedding = query_embedding_response["embedding"]
-        except Exception as e:
-            logging.error(f"ベクトル化エラー: {e}")
-            yield f"data: {json.dumps({'content': '入力の処理中にエラーが発生しました。'})}\n\n"
-            return
-        # =========================================================
-        # Stage 1: Q&A (FAQ) データベース検索
-        # =========================================================
-        logging.info("--- Stage 1: Q&A(FAQ)検索を開始します ---")
-        qa_hit_found = False
+        )
+
+        logging.info("--- 並列処理開始: クエリ変換を裏で回しつつ、FAQを先行チェックします ---")
+        # ---------------------------------------------------------
+        # Phase A: FAQ高速チェック
+        # ---------------------------------------------------------
         try:
-            # 1. FAQ候補を取得 (拡張クエリのベクトルを使用)
+            # FAQ用ベクトルの完成を待つ
+            raw_embedding_res = await task_embed_raw
+            raw_embedding = raw_embedding_res["embedding"]
+            # FAQ検索実行
             qa_results = core_database.db_client.search_fallback_qa(
-                embedding=query_embedding,
+                embedding=raw_embedding,
                 match_count=5
             )
 
+            # 超高類似度(0.95以上)なら、クエリ変換を待たずに即答する (爆速化)
             if qa_results:
                 top_qa = qa_results[0]
-                top_sim = top_qa.get('similarity', 0)
-                is_qa_accepted = False
-                best_qa = None
-                qa_score = 0
+                # 類似度が非常に高い場合は、AIリランクすらスキップして即採用
+                if top_qa.get('similarity', 0) >= 0.95:
+                    logging.info(f"-> [FAQ HIT] 類似度 {top_qa['similarity']:.4f} なので即答します。")
+                    # 裏で動いているクエリ変換タスクをキャンセル（無駄な時間を節約）
+                    task_transform.cancel()
+                    qa_resp = format_urls_as_links(f"よくあるご質問に一致する情報が見つかりました。\n\n---\n{top_qa['content']}")
+                    yield f"data: {json.dumps({'content': qa_resp})}\n\n"
+                    history_manager.add_to_history(session_id, "user", user_input)
+                    history_manager.add_to_history(session_id, "assistant", qa_resp)
+                    yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+                    return # ここで終了
 
-                # 1. 閾値 0.98 以上なら即採用（AIを呼ばず高速化）
-                if top_sim >= 0.98:
-                    logging.info(f"  -> [Stage 1 超高類似度] 即採用します。({top_sim:.4f})")
-                    best_qa = top_qa
-                    is_qa_accepted = True
-                else:
-                    # 2. 0.98未満は必ず Gemini で精査
-                    logging.info(f"  -> [Stage 1 慎重精査] 類似度 {top_sim:.4f}。意図を確認します。")
+                # 類似度がそこそこ(0.85〜0.95)なら、一応Geminiで確認する
+                elif top_qa.get('similarity', 0) >= 0.85:
                     reranked_qa = await rerank_documents_with_gemini(
-                        query=user_input, # 精査には「生の質問」を使う
-                        documents=qa_results,
+                        query=user_input,
+                        documents=qa_results[:1],
                         top_k=1
                     )
-                    if reranked_qa:
-                        best_qa = reranked_qa[0]
-                        qa_score = best_qa.get('rerank_score', 0)
-                        qa_sim = best_qa.get('similarity', 0)
-                        # AIスコアまたは類似度で採用判定
-                        if qa_score >= QA_RERANK_SCORE_THRESHOLD:
-                            is_qa_accepted = True
-                            logging.info(f"  -> [Stage 1 合格] AIスコア {qa_score} により採用。")
-                        elif qa_sim >= QA_SIMILARITY_THRESHOLD:
-                            is_qa_accepted = True
-                            logging.info(f"  -> [Stage 1 合格] 類似度 {qa_sim:.4f} により採用。")
-                        else:
-                            logging.info(f"  -> [Stage 1 不合格] スコア不足のため Stage 2 へ。")
+                if reranked_qa and reranked_qa[0].get('rerank_score', 0) >= 8:
+                        logging.info("-> [FAQ HIT] AIリランクにより採用。")
+                        task_transform.cancel()
+                        qa_resp = format_urls_as_links(f"よくあるご質問に一致する情報が見つかりました。\n\n---\n{reranked_qa[0]['content']}")
+                        yield f"data: {json.dumps({'content': qa_resp})}\n\n"
+                        yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+                        return
 
-                # 3. 採用された場合のみ回答を送信
-                if is_qa_accepted and best_qa:
-                    qa_response_content = f"""よくあるご質問（FAQ）に一致する回答が見つかりました。
+        except Exception as e:
+            logging.error(f"FAQチェック中エラー(無視して続行): {e}")
 
----
-{best_qa['content']}
-"""
-                    full_qa_response = format_urls_as_links(qa_response_content)
-                    yield f"data: {json.dumps({'content': full_qa_response})}\n\n"
-                    history_manager.add_to_history(session_id, "user", user_input)
-                    history_manager.add_to_history(session_id, "assistant", full_qa_response)
-                    yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
-                    return # Stage 1で処理を終了
-
-        except Exception as e_qa:
-            logging.error(f"Stage 1 (Q&A検索) でエラーが発生: {e_qa}", exc_info=True)
-            # エラーならStage 2へ進む
-        logging.info("Stage 1 で有効な回答が見つかりませんでした。Stage 2 (Document RAG) に移行します。")
+        # ---------------------------------------------------------
+        # Phase B: ドキュメント検索 (クエリ変換の結果を使用)
+        # ---------------------------------------------------------
+        # FAQで解決しなかった場合、ここで初めてクエリ変換の結果を受け取る
+        search_query_text = await task_transform
+        # 変換後クエリのベクトル化
+        try:
+            optimized_emb_res = await genai.embed_content_async(
+                model=chat_req.embedding_model,
+                content=search_query_text,
+                task_type="retrieval_query"
+            )
+            query_embedding = optimized_emb_res["embedding"]
+        except Exception as e:
+            logging.error(f"ベクトル化エラー: {e}")
+            yield f"data: {json.dumps({'content': '検索処理中にエラーが発生しました。'})}\n\n"
+            return
 
         # =========================================================
-        # Stage 2: Document RAG (ハイブリッド検索 + 生成)
+        # Stage 2: Document RAG (ハイブリッド検索 + 条件付きリランク)
         # =========================================================
         search_results: List[Dict[str, Any]] = []
         relevant_docs: List[Dict[str, Any]] = []
 
         try:
-            # 3b. ドキュメント検索
             if core_database.db_client:
                 initial_fetch_count = 30
-                # 1. 検索実行
+                # 1. ハイブリッド検索実行
                 try:
-                    # [追加] ハイブリッド検索 (キーワード + ベクトル)
-                    # user_input: キーワード検索用 (BM25/PGroonga) -> 固有名詞に強い
-                    # query_embedding: ベクトル検索用 (HyDE適用済み) -> 意味に強い
                     raw_search_results = core_database.db_client.search_documents_hybrid(
                         collection_name=chat_req.collection,
-                        query_text=user_input,
-                        query_embedding=query_embedding,
-                        match_count=initial_fetch_count
-                    )
-                    logging.info("ハイブリッド検索を実行しました。")
-
-                except AttributeError:
-                    # database.py に search_documents_hybrid が未実装の場合のフォールバック
-                    logging.warning("ハイブリッド検索メソッドが見つかりません。従来のベクトル検索を使用します。")
-                    raw_search_results = core_database.db_client.search_documents_by_vector(
-                        collection_name=chat_req.collection,
-                        embedding=query_embedding,
+                        query_text=user_input,       # 生のキーワード
+                        query_embedding=query_embedding, # 拡張クエリベクトル
                         match_count=initial_fetch_count
                     )
                 except Exception as e:
-                    # SQLエラー等その他のエラー時のフォールバック
-                    logging.error(f"ハイブリッド検索エラー: {e} -> ベクトル検索に切り替えます")
+                    logging.warning(f"ハイブリッド検索失敗 -> ベクトル検索に切り替え: {e}")
                     raw_search_results = core_database.db_client.search_documents_by_vector(
                         collection_name=chat_req.collection,
                         embedding=query_embedding,
                         match_count=initial_fetch_count
                     )
-                # 2. 多様性フィルタ（内容が被っているものを間引く）
+                # 2. 多様性フィルタ
                 unique_results = filter_results_by_diversity(raw_search_results, threshold=0.7)
-                # 3. Geminiリランク（精度の高い順位付け）
-                # 注意: リランクには「元の質問」と「ドキュメント」を渡す
-                search_results = await rerank_documents_with_gemini(
-                    query=user_input,
-                    documents=unique_results[:3], # コスト削減のため上位3件をリランク
-                    top_k=chat_req.top_k
-                )
+                # 3. [高速化] 条件付きリランク (Fast Path)
+                # 候補が少ない、またはトップが圧倒的な場合はリランクをスキップ
+                should_skip_rerank = False
+                if len(unique_results) == 1:
+                    should_skip_rerank = True
+                if should_skip_rerank:
+                    logging.info("候補が明確なためリランクをスキップします。")
+                    search_results = unique_results[:3]
+                else:
+                    # 迷う場合のみGeminiでしっかり精査
+                    search_results = await rerank_documents_with_gemini(
+                        query=user_input,
+                        documents=unique_results[:3],
+                        top_k=chat_req.top_k
+                    )
             # -------------------------------------------------------
             # 閾値判定ロジック
             # -------------------------------------------------------
