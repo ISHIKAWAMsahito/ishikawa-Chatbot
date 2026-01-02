@@ -92,7 +92,7 @@ class ChatHistoryManager:
 
     def add_to_history(self, session_id: str, role: str, content: str):
         # メモリ節約のため一時的に無効化する場合はここでreturn
-        # return 
+        # return
         history = self._histories[session_id]
         history.append({"role": role, "content": content})
         if len(history) > MAX_HISTORY_LENGTH:
@@ -365,13 +365,15 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 if len(context_text) + len(content) < MAX_CONTEXT_CHAR_LENGTH:
                     context_text += f"<document source='{source}'>\n{content}\n</document>\n\n"
                     used_sources.append(source)
+            # --- プロンプト構築 ---
             system_prompt = f"""
             あなたは札幌学院大学の学生サポートAIです。
             以下の<context>情報を基に、ユーザーの質問に回答してください。
             # 重要ルール
             1. 事実に基づかない回答は禁止です。情報がない場合は「{AI_NOT_FOUND_TOKEN}」と出力してください。
             2. 文体は親しみやすい「です・ます」調にしてください。
-            3. 参照した情報源（source）がある場合、回答中に自然に言及するか、末尾にまとめてください。
+            3. **【重要】文中には出典（ソース名）を記載しないでください。** 文章の流れを妨げないようにしてください。
+            4. **回答の最後に「## 参照元」という見出しを作成し、回答に使用した情報の `source` 名を重複なく箇条書きでリストアップしてください。**
             <context>
             {context_text}
             </context>
