@@ -36,7 +36,6 @@ STRICT_THRESHOLD = 0.80
 QA_SIMILARITY_THRESHOLD = 0.95  # FAQ即答ライン
 RERANK_SCORE_THRESHOLD = 6.0    # 10点満点中の採用ライン
 
-# コンテキスト制限 (Gemini 1.5 Flashは100万トークン対応なので、安全圏で大きく取る)
 # 日本語1文字≒1〜1.5トークン換算でも余裕を持たせる
 MAX_CONTEXT_CHAR_LENGTH = 100000
 
@@ -141,7 +140,7 @@ async def check_ambiguity_and_suggest_options(query: str, session_id: str) -> Di
     - 質問が漠然としているなら is_ambiguous: true とし、candidates に予測される質問意図を3つ、最後に「その他」を含めて計4つ挙げてください。
     """
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         response = await model.generate_content_async(
             prompt,
             generation_config=GenerationConfig(
@@ -167,7 +166,7 @@ async def generate_search_optimized_query(user_query: str, session_id: str) -> s
     出力: 検索用クエリのみを出力（余計な説明は不要）
     """
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         response = await model.generate_content_async(prompt, safety_settings=SAFETY_SETTINGS)
         optimized = response.text.strip()
         log_context(session_id, f"クエリ変換: {user_query} -> {optimized}")
@@ -205,7 +204,7 @@ async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any
     """
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         response = await model.generate_content_async(
             prompt,
             generation_config=GenerationConfig(
@@ -437,7 +436,7 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
     """
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         stream = await model.generate_content_async(prompt, stream=True)
         async for chunk in stream:
             if chunk.text:
