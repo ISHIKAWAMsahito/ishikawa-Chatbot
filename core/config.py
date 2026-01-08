@@ -29,13 +29,12 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") # 管理者用（秘密）
 
 # ★追加: 学生画面（クライアント）に渡すための公開用キー
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY") 
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
 # エラーチェック（ANONキーがない場合も警告を出すようにする）
 if not SUPABASE_ANON_KEY:
     logging.warning("### 'SUPABASE_ANON_KEY' が設定されていません。学生画面の機能が一部制限される可能性があります。 ###")
     raise ValueError("環境変数 'SUPABASE_URL' が設定されていません。")
-    
 if not SUPABASE_KEY:
     logging.error("### 'SUPABASE_SERVICE_KEY' が None です。インポート順の問題か、環境変数が設定されていません。 ###")
     raise ValueError("環境変数 'SUPABASE_SERVICE_KEY' が設定されていません。")
