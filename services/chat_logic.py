@@ -76,22 +76,32 @@ def clean_and_parse_json(text: str) -> Dict[str, Any]:
 
 async def api_request_with_retry(func, *args, **kwargs):
     """
-    API制限(429)対策: 指数バックオフでリトライ
-    無料枠で gemini-2.5-flash を動かすために必須の処理です。
+    API制限(429)対策: エラーメッセージから待機時間を解析してリトライ
     """
     max_retries = 3
-    base_delay = 2
+    default_delay = 5  # 解析できなかった場合のデフォルト待機時間
     for attempt in range(max_retries):
         try:
             return await func(*args, **kwargs)
         except Exception as e:
-            # エラーメッセージに 429 や Quota が含まれていたら待機してリトライ
-            if "429" in str(e) or "Quota" in str(e):
+            error_str = str(e)
+            # エラーメッセージに 429 や Quota が含まれていたらリトライ処理へ
+            if "429" in error_str or "Quota" in error_str:
                 if attempt == max_retries - 1:
-                    logging.error(f"API Quota Exceeded after retries: {e}")
+                    logging.error(f"API Quota Exceeded after {max_retries} retries.")
                     raise e
-                wait_time = base_delay * (2 ** attempt) # 2s -> 4s -> 8s
-                logging.warning(f"Rate limit hit ({USE_MODEL}). Retrying in {wait_time}s...")
+                # エラーメッセージから "retry in 55.2s" のような秒数を抽出
+                wait_time = default_delay
+                match = re.search(r"retry in (\d+\.?\d*)s", error_str)
+                if match:
+                    # 指示された秒数 + 1秒（念のため）待機
+                    wait_time = float(match.group(1)) + 1.0
+                else:
+                    # 見つからない場合は指数バックオフ (5s, 10s...)
+                    wait_time = default_delay * (2 ** attempt)
+
+                logging.warning(f"Rate limit hit. Google requested wait: {wait_time:.1f}s. Retrying...")
+                # ユーザーを待たせすぎないよう、ログには出すが処理は継続
                 await asyncio.sleep(wait_time)
             else:
                 raise e
