@@ -3,50 +3,53 @@ import uuid
 import json
 import asyncio
 import re
-import os
-from typing import List, Dict, Any, AsyncGenerator
-from concurrent.futures import ThreadPoolExecutor
+import random
+from collections import defaultdict
+from typing import List, Dict, Any, AsyncGenerator, Optional
+import typing_extensions as typing  # 型定義用
+
+from fastapi import Request, HTTPException
+import google.generativeai as genai
+from google.generativeai.types import (
+    GenerationConfig,
+    HarmCategory,
+    HarmBlockThreshold
+)
 from difflib import SequenceMatcher
 
-# 外部ライブラリ
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
-from fastapi import Request
-from dotenv import load_dotenv
-
-# 内部モジュール
+# -----------------------------------------------
+# 外部モジュール・設定のインポート
+# -----------------------------------------------
 from core.config import GEMINI_API_KEY
 from core import database as core_database
 from models.schemas import ChatQuery
 from services.utils import format_urls_as_links
 
-# -----------------------------------------------------------------------------
-# 設定 & 初期化
-# -----------------------------------------------------------------------------
-# 環境変数の読み込み
-load_dotenv()
+# APIキー設定
 genai.configure(api_key=GEMINI_API_KEY)
 
-# ★モデル一覧の確認（サーバー起動時にログに出力されます）
-print("--- [Gemini Model Check] ---")
-try:
-    for m in genai.list_models():
-        if "generateContent" in m.supported_generation_methods:
-            print(f"- {m.name}")
-except Exception as e:
-    print(f"モデル一覧の取得に失敗しました: {e}")
-print("----------------------------")
+# -----------------------------------------------
+# 定数・設定値 (Configuration)
+# -----------------------------------------------
+# 検索・マッチング閾値
+STRICT_THRESHOLD = 0.80
+QA_SIMILARITY_THRESHOLD = 0.95  # FAQ即答ライン
+RERANK_SCORE_THRESHOLD = 6.0    # 10点満点中の採用ライン
 
-# ★使用するモデルの設定
-# 1.5-flash または 2.0-flash を推奨
-USE_MODEL = "gemini-2.0-flash"
+# 日本語1文字≒1〜1.5トークン換算でも余裕を持たせる
+MAX_CONTEXT_CHAR_LENGTH = 100000
 
-PARAMS = {
-    "QA_SIMILARITY_THRESHOLD": 0.95,
-    "RERANK_SCORE_THRESHOLD": 6.5,
-    "MAX_HISTORY_LENGTH": 20,
-}
+# 履歴保持数
+MAX_HISTORY_LENGTH = 20
 
+# AI応答制御トークン
+AI_NOT_FOUND_TOKEN = "[[NO_RELEVANT_INFO_FOUND]]"
+AI_NOT_FOUND_MESSAGE_USER = (
+    "ご質問いただいた内容については、関連する情報が見つかりませんでした。"
+    "お手数ですが、大学の公式サイトをご確認いただくか、窓口までお問い合わせください。"
+)
+
+# セーフティ設定（誤検知によるブロックを防ぎつつ安全性を確保）
 SAFETY_SETTINGS = {
     HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
     HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
@@ -54,19 +57,49 @@ SAFETY_SETTINGS = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
 }
 
-AI_MESSAGES = {
-    "NOT_FOUND": (
-        "申し訳ありません。ご質問に関連する確実な情報が資料内に見つかりませんでした。"
-        "大学窓口へ直接お問い合わせいただくことをお勧めします。"
-    ),
-    "ERROR": "現在アクセスが集中しており回答できません。しばらく時間をおいて再度お試しください。",
-}
+# -----------------------------------------------
+# 構造化出力用の型定義 (Schemas)
+# -----------------------------------------------
+class AmbiguityAnalysis(typing.TypedDict):
+    is_ambiguous: bool
+    response_text: str
+    candidates: List[str]
 
-executor = ThreadPoolExecutor(max_workers=4)
+class RerankItem(typing.TypedDict):
+    id: int
+    score: float
 
-# -----------------------------------------------------------------------------
+class RerankResult(typing.TypedDict):
+    ranked_items: List[RerankItem]
+
+# -----------------------------------------------
 # ユーティリティ関数
-# -----------------------------------------------------------------------------
+# -----------------------------------------------
+def log_context(session_id: str, message: str, level: str = "info"):
+    """セッションID付きでログを出力するラッパー関数"""
+    msg = f"[Session: {session_id}] {message}"
+    if level == "error":
+        logging.error(msg)
+    elif level == "warning":
+        logging.warning(msg)
+    else:
+        logging.info(msg)
+
+class ChatHistoryManager:
+    """チャット履歴管理 (インメモリ)"""
+    def __init__(self):
+        self._histories: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+
+    def add_to_history(self, session_id: str, role: str, content: str):
+        # メモリ節約のため一時的に無効化する場合はここでreturn
+        # return
+        history = self._histories[session_id]
+        history.append({"role": role, "content": content})
+        if len(history) > MAX_HISTORY_LENGTH:
+            self._histories[session_id] = history[-MAX_HISTORY_LENGTH:]
+
+history_manager = ChatHistoryManager()
+
 def get_or_create_session_id(request: Request) -> str:
     session_id = request.session.get('chat_session_id')
     if not session_id:
@@ -74,283 +107,342 @@ def get_or_create_session_id(request: Request) -> str:
         request.session['chat_session_id'] = session_id
     return session_id
 
-def log_context(session_id: str, message: str, level: str = "info"):
-    msg = f"[Session: {session_id}] {message}"
-    getattr(logging, level, logging.info)(msg)
+def filter_results_by_diversity(results: List[Dict[str, Any]], threshold: float = 0.6) -> List[Dict[str, Any]]:
+    """MMR風フィルタ: 内容が酷似している重複ドキュメントを排除"""
+    unique_results = []
+    for doc in results:
+        content = doc.get('content', '')
+        is_duplicate = False
+        for selected_doc in unique_results:
+            similarity = SequenceMatcher(None, content, selected_doc.get('content', '')).ratio()
+            if similarity > threshold:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            unique_results.append(doc)
+    return unique_results
 
-def send_sse(data: Dict[str, Any]) -> str:
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+# -----------------------------------------------
+# AI ロジック関数群 (Structured Outputs 対応)
+# -----------------------------------------------
 
-def clean_and_parse_json(text: str) -> Dict[str, Any]:
-    text = re.sub(r'^```json\s*', '', text)
-    text = re.sub(r'^```\s*', '', text)
-    text = re.sub(r'\s*```$', '', text)
+async def check_ambiguity_and_suggest_options(query: str, session_id: str) -> Dict[str, Any]:
+    """質問の曖昧性を判定し、必要なら候補を提示する"""
+    # 1. ルールベースによる高速判定 (コスト削減)
+    if len(query) > 15 or any(w in query for w in ["方法", "場所", "申請", "いつ", "どこ", "何", "？", "?"]):
+        return {"is_ambiguous": False}
+
+    prompt = f"""
+    あなたは大学のヘルプデスクAIです。ユーザーの質問が「単語のみ」などで曖昧か判定してください。
+    ユーザーの質問: "{query}"
+    # 指示
+    - 質問が具体的（文脈がある、複合語である）なら is_ambiguous: false
+    - 質問が漠然としているなら is_ambiguous: true とし、candidates に予測される質問意図を3つ、最後に「その他」を含めて計4つ挙げてください。
+    """
     try:
-        return json.loads(text.strip())
-    except json.JSONDecodeError:
-        return {}
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = await model.generate_content_async(
+            prompt,
+            generation_config=GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=AmbiguityAnalysis
+            ),
+            safety_settings=SAFETY_SETTINGS
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        log_context(session_id, f"曖昧性判定エラー: {e}", "warning")
+        return {"is_ambiguous": False}
 
-async def api_request_with_retry(func, *args, **kwargs):
-    """API制限(429)対策: エラーメッセージから待機時間を解析してリトライ"""
-    max_retries = 3
-    default_delay = 5
-    for attempt in range(max_retries):
-        try:
-            return await func(*args, **kwargs)
-        except Exception as e:
-            error_str = str(e)
-            if "429" in error_str or "Quota" in error_str:
-                if attempt == max_retries - 1:
-                    logging.error(f"API Quota Exceeded after {max_retries} retries.")
-                    raise e
-                
-                wait_time = default_delay
-                match = re.search(r"retry in (\d+\.?\d*)s", error_str)
-                if match:
-                    wait_time = float(match.group(1)) + 1.0
-                else:
-                    wait_time = default_delay * (2 ** attempt)
+async def generate_search_optimized_query(user_query: str, session_id: str) -> str:
+    """HyDE / クエリ拡張: 検索ヒット率を高めるためのクエリ変換"""
+    if len(user_query) < 5:
+        return user_query
 
-                logging.warning(f"Rate limit hit. Waiting {wait_time:.1f}s. Retrying...")
-                await asyncio.sleep(wait_time)
-            else:
-                raise e
+    prompt = f"""
+    ユーザーの質問に対して、大学のデータベース検索で最適なドキュメントがヒットするような「検索用クエリ」を生成してください。
+    質問の意図を汲み取り、関連するキーワードや具体的な表現を補完してください。
+    ユーザーの質問: "{user_query}"
+    出力: 検索用クエリのみを出力（余計な説明は不要）
+    """
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = await model.generate_content_async(prompt, safety_settings=SAFETY_SETTINGS)
+        optimized = response.text.strip()
+        log_context(session_id, f"クエリ変換: {user_query} -> {optimized}")
+        return optimized
+    except Exception as e:
+        log_context(session_id, f"クエリ変換エラー: {e}", "warning")
+        return user_query
 
-class ChatHistoryManager:
-    def __init__(self):
-        self._histories: Dict[str, List[Dict[str, str]]] = {}
+async def rerank_documents_with_gemini(query: str, documents: List[Dict[str, Any]], session_id: str, top_k: int = 3) -> List[Dict[str, Any]]:
+    """Geminiによるリランク (Structured Outputs使用)"""
+    if not documents:
+        return []
+    if len(documents) == 1:
+        return documents
 
-    def add(self, session_id: str, role: str, content: str):
-        if session_id not in self._histories:
-            self._histories[session_id] = []
-        self._histories[session_id].append({"role": role, "content": content})
-        if len(self._histories[session_id]) > PARAMS["MAX_HISTORY_LENGTH"]:
-            self._histories[session_id] = self._histories[session_id][-PARAMS["MAX_HISTORY_LENGTH"]:]
+    log_context(session_id, f"リランク開始: {len(documents)}件の候補を評価")
 
-history_manager = ChatHistoryManager()
+    # プロンプト用テキスト生成
+    candidates_text = ""
+    for i, doc in enumerate(documents):
+        # 判定に必要な冒頭部分とメタデータのみを渡す（トークン節約と速度向上）
+        content_snippet = doc.get('content', '')[:800].replace('\n', ' ')
+        source = doc.get('metadata', {}).get('source', 'unknown')
+        candidates_text += f"ID:{i} Source:{source} Content:{content_snippet}\n\n"
 
-# -----------------------------------------------------------------------------
-# コアロジック: 検索パイプライン
-# -----------------------------------------------------------------------------
-class SearchPipeline:
-    @staticmethod
-    async def optimize_query(user_query: str, session_id: str) -> str:
-        """HyDE + Query Expansion"""
-        prompt = f"""
-        ユーザーの質問に基づいて、大学のデータベース検索に最適な「検索キーワード」を作成してください。
-        専門用語への言い換え（例: "取り消し" -> "履修中止"）を含め、出力は検索用テキストのみにしてください。
-        ユーザーの質問: "{user_query}"
-        """
-        try:
-            model = genai.GenerativeModel(USE_MODEL)
-            resp = await api_request_with_retry(
-                model.generate_content_async, prompt, safety_settings=SAFETY_SETTINGS
-            )
-            optimized = resp.text.strip()
-            log_context(session_id, f"クエリ拡張: {optimized}")
-            return optimized
-        except Exception:
-            return user_query
+    prompt = f"""
+    あなたは検索エンジンのRe-rankerです。ユーザーの質問に対して、各ドキュメントの関連度を0〜10点で採点してください。
+    # ユーザーの質問
+    {query}
+    # ドキュメント候補
+    {candidates_text}
+    # 採点基準
+    - 質問の意図（学部、手続き、期限など）に合致しているか。
+    - まったく関係ないドキュメントは 0点 にすること。
+    """
 
-    @staticmethod
-    async def rerank(query: str, documents: List[Dict], top_k: int = 5) -> List[Dict]:
-        """検索結果のリランク処理"""
-        if not documents:
-            return []
-        
-        candidates_text = ""
-        for i, doc in enumerate(documents):
-            meta = doc.get('metadata', {})
-            snippet = doc.get('content', '')[:2000].replace('\n', ' ')
-            candidates_text += f"ID:{i} [Source:{meta.get('source', '?')}]\n{snippet}\n\n"
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = await model.generate_content_async(
+            prompt,
+            generation_config=GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=RerankResult
+            ),
+            safety_settings=SAFETY_SETTINGS
+        )
+        result_json = json.loads(response.text)
+        ranked_items = result_json.get("ranked_items", [])
+        # スコアのマッピングと並べ替え
+        reranked_docs = []
+        for item in ranked_items:
+            idx = int(item["id"])
+            score = float(item["score"])
+            if 0 <= idx < len(documents):
+                doc = documents[idx]
+                doc['rerank_score'] = score
+                reranked_docs.append(doc)
+        # スコア降順にソート
+        reranked_docs.sort(key=lambda x: x.get('rerank_score', 0), reverse=True)
+        return reranked_docs[:top_k]
 
-        prompt = f"""
-        ユーザーの質問に対し、以下のドキュメントが回答根拠として適切か0-10点で採点してください。
-        質問: {query}
-        候補:
-        {candidates_text}
-        出力形式(JSON): {{ "ranked_items": [{{ "id": int, "score": float, "reason": str }}] }}
-        """
-        try:
-            model = genai.GenerativeModel(USE_MODEL)
-            resp = await api_request_with_retry(
-                model.generate_content_async, prompt, safety_settings=SAFETY_SETTINGS
-            )
-            data = clean_and_parse_json(resp.text)
-            reranked = []
-            for item in data.get("ranked_items", []):
-                idx, score = int(item.get("id", -1)), float(item.get("score", 0))
-                if 0 <= idx < len(documents) and score >= PARAMS["RERANK_SCORE_THRESHOLD"]:
-                    doc = documents[idx]
-                    doc['rerank_score'] = score
-                    reranked.append(doc)
-            reranked.sort(key=lambda x: x['rerank_score'], reverse=True)
-            return reranked[:top_k]
-        except Exception as e:
-            logging.error(f"Rerank Error: {e}")
-            return documents[:top_k]
+    except Exception as e:
+        log_context(session_id, f"リランク処理エラー: {e}", "error")
+        # エラー時は元の順序で返す
+        return documents[:top_k]
 
-    @staticmethod
-    async def filter_diversity(documents: List[Dict], threshold: float = 0.7) -> List[Dict]:
-        """MMR風フィルタリング（重複排除）"""
-        loop = asyncio.get_running_loop()
-        unique_docs = []
-        def _calc_sim(a, b):
-            return SequenceMatcher(None, a, b).ratio()
+# -----------------------------------------------
+# メインチャットロジック
+# -----------------------------------------------
 
-        for doc in documents:
-            content = doc.get('content', '')
-            is_duplicate = False
-            for selected in unique_docs:
-                sim = await loop.run_in_executor(executor, _calc_sim, content, selected.get('content', ''))
-                if sim > threshold:
-                    is_duplicate = True
-                    break
-            if not is_duplicate:
-                unique_docs.append(doc)
-        return unique_docs
-
-# -----------------------------------------------------------------------------
-# メイン: チャットロジック
-# -----------------------------------------------------------------------------
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
+    """
+    FAQ検索 -> ドキュメント検索 (Hybrid) -> Rerank -> 回答生成
+    のパイプラインを実行する
+    """
+    user_input = chat_req.query.strip()
     session_id = get_or_create_session_id(request)
     feedback_id = str(uuid.uuid4())
-    user_input = chat_req.query.strip()
-    yield send_sse({'feedback_id': feedback_id})
+    # クライアントへ初期レスポンス（フィードバックID）
+    yield f"data: {json.dumps({'feedback_id': feedback_id})}\n\n"
+
+    # ヘルスチェック
+    if not all([core_database.db_client, GEMINI_API_KEY]):
+        log_context(session_id, "DBクライアントまたはAPIキー未設定", "error")
+        yield f"data: {json.dumps({'content': 'システムエラー: 管理者にお問い合わせください。'})}\n\n"
+        return
 
     try:
-        # --- 1. 検索フェーズ ---
-        yield send_sse({'status_message': '🔍 データベースを検索しています...'})
-        
-        # [API節約] クエリ拡張はスキップ
-        search_query = user_input
+        # Step 0: 曖昧性チェック
+        ambiguity_res = await check_ambiguity_and_suggest_options(user_input, session_id)
+        if ambiguity_res.get("is_ambiguous"):
+            suggestion = ambiguity_res.get("response_text", "もう少し具体的に教えていただけますか？")
+            candidates = ambiguity_res.get("candidates", [])
+            if candidates:
+                suggestion += "\n\n" + "\n".join([f"・{c}" for c in candidates])
+            yield f"data: {json.dumps({'content': suggestion})}\n\n"
+            yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+            return
 
-        # Embedding実行
-        embedding_task = asyncio.create_task(
+        # Step 1: 並列処理開始 (クエリ変換 & FAQ埋め込み)
+        log_context(session_id, "検索プロセス開始")
+        # タスクA: 生のクエリでFAQ検索用ベクトル作成
+        task_embed_raw = asyncio.create_task(
             genai.embed_content_async(
                 model=chat_req.embedding_model,
                 content=user_input,
                 task_type="retrieval_query"
             )
         )
+        # タスクB: ドキュメント検索用にクエリを最適化
+        task_transform = asyncio.create_task(generate_search_optimized_query(user_input, session_id))
 
-        # A. FAQチェック
+        # --- FAQ (QA Database) チェック ---
         try:
-            raw_emb_result = await embedding_task
-            query_embedding = raw_emb_result["embedding"]
-
-            if qa_hits := core_database.db_client.search_fallback_qa(query_embedding, match_count=1):
-                top_qa = qa_hits[0]
-                if top_qa.get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
-                    resp = format_urls_as_links(f"よくあるご質問に回答が見つかりました。\n\n---\n{top_qa['content']}")
-                    history_manager.add(session_id, "assistant", resp)
-                    yield send_sse({'content': resp, 'show_feedback': True, 'feedback_id': feedback_id})
+            raw_emb_res = await task_embed_raw
+            raw_embedding = raw_emb_res["embedding"]
+            qa_results = core_database.db_client.search_fallback_qa(
+                embedding=raw_embedding,
+                match_count=3
+            )
+            # FAQ即決ロジック
+            if qa_results:
+                top_qa = qa_results[0]
+                sim = top_qa.get('similarity', 0)
+                if sim >= QA_SIMILARITY_THRESHOLD:
+                    log_context(session_id, f"FAQ完全一致 (Sim: {sim:.4f})")
+                    task_transform.cancel() # クエリ変換キャンセル
+                    resp_text = format_urls_as_links(f"よくあるご質問に見つかりました。\n\n---\n{top_qa['content']}")
+                    history_manager.add_to_history(session_id, "user", user_input)
+                    history_manager.add_to_history(session_id, "assistant", resp_text)
+                    yield f"data: {json.dumps({'content': resp_text})}\n\n"
+                    yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
                     return
         except Exception as e:
-            log_context(session_id, f"FAQ Search/Embed Error: {e}", "warning")
-            if 'query_embedding' not in locals():
-                yield send_sse({'content': AI_MESSAGES["ERROR"]})
-                return
+            log_context(session_id, f"FAQチェック中の警告: {e}", "warning")
 
-        # B. DB検索
-        raw_docs = core_database.db_client.search_documents_hybrid(
-            collection_name=chat_req.collection,
-            query_text=search_query,
-            query_embedding=query_embedding,
-            match_count=30
-        )
-        yield send_sse({'status_message': '🧐 AIが文献を読んで選定中...'})
-        unique_docs = await SearchPipeline.filter_diversity(raw_docs)
+        # --- Document RAG (Hybrid Search) ---
+        search_query_text = await task_transform
+        # 拡張クエリのベクトル化
+        try:
+            opt_emb_res = await genai.embed_content_async(
+                model=chat_req.embedding_model,
+                content=search_query_text,
+                task_type="retrieval_query"
+            )
+            query_embedding = opt_emb_res["embedding"]
+        except Exception as e:
+            log_context(session_id, f"Embeddingエラー: {e}", "error")
+            yield f"data: {json.dumps({'content': '検索処理中にエラーが発生しました。'})}\n\n"
+            return
 
-        # [重要] リランク実行（失敗時のフォールバック付き）
+        # 検索実行
         relevant_docs = []
         try:
-            relevant_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=chat_req.top_k)
-        except Exception as e:
-            log_context(session_id, f"Rerank API Failed (Fallback used): {e}", "warning")
-            relevant_docs = unique_docs[:5]
+            # 1. ハイブリッド検索 (or Vector Fallback)
+            raw_docs = core_database.db_client.search_documents_hybrid(
+                collection_name=chat_req.collection,
+                query_text=search_query_text,
+                query_embedding=query_embedding,
+                match_count=20 # 多めに取得
+            )
+            # 2. 多様性フィルタ (MMR)
+            unique_docs = filter_results_by_diversity(raw_docs, threshold=0.7)
+            # 3. リランク (上位10件程度に絞ってからGeminiに投げる)
+            rerank_candidates = unique_docs[:10]
+            if len(rerank_candidates) > 0:
+                reranked_docs = await rerank_documents_with_gemini(
+                    query=user_input, # 生のクエリで判定させる
+                    documents=rerank_candidates,
+                    session_id=session_id,
+                    top_k=chat_req.top_k
+                )
+                # 閾値による足切り
+                for d in reranked_docs:
+                    score = d.get('rerank_score', 0)
+                    if score >= RERANK_SCORE_THRESHOLD:
+                        relevant_docs.append(d)
+                    else:
+                        log_context(session_id, f"ドキュメント却下 Score:{score}")
 
-        # --- 2. 回答生成フェーズ ---
+        except Exception as e:
+            log_context(session_id, f"ドキュメント検索エラー: {e}", "error")
+
+        # --- 回答生成フェーズ ---
         if not relevant_docs:
-            yield send_sse({'content': AI_MESSAGES["NOT_FOUND"]})
+            log_context(session_id, "有効なドキュメントなし")
+            yield f"data: {json.dumps({'content': AI_NOT_FOUND_MESSAGE_USER})}\n\n"
         else:
-            yield send_sse({'status_message': '✍️ 回答を執筆しています...'})
-            
-            context_parts = []
-            sources_map = {}
-            for idx, doc in enumerate(relevant_docs, 1):
-                src = doc.get('metadata', {}).get('source', '不明')
-                sources_map[idx] = src
-                context_parts.append(f"<doc id='{idx}' src='{src}'>\n{doc.get('content','')}\n</doc>")
-            
+            # コンテキスト構築
+            context_text = ""
+            used_sources = []
+            for d in relevant_docs:
+                content = d.get('content', '')
+                source = d.get('metadata', {}).get('source', '不明')
+                # コンテキストサイズ上限チェック
+                if len(context_text) + len(content) < MAX_CONTEXT_CHAR_LENGTH:
+                    context_text += f"<document source='{source}'>\n{content}\n</document>\n\n"
+                    used_sources.append(source)
+            # --- プロンプト構築 ---
             system_prompt = f"""
             あなたは札幌学院大学の学生サポートAIです。
-            以下の<context>内の情報**のみ**を使用して、質問に回答してください。
-
-            # 回答のルール
-            1. **根拠の紐付け**:
-            文章中の重要な事実には、文末に `[1]` のように**短い番号のみ**を付記してください。
-            2. **形式**:
-            - 学生に寄り添った、丁寧で親しみやすい「です・ます」調。
-            - 読みやすいように箇条書きや**太字**を活用する。
-            - 情報がない場合は「情報が見つかりません」と答える。
+            以下の<context>情報を基に、ユーザーの質問に回答してください。
+            # 重要ルール
+            1. 事実に基づかない回答は禁止です。情報がない場合は「{AI_NOT_FOUND_TOKEN}」と出力してください。
+            2. 文体は親しみやすい「です・ます」調にしてください。
+            3. **【重要】文中には出典（ソース名）を記載しないでください。** 文章の流れを妨げないようにしてください。
+            4. **回答の最後に「## 参照元」という見出しを作成し、回答に使用した情報の `source` 名を重複なく箇条書きでリストアップしてください。**
             <context>
-            {chr(10).join(context_parts)}
+            {context_text}
             </context>
             """
-            
-            model = genai.GenerativeModel(USE_MODEL)
-            stream = await api_request_with_retry(
-                model.generate_content_async,
-                [system_prompt, f"質問: {user_input}"],
-                stream=True,
-                safety_settings=SAFETY_SETTINGS
-            )
-            
-            full_resp = ""
-            async for chunk in stream:
-                if chunk.text:
-                    full_resp += chunk.text
-                    yield send_sse({'content': chunk.text})
-            
-            if "情報が見つかりません" not in full_resp:
-                refs_header = "\n\n## 参照元\n"
-                unique_refs = []
-                seen_sources = set()
-                for idx, src in sources_map.items():
-                    if src in seen_sources: continue
-                    if f"[{idx}]" in full_resp or idx <= 3:
-                        unique_refs.append(f"* [{idx}] {src}")
-                        seen_sources.add(src)
-                
-                if unique_refs:
-                    refs_text = refs_header + "\n".join(unique_refs)
-                    yield send_sse({'content': refs_text})
-                    full_resp += refs_text
-            
-            history_manager.add(session_id, "assistant", full_resp)
+            user_prompt = f"質問: {user_input}"
+            log_context(session_id, f"回答生成開始: ソース={list(set(used_sources))}")
+            model = genai.GenerativeModel(chat_req.model)
+            full_response = ""
+            try:
+                # ストリーミング生成
+                stream = await model.generate_content_async(
+                    [system_prompt, user_prompt],
+                    stream=True,
+                    safety_settings=SAFETY_SETTINGS
+                )
+                async for chunk in stream:
+                    if chunk.text:
+                        full_response += chunk.text
+                # 回答なしトークンのチェック
+                if AI_NOT_FOUND_TOKEN in full_response:
+                    yield f"data: {json.dumps({'content': AI_NOT_FOUND_MESSAGE_USER})}\n\n"
+                else:
+                    formatted_resp = format_urls_as_links(full_response)
+                    history_manager.add_to_history(session_id, "user", user_input)
+                    history_manager.add_to_history(session_id, "assistant", formatted_resp)
+                    yield f"data: {json.dumps({'content': formatted_resp})}\n\n"
+
+            except Exception as e:
+                log_context(session_id, f"生成エラー: {e}", "error")
+                yield f"data: {json.dumps({'content': '申し訳ありません。回答の生成中にエラーが発生しました。'})}\n\n"
 
     except Exception as e:
-        log_context(session_id, f"Critical Error: {e}", "error")
-        if "429" in str(e) or "Quota" in str(e):
-             yield send_sse({'content': "申し訳ありません。現在アクセスが集中しています。1分ほど待ってから再度お試しください。"})
-        else:
-             yield send_sse({'content': AI_MESSAGES["ERROR"]})
+        log_context(session_id, f"予期せぬクリティカルエラー: {e}", "error")
+        yield f"data: {json.dumps({'content': 'システムエラーが発生しました。'})}\n\n"
     finally:
-        yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
+        # フィードバックUIの表示トリガー
+        yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
 
+# -----------------------------------------------
+# 分析用ロジック (管理者機能)
+# -----------------------------------------------
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
     if not logs:
-        yield send_sse({'content': '分析対象データがありません。'})
+        yield f"data: {json.dumps({'content': '分析対象データがありません。'})}\n\n"
         return
-    summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
-    prompt = f"分析レポート作成:\n{summary}\n項目: トレンド, 原因, 改善案"
+
+    # ログデータの整形（AIのコンテキスト消費を抑えるため要約）
+    formatted_logs = ""
+    for log in logs[:50]: # 直近50件に制限
+        rating = log.get('rating', '-')
+        comment = log.get('comment', '')[:200].replace('\n', ' ')
+        formatted_logs += f"- 評価:{rating} | 内容:{comment}\n"
+
+    prompt = f"""
+    あなたはシステム運用コンサルタントです。以下のチャットボット利用ログを分析し、Markdown形式でレポートを作成してください。
+    # 分析対象データ
+    {formatted_logs}
+    # 出力項目
+    1. ユーザーの主な関心事（トレンド）
+    2. 低評価の原因と改善策
+    3. 次のアクションプラン
+    """
+
     try:
-        model = genai.GenerativeModel(USE_MODEL)
-        stream = await api_request_with_retry(model.generate_content_async, prompt, stream=True)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        stream = await model.generate_content_async(prompt, stream=True)
         async for chunk in stream:
             if chunk.text:
-                yield send_sse({'content': chunk.text})
+                yield f"data: {json.dumps({'content': chunk.text})}\n\n"
     except Exception as e:
-        yield send_sse({'content': f'分析エラー: {e}'})
+        logging.error(f"分析機能エラー: {e}")
+        yield f"data: {json.dumps({'content': '分析中にエラーが発生しました。'})}\n\n"
