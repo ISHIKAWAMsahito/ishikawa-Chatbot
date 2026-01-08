@@ -229,9 +229,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         # A. FAQチェック (埋め込み完了を待つ)
         try:
+            # Embeddingタスクの結果取得
             raw_emb_result = await embedding_task
             query_embedding = raw_emb_result["embedding"]
 
+            # A. FAQ (Q&A) チェック
             if qa_hits := core_database.db_client.search_fallback_qa(query_embedding, match_count=1):
                 top_qa = qa_hits[0]
                 if top_qa.get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
@@ -257,9 +259,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         )
         yield send_sse({'status_message': '🧐 AIが文献を読んで選定中...'})
         unique_docs = await SearchPipeline.filter_diversity(raw_docs)
-        # [維持ポイント] リランクを実行 (ここで1回目の生成APIコール)
-        # top_k 分だけ選定する
-        relevant_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=chat_req.top_k)
+        # ---------------------------------------------------------
+        # [修正] リランクを実行（API制限時の救済措置付き）
+        # ---------------------------------------------------------
+        relevant_docs = []
+        try:
+            # APIが生きていれば、リランクを実行して精度を高める
+            # 候補を15件渡し、上位 top_k 件に絞り込む
+            relevant_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=chat_req.top_k)
+        except Exception as e:
+            # ★ここが重要: API制限(429)などでエラーが出た場合の「命綱」
+            log_context(session_id, f"Rerank API Failed (Fallback used): {e}", "warning")
+            # エラー時は無理にリランクせず、DB検索のスコア順（上位5件）をそのまま使う
+            # これにより、APIエラーが出ても回答不能にならず、最低限の結果を返せる
+            relevant_docs = unique_docs[:5]
 
         # --- 2. 回答生成フェーズ ---
         if not relevant_docs:
