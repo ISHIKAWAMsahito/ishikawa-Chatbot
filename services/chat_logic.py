@@ -3,13 +3,16 @@ import uuid
 import json
 import asyncio
 import re
-from typing import List, Dict, Any, AsyncGenerator, Optional
+import os
+from typing import List, Dict, Any, AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 
+# 外部ライブラリ
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from fastapi import Request
+from dotenv import load_dotenv
 
 # 内部モジュール
 from core.config import GEMINI_API_KEY
@@ -18,12 +21,25 @@ from models.schemas import ChatQuery
 from services.utils import format_urls_as_links
 
 # -----------------------------------------------------------------------------
-# 設定 & 定数
+# 設定 & 初期化
 # -----------------------------------------------------------------------------
+# 環境変数の読み込み
+load_dotenv()
 genai.configure(api_key=GEMINI_API_KEY)
 
-# ★修正: 2026年現在の最新安定版を指定
-USE_MODEL = "gemini-2.5-flash"
+# ★モデル一覧の確認（サーバー起動時にログに出力されます）
+print("--- [Gemini Model Check] ---")
+try:
+    for m in genai.list_models():
+        if "generateContent" in m.supported_generation_methods:
+            print(f"- {m.name}")
+except Exception as e:
+    print(f"モデル一覧の取得に失敗しました: {e}")
+print("----------------------------")
+
+# ★使用するモデルの設定
+# 1.5-flash または 2.0-flash を推奨
+USE_MODEL = "gemini-2.0-flash"
 
 PARAMS = {
     "QA_SIMILARITY_THRESHOLD": 0.95,
@@ -75,33 +91,27 @@ def clean_and_parse_json(text: str) -> Dict[str, Any]:
         return {}
 
 async def api_request_with_retry(func, *args, **kwargs):
-    """
-    API制限(429)対策: エラーメッセージから待機時間を解析してリトライ
-    """
+    """API制限(429)対策: エラーメッセージから待機時間を解析してリトライ"""
     max_retries = 3
-    default_delay = 5  # 解析できなかった場合のデフォルト待機時間
+    default_delay = 5
     for attempt in range(max_retries):
         try:
             return await func(*args, **kwargs)
         except Exception as e:
             error_str = str(e)
-            # エラーメッセージに 429 や Quota が含まれていたらリトライ処理へ
             if "429" in error_str or "Quota" in error_str:
                 if attempt == max_retries - 1:
                     logging.error(f"API Quota Exceeded after {max_retries} retries.")
                     raise e
-                # エラーメッセージから "retry in 55.2s" のような秒数を抽出
+                
                 wait_time = default_delay
                 match = re.search(r"retry in (\d+\.?\d*)s", error_str)
                 if match:
-                    # 指示された秒数 + 1秒（念のため）待機
                     wait_time = float(match.group(1)) + 1.0
                 else:
-                    # 見つからない場合は指数バックオフ (5s, 10s...)
                     wait_time = default_delay * (2 ** attempt)
 
-                logging.warning(f"Rate limit hit. Google requested wait: {wait_time:.1f}s. Retrying...")
-                # ユーザーを待たせすぎないよう、ログには出すが処理は継続
+                logging.warning(f"Rate limit hit. Waiting {wait_time:.1f}s. Retrying...")
                 await asyncio.sleep(wait_time)
             else:
                 raise e
@@ -133,7 +143,6 @@ class SearchPipeline:
         """
         try:
             model = genai.GenerativeModel(USE_MODEL)
-            # リトライ付きで呼び出し
             resp = await api_request_with_retry(
                 model.generate_content_async, prompt, safety_settings=SAFETY_SETTINGS
             )
@@ -213,12 +222,11 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     try:
         # --- 1. 検索フェーズ ---
         yield send_sse({'status_message': '🔍 データベースを検索しています...'})
-        # [削減ポイント1] クエリ拡張 (optimize_query) を廃止
-        # task_query = asyncio.create_task(SearchPipeline.optimize_query(user_input, session_id))
-        search_query = user_input  # ユーザーの入力をそのまま使う
+        
+        # [API節約] クエリ拡張はスキップ
+        search_query = user_input
 
-        # [削減ポイント2] Embeddingを1回だけ実行し、FAQと文書検索の両方で使い回す
-        # Note: ユーザー入力をベクトル化
+        # Embedding実行
         embedding_task = asyncio.create_task(
             genai.embed_content_async(
                 model=chat_req.embedding_model,
@@ -227,51 +235,40 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             )
         )
 
-        # A. FAQチェック (埋め込み完了を待つ)
+        # A. FAQチェック
         try:
-            # Embeddingタスクの結果取得
             raw_emb_result = await embedding_task
             query_embedding = raw_emb_result["embedding"]
 
-            # A. FAQ (Q&A) チェック
             if qa_hits := core_database.db_client.search_fallback_qa(query_embedding, match_count=1):
                 top_qa = qa_hits[0]
                 if top_qa.get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
-                    # FAQヒット時はここで終了。リランクも回答生成も走らないのでAPI消費は最小
                     resp = format_urls_as_links(f"よくあるご質問に回答が見つかりました。\n\n---\n{top_qa['content']}")
                     history_manager.add(session_id, "assistant", resp)
                     yield send_sse({'content': resp, 'show_feedback': True, 'feedback_id': feedback_id})
                     return
         except Exception as e:
             log_context(session_id, f"FAQ Search/Embed Error: {e}", "warning")
-            # 万が一Embeddingに失敗していたら、この後の検索もできないためエラー終了
             if 'query_embedding' not in locals():
                 yield send_sse({'content': AI_MESSAGES["ERROR"]})
                 return
 
         # B. DB検索
-        # クエリ拡張をしていないので、さきほど取得した query_embedding をそのまま流用 (再度のAPIコール不要)
         raw_docs = core_database.db_client.search_documents_hybrid(
             collection_name=chat_req.collection,
-            query_text=search_query,       # 生の質問文
-            query_embedding=query_embedding, # さっきのベクトル
-            match_count=30                 # リランク前なので少し広めに取る
+            query_text=search_query,
+            query_embedding=query_embedding,
+            match_count=30
         )
         yield send_sse({'status_message': '🧐 AIが文献を読んで選定中...'})
         unique_docs = await SearchPipeline.filter_diversity(raw_docs)
-        # ---------------------------------------------------------
-        # [修正] リランクを実行（API制限時の救済措置付き）
-        # ---------------------------------------------------------
+
+        # [重要] リランク実行（失敗時のフォールバック付き）
         relevant_docs = []
         try:
-            # APIが生きていれば、リランクを実行して精度を高める
-            # 候補を15件渡し、上位 top_k 件に絞り込む
             relevant_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=chat_req.top_k)
         except Exception as e:
-            # ★ここが重要: API制限(429)などでエラーが出た場合の「命綱」
             log_context(session_id, f"Rerank API Failed (Fallback used): {e}", "warning")
-            # エラー時は無理にリランクせず、DB検索のスコア順（上位5件）をそのまま使う
-            # これにより、APIエラーが出ても回答不能にならず、最低限の結果を返せる
             relevant_docs = unique_docs[:5]
 
         # --- 2. 回答生成フェーズ ---
@@ -279,12 +276,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             yield send_sse({'content': AI_MESSAGES["NOT_FOUND"]})
         else:
             yield send_sse({'status_message': '✍️ 回答を執筆しています...'})
+            
             context_parts = []
             sources_map = {}
             for idx, doc in enumerate(relevant_docs, 1):
                 src = doc.get('metadata', {}).get('source', '不明')
                 sources_map[idx] = src
                 context_parts.append(f"<doc id='{idx}' src='{src}'>\n{doc.get('content','')}\n</doc>")
+            
             system_prompt = f"""
             あなたは札幌学院大学の学生サポートAIです。
             以下の<context>内の情報**のみ**を使用して、質問に回答してください。
@@ -300,62 +299,53 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             {chr(10).join(context_parts)}
             </context>
             """
+            
             model = genai.GenerativeModel(USE_MODEL)
-            # [2回目の生成APIコール] 回答生成
             stream = await api_request_with_retry(
                 model.generate_content_async,
                 [system_prompt, f"質問: {user_input}"],
                 stream=True,
                 safety_settings=SAFETY_SETTINGS
             )
+            
             full_resp = ""
             async for chunk in stream:
                 if chunk.text:
                     full_resp += chunk.text
                     yield send_sse({'content': chunk.text})
-            # 参照元の追記
+            
             if "情報が見つかりません" not in full_resp:
                 refs_header = "\n\n## 参照元\n"
                 unique_refs = []
                 seen_sources = set()
-
                 for idx, src in sources_map.items():
                     if src in seen_sources: continue
-                    # 本文で参照されているか、上位3件までは表示
                     if f"[{idx}]" in full_resp or idx <= 3:
                         unique_refs.append(f"* [{idx}] {src}")
                         seen_sources.add(src)
-
+                
                 if unique_refs:
                     refs_text = refs_header + "\n".join(unique_refs)
                     yield send_sse({'content': refs_text})
                     full_resp += refs_text
+            
             history_manager.add(session_id, "assistant", full_resp)
 
     except Exception as e:
         log_context(session_id, f"Critical Error: {e}", "error")
         if "429" in str(e) or "Quota" in str(e):
-             yield send_sse({'content': "申し訳ありません。現在アクセスが集中しています。恐れ入りますが、1分ほど待ってから再度お試しください。"})
+             yield send_sse({'content': "申し訳ありません。現在アクセスが集中しています。1分ほど待ってから再度お試しください。"})
         else:
              yield send_sse({'content': AI_MESSAGES["ERROR"]})
     finally:
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
 
-# -----------------------------------------------------------------------------
-# 管理者用機能
-# -----------------------------------------------------------------------------
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
     if not logs:
         yield send_sse({'content': '分析対象データがありません。'})
         return
-
     summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
-    prompt = f"""
-    チャットボット利用ログの分析レポートをMarkdownで作成してください。
-    データ:
-    {summary}
-    項目: 1.ユーザートレンド, 2.低評価の原因, 3.改善案
-    """
+    prompt = f"分析レポート作成:\n{summary}\n項目: トレンド, 原因, 改善案"
     try:
         model = genai.GenerativeModel(USE_MODEL)
         stream = await api_request_with_retry(model.generate_content_async, prompt, stream=True)
