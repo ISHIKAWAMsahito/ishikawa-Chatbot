@@ -422,3 +422,38 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         yield f"data: {json.dumps({'content': 'システムエラーが発生しました。管理者に連絡してください。'})}\n\n"
     finally:
         yield f"data: {json.dumps({'show_feedback': True, 'feedback_id': feedback_id})}\n\n"
+
+# -----------------------------------------------
+# 分析用ロジック (管理者機能 )
+# -----------------------------------------------
+async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
+    if not logs:
+        yield f"data: {json.dumps({'content': '分析対象データがありません。'})}\n\n"
+        return
+
+    # ログデータの整形（AIのコンテキスト消費を抑えるため要約）
+    formatted_logs = ""
+    for log in logs[:50]: # 直近50件に制限
+        rating = log.get('rating', '-')
+        comment = log.get('comment', '')[:200].replace('\n', ' ')
+        formatted_logs += f"- 評価:{rating} | 内容:{comment}\n"
+
+    prompt = f"""
+    あなたはシステム運用コンサルタントです。以下のチャットボット利用ログを分析し、Markdown形式でレポートを作成してください。
+    # 分析対象データ
+    {formatted_logs}
+    # 出力項目
+    1. ユーザーの主な関心事（トレンド）
+    2. 低評価の原因と改善策
+    3. 次のアクションプラン
+    """
+
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        stream = await model.generate_content_async(prompt, stream=True)
+        async for chunk in stream:
+            if chunk.text:
+                yield f"data: {json.dumps({'content': chunk.text})}\n\n"
+    except Exception as e:
+        logging.error(f"分析機能エラー: {e}")
+        yield f"data: {json.dumps({'content': '分析中にエラーが発生しました。'})}\n\n"
