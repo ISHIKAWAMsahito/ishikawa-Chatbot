@@ -45,14 +45,15 @@ SAFETY_SETTINGS = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
 }
 
-# メッセージ定数
+# ★修正点1: エラーメッセージの正確な定義
 AI_MESSAGES = {
     "NOT_FOUND": (
         "申し訳ありません。ご質問に関連する確実な情報が資料内に見つかりませんでした。"
         "大学窓口へ直接お問い合わせいただくことをお勧めします。"
     ),
-    "ERROR": "現在アクセスが集中しており回答できません。しばらく時間をおいて再度お試しください。",
     "RATE_LIMIT": "申し訳ありません。現在アクセスが集中しています。1分ほど待ってから再度お試しください。",
+    "SYSTEM_ERROR": "システムエラーが発生しました。しばらく時間をおいて再度お試しください。",
+    "BLOCKED": "生成された回答がセーフティガイドラインに抵触したため、表示できませんでした。言い回しを変えて再度お試しください。"
 }
 
 # スレッドプール（CPUバウンドな処理用）
@@ -85,11 +86,11 @@ PROMPT_SYSTEM_GENERATION = """
 
 # 回答のルール
 1. **根拠の紐付け**:
-文章中の重要な事実には、文末に `[1]` のように**短い番号のみ**を付記してください。
+   文章中の重要な事実には、文末に `[1]` のように**短い番号のみ**を付記してください。
 2. **形式**:
-- 学生に寄り添った、丁寧で親しみやすい「です・ます」調。
-- 読みやすいように箇条書きや**太字**を活用する。
-- 情報がない場合は「情報が見つかりません」と答える。
+   - 学生に寄り添った、丁寧で親しみやすい「です・ます」調。
+   - 読みやすいように箇条書きや**太字**を活用する。
+   - 情報がない場合は「情報が見つかりません」と答える。
 """
 
 # -----------------------------------------------------------------------------
@@ -122,6 +123,7 @@ async def api_request_with_retry(func, *args, **kwargs):
                 if attempt == max_retries - 1:
                     logging.error(f"API Quota Exceeded after {max_retries} retries.")
                     raise e
+                
                 wait_time = default_delay
                 match = re.search(r"retry in (\d+\.?\d*)s", error_str)
                 if match:
@@ -174,6 +176,7 @@ class SearchPipeline:
         """Gemini Structured Outputs を使用した高速・確実なリランク"""
         if not documents:
             return []
+        
         # コンテキスト作成 (トークン節約のため、先頭1000文字程度に制限)
         candidates_text = ""
         for i, doc in enumerate(documents):
@@ -195,18 +198,22 @@ class SearchPipeline:
                 ),
                 safety_settings=SAFETY_SETTINGS
             )
+            
             # JSONパース処理
             data = json.loads(resp.text)
+            
             reranked = []
             for item in data.get("ranked_items", []):
                 idx = item.get("id")
                 score = item.get("score")
+                
                 # インデックスの妥当性とスコアチェック
                 if idx is not None and 0 <= idx < len(documents):
                     if score >= PARAMS["RERANK_SCORE_THRESHOLD"]:
                         doc = documents[idx]
                         doc['rerank_score'] = score
                         reranked.append(doc)
+            
             reranked.sort(key=lambda x: x['rerank_score'], reverse=True)
             return reranked[:top_k]
 
@@ -220,6 +227,7 @@ class SearchPipeline:
         """MMR風フィルタリング（重複排除）"""
         loop = asyncio.get_running_loop()
         unique_docs = []
+        
         def _calc_sim(a, b):
             return SequenceMatcher(None, a, b).ratio()
 
@@ -239,12 +247,14 @@ def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
     """回答生成後に参照元リンクを作成するヘルパー関数"""
     unique_refs = []
     seen_sources = set()
+    
     for idx, src in sources_map.items():
         if src in seen_sources: continue
         # テキスト内で引用されているか、または上位3件なら表示
         if f"[{idx}]" in response_text or idx <= 3:
             unique_refs.append(f"* [{idx}] {src}")
             seen_sources.add(src)
+            
     if unique_refs:
         return "\n\n## 参照元\n" + "\n".join(unique_refs)
     return ""
@@ -256,6 +266,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     session_id = get_or_create_session_id(request)
     feedback_id = str(uuid.uuid4())
     user_input = chat_req.query.strip()
+    
     # クライアントへ初期レスポンス
     yield send_sse({'feedback_id': feedback_id, 'status_message': '🔍 データベースを検索しています...'})
 
@@ -275,7 +286,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             query_embedding = raw_emb_result["embedding"]
         except Exception as e:
             log_context(session_id, f"Embedding Failed: {e}", "error")
-            yield send_sse({'content': AI_MESSAGES["ERROR"]})
+            # ★修正点2: Embedding失敗は「システムエラー」として通知（アクセス集中ではない）
+            yield send_sse({'content': AI_MESSAGES["SYSTEM_ERROR"]})
             return
 
         # Step 3: FAQ (QA Database) チェック
@@ -292,7 +304,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         # 処理節約のためクエリ拡張はスキップし、生の入力を使用
         raw_docs = core_database.db_client.search_documents_hybrid(
             collection_name=chat_req.collection,
-            query_text=user_input,
+            query_text=user_input, 
             query_embedding=query_embedding,
             match_count=30
         )
@@ -302,8 +314,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             return
 
         yield send_sse({'status_message': '🧐 AIが文献を読んで選定中...'})
+        
         # Step 5: フィルタリング & リランク
         unique_docs = await SearchPipeline.filter_diversity(raw_docs)
+        
         # Geminiによるリランク実行
         relevant_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=chat_req.top_k)
 
@@ -312,13 +326,16 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             return
 
         # Step 6: 回答生成
-        yield send_sse({'status_message': '✍️ 回答を生成しています...'})
+        yield send_sse({'status_message': '✍️ 回答を執筆しています...'})
+        
         context_parts = []
         sources_map = {} # {doc_id: source_name}
+        
         for idx, doc in enumerate(relevant_docs, 1):
             src = doc.get('metadata', {}).get('source', '不明')
             sources_map[idx] = src
             context_parts.append(f"<doc id='{idx}' src='{src}'>\n{doc.get('content','')}\n</doc>")
+        
         context_str = "\n".join(context_parts)
         full_system_prompt = f"{PROMPT_SYSTEM_GENERATION}\n<context>\n{context_str}\n</context>"
 
@@ -329,24 +346,42 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             stream=True,
             safety_settings=SAFETY_SETTINGS
         )
+        
         full_resp = ""
         async for chunk in stream:
             if chunk.text:
                 full_resp += chunk.text
                 yield send_sse({'content': chunk.text})
+        
+        # ★修正点3: 回答が空（セーフティ等でブロック）の場合のハンドリング追加
+        if not full_resp:
+             yield send_sse({'content': AI_MESSAGES["BLOCKED"]})
+             history_manager.add(session_id, "assistant", "[[BLOCKED]]")
+             return
+
         # Step 7: 参照元リンクの追記
         if "情報が見つかりません" not in full_resp:
             refs_text = _build_references(full_resp, sources_map)
             if refs_text:
                 yield send_sse({'content': refs_text})
                 full_resp += refs_text
+        
         history_manager.add(session_id, "assistant", full_resp)
 
     except Exception as e:
         log_context(session_id, f"Critical Pipeline Error: {e}", "error")
-        # 429エラーの場合はユーザーに分かりやすいメッセージを返す
-        err_msg = AI_MESSAGES["RATE_LIMIT"] if "429" in str(e) else AI_MESSAGES["ERROR"]
-        yield send_sse({'content': err_msg})
+        
+        # ★修正点4: エラー種別によるメッセージの正確な出し分け
+        error_str = str(e)
+        if "429" in error_str or "Quota" in error_str:
+            msg = AI_MESSAGES["RATE_LIMIT"]
+        elif "finish_reason" in error_str: # Gemini固有のブロックエラーなど
+            msg = AI_MESSAGES["BLOCKED"]
+        else:
+            msg = AI_MESSAGES["SYSTEM_ERROR"]
+            
+        yield send_sse({'content': msg})
+        
     finally:
         # どのような終了フローでもフィードバックボタンは表示する
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
@@ -358,17 +393,21 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
     if not logs:
         yield send_sse({'content': '分析対象データがありません。'})
         return
+    
     # ログデータの要約
     summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
     prompt = f"""
     以下のチャットボット利用ログを分析し、Markdownでレポートを作成してください。
+    
     # ログデータ
     {summary}
+    
     # 出力項目
     1. ユーザーの主な関心事（トレンド）
     2. 低評価の原因と改善策
     3. 次のアクションプラン
     """
+    
     try:
         model = genai.GenerativeModel(USE_MODEL)
         stream = await api_request_with_retry(model.generate_content_async, prompt, stream=True)
