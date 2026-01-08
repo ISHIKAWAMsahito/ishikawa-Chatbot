@@ -208,71 +208,70 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     session_id = get_or_create_session_id(request)
     feedback_id = str(uuid.uuid4())
     user_input = chat_req.query.strip()
-    
     yield send_sse({'feedback_id': feedback_id})
 
     try:
         # --- 1. 検索フェーズ ---
         yield send_sse({'status_message': '🔍 データベースを検索しています...'})
-        
-        # クエリ拡張を開始 (後でFAQヒットならキャンセル)
-        task_query = asyncio.create_task(SearchPipeline.optimize_query(user_input, session_id))
-        
-        # Embedding
-        task_embed = asyncio.create_task(
-            genai.embed_content_async(model=chat_req.embedding_model, content=user_input, task_type="retrieval_query")
+        # [削減ポイント1] クエリ拡張 (optimize_query) を廃止
+        # task_query = asyncio.create_task(SearchPipeline.optimize_query(user_input, session_id))
+        search_query = user_input  # ユーザーの入力をそのまま使う
+
+        # [削減ポイント2] Embeddingを1回だけ実行し、FAQと文書検索の両方で使い回す
+        # Note: ユーザー入力をベクトル化
+        embedding_task = asyncio.create_task(
+            genai.embed_content_async(
+                model=chat_req.embedding_model,
+                content=user_input,
+                task_type="retrieval_query"
+            )
         )
 
-        # A. FAQチェック
+        # A. FAQチェック (埋め込み完了を待つ)
         try:
-            raw_emb = (await task_embed)["embedding"]
-            if qa_hits := core_database.db_client.search_fallback_qa(raw_emb, match_count=1):
+            raw_emb_result = await embedding_task
+            query_embedding = raw_emb_result["embedding"]
+
+            if qa_hits := core_database.db_client.search_fallback_qa(query_embedding, match_count=1):
                 top_qa = qa_hits[0]
                 if top_qa.get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
-                    task_query.cancel() # 無駄なAPI消費を停止
+                    # FAQヒット時はここで終了。リランクも回答生成も走らないのでAPI消費は最小
                     resp = format_urls_as_links(f"よくあるご質問に回答が見つかりました。\n\n---\n{top_qa['content']}")
                     history_manager.add(session_id, "assistant", resp)
                     yield send_sse({'content': resp, 'show_feedback': True, 'feedback_id': feedback_id})
                     return
         except Exception as e:
-            log_context(session_id, f"FAQ Search Skip: {e}", "warning")
+            log_context(session_id, f"FAQ Search/Embed Error: {e}", "warning")
+            # 万が一Embeddingに失敗していたら、この後の検索もできないためエラー終了
+            if 'query_embedding' not in locals():
+                yield send_sse({'content': AI_MESSAGES["ERROR"]})
+                return
 
         # B. DB検索
-        try:
-            search_query = await task_query
-        except asyncio.CancelledError:
-            search_query = user_input
-
-        optimized_emb = (await genai.embed_content_async(
-            model=chat_req.embedding_model, content=search_query, task_type="retrieval_query"
-        ))["embedding"]
-
+        # クエリ拡張をしていないので、さきほど取得した query_embedding をそのまま流用 (再度のAPIコール不要)
         raw_docs = core_database.db_client.search_documents_hybrid(
             collection_name=chat_req.collection,
-            query_text=search_query,
-            query_embedding=optimized_emb,
-            match_count=30
+            query_text=search_query,       # 生の質問文
+            query_embedding=query_embedding, # さっきのベクトル
+            match_count=30                 # リランク前なので少し広めに取る
         )
-        
-        yield send_sse({'status_message': '🧐 文献の重要度をAIが精査中...'})
+        yield send_sse({'status_message': '🧐 AIが文献を読んで選定中...'})
         unique_docs = await SearchPipeline.filter_diversity(raw_docs)
-        
-        # リランク (APIコール)
-        relevant_docs = await SearchPipeline.rerank(user_input, unique_docs[:12], top_k=chat_req.top_k)
+        # [維持ポイント] リランクを実行 (ここで1回目の生成APIコール)
+        # top_k 分だけ選定する
+        relevant_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=chat_req.top_k)
 
         # --- 2. 回答生成フェーズ ---
         if not relevant_docs:
             yield send_sse({'content': AI_MESSAGES["NOT_FOUND"]})
         else:
             yield send_sse({'status_message': '✍️ 回答を執筆しています...'})
-            
             context_parts = []
             sources_map = {}
             for idx, doc in enumerate(relevant_docs, 1):
                 src = doc.get('metadata', {}).get('source', '不明')
                 sources_map[idx] = src
                 context_parts.append(f"<doc id='{idx}' src='{src}'>\n{doc.get('content','')}\n</doc>")
-            
             system_prompt = f"""
             あなたは札幌学院大学の学生サポートAIです。
             以下の<context>内の情報**のみ**を使用して、質問に回答してください。
@@ -288,24 +287,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             {chr(10).join(context_parts)}
             </context>
             """
-            
             model = genai.GenerativeModel(USE_MODEL)
-            
-            # リトライ付きでストリーム生成を開始
+            # [2回目の生成APIコール] 回答生成
             stream = await api_request_with_retry(
                 model.generate_content_async,
                 [system_prompt, f"質問: {user_input}"],
                 stream=True,
                 safety_settings=SAFETY_SETTINGS
             )
-            
             full_resp = ""
             async for chunk in stream:
                 if chunk.text:
                     full_resp += chunk.text
                     yield send_sse({'content': chunk.text})
-            
-            # 参照元の追記 (スッキリ版)
+            # 参照元の追記
             if "情報が見つかりません" not in full_resp:
                 refs_header = "\n\n## 参照元\n"
                 unique_refs = []
@@ -313,6 +308,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
                 for idx, src in sources_map.items():
                     if src in seen_sources: continue
+                    # 本文で参照されているか、上位3件までは表示
                     if f"[{idx}]" in full_resp or idx <= 3:
                         unique_refs.append(f"* [{idx}] {src}")
                         seen_sources.add(src)
@@ -321,14 +317,12 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                     refs_text = refs_header + "\n".join(unique_refs)
                     yield send_sse({'content': refs_text})
                     full_resp += refs_text
-            
             history_manager.add(session_id, "assistant", full_resp)
 
     except Exception as e:
         log_context(session_id, f"Critical Error: {e}", "error")
-        # 429エラー時は待機を促す
         if "429" in str(e) or "Quota" in str(e):
-             yield send_sse({'content': "申し訳ありません。現在アクセスが集中しており、一時的に利用できません。1分ほど待ってから再度お試しください。"})
+             yield send_sse({'content': "申し訳ありません。現在アクセスが集中しています。恐れ入りますが、1分ほど待ってから再度お試しください。"})
         else:
              yield send_sse({'content': AI_MESSAGES["ERROR"]})
     finally:
