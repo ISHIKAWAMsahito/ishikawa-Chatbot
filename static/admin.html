@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI chatbot system【管理者画面】</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    
 <style>
      /* --- 追加: 生成停止ボタンのスタイル --- */  /*12/14チャット送信停止ボタンのスタイル追加*/
 .send-btn.generating {
@@ -36,7 +35,39 @@
         padding: 24px;
         overflow-x: hidden;
     }
+/* --- ステータス表示アニメーション --- */
+.status-pulse {
+    display: inline-flex;
+    align-items: center;
+    color: #666;
+    font-size: 0.95rem;
+    font-weight: 500;
+    background: #f0f2f5;
+    padding: 8px 16px;
+    border-radius: 20px;
+    animation: pulse-bg 1.5s infinite alternate;
+}
 
+.status-pulse::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background-color: #4facfe;
+    border-radius: 50%;
+    margin-right: 8px;
+    animation: blink 1s infinite;
+}
+
+@keyframes pulse-bg {
+    0% { background-color: #f0f2f5; }
+    100% { background-color: #e1e4e8; }
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
     /* --- レイアウトコンテナ --- */
     .container {
         max-width: 1400px;
@@ -67,7 +98,6 @@
         position: relative;
         z-index: 1;
     }
-    
     /* ---------------------------------------------------- */
     /* ★ 追加: 管理者用ログアウトボタン（白背景・黒文字） */
     /* ---------------------------------------------------- */
@@ -99,7 +129,6 @@
         box-shadow: 0 6px 12px rgba(0,0,0,0.2);
         transform: translateY(-2px);
     }
-    
     .main-content {
         display: grid;
         grid-template-columns: 1fr 300px;
@@ -160,7 +189,6 @@
     .message-content a { color: #007bff; text-decoration: underline; }
     .message-content a:hover { color: #0056b3; }
     .message-time { font-size: 0.8rem; opacity: 0.7; margin-top: 8px; /* 統一 */ }
-    
     .important-note {
         color: red;
         font-weight: bold;
@@ -252,7 +280,7 @@
         color: #666;
         margin-top: 5px;
     }
-   .document-list {
+.document-list {
     max-height: 150px;
     overflow-y: auto;
     margin-top: 10px;
@@ -290,7 +318,6 @@
         font-size: 0.8rem;
         color: #28a745;
     }
-    
     /* --- 文書管理・ウェブサイト取得 --- */
     .scrape-btn {
         margin-top: 16px; /* 統一 */
@@ -314,19 +341,19 @@
         transform: none;
         opacity: 0.6;
     }
-    .website-example { 
-        padding: 12px 16px; /* 統一 */ 
-        background: #f0f8ff; 
-        border-radius: 8px; /* 統一 */ 
-        margin-bottom: 8px; /* 統一 */ 
-        cursor: pointer; 
-        transition: all 0.2s ease; 
-        font-size: 0.9rem; 
+    .website-example {
+        padding: 12px 16px; /* 統一 */
+        background: #f0f8ff;
+        border-radius: 8px; /* 統一 */
+        margin-bottom: 8px; /* 統一 */
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-size: 0.9rem;
         border-left: 4px solid #007bff;
         box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
     }
-    .website-example:hover { 
-        background: #e0f0ff; 
+    .website-example:hover {
+        background: #e0f0ff;
         transform: translateX(4px);
         box-shadow: 0 4px 12px rgba(0, 123, 255, 0.15);
     }
@@ -388,7 +415,6 @@
     <div class="container">
         <div class="header">
             <a href="/logout" class="logout-btn">🚪 ログアウト</a>
-            
             <h1>🔍 AI chatbot system【管理者】</h1>
             <p>学生支援のためのAIチャットボット (Gemini API版)</p>
         </div>
@@ -485,7 +511,6 @@
                         <div class="sync-status" id="embeddingSyncStatus">設定同期待機中...</div>
                     </div>
                 </div>
-                
                 <div class="panel-section">
     <h3 class="section-title">📊 統計・分析</h3>
     <button class="admin-tool-btn" onclick="location.href='stats.html'">
@@ -539,7 +564,6 @@
             // クライアント用と同じ設定エンドポイントを利用します
             const response = await fetch('/api/client/chat/config');
             if (!response.ok) return;
-            
             const config = await response.json();
             if (config.supabase_url && config.supabase_anon_key) {
                 window.supabaseClient = createClient(config.supabase_url, config.supabase_anon_key);
@@ -549,7 +573,6 @@
             console.error("Supabase初期化失敗:", error);
         }
     }
-    
     // ページ読み込み時に実行
     initializeSupabase();
     document.addEventListener('DOMContentLoaded', () => {
@@ -564,7 +587,6 @@
         const embeddingModelSelect = document.getElementById('embeddingModelSelect');
         const scrapeUrlInput = document.getElementById('scrapeUrlInput');
         const scrapeBtn = document.getElementById('scrapeBtn');
-        
         let currentCollection = '';
         let backendConnected = false;
         let settingsSocket = null;
@@ -575,7 +597,6 @@
                 // 通信プロトコルの決定（httpsならwss、httpならws）
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
-                
                 console.log(`📡 WebSocket接続試行中... (${wsUrl})`);
                 settingsSocket = new WebSocket(wsUrl);
 
@@ -604,14 +625,11 @@
                 settingsSocket.onclose = function() {
                     console.log('⚠️ 設定同期WebSocketが切断されました');
                     updateSyncStatus(false, '設定同期切断（再接続待機中）');
-                    
                     // 指数バックオフの計算
                     // 1秒(2^1) → 2秒(2^2) → 4秒(2^3) ... と増やし、最大30秒でキャップ(固定)
                     wsRetryCount++;
-                    const delay = Math.min(1000 * Math.pow(2, wsRetryCount), 30000); 
-                    
+                    const delay = Math.min(1000 * Math.pow(2, wsRetryCount), 30000);
                     console.log(`🔄 ${delay/1000}秒後に再接続を試みます... (試行回数: ${wsRetryCount}回)`);
-                    
                     // 指定した秒数後に自分自身を再実行
                     setTimeout(() => {
                         // 切断状態で、かつ新しいインスタンスが作られていない場合のみ再接続
@@ -640,7 +658,6 @@
             const syncStatus = document.getElementById('syncStatus');
             const syncStatusText = document.getElementById('syncStatusText');
             const autoSyncIndicator = document.getElementById('autoSyncIndicator');
-            
             if (syncStatus && syncStatusText) {
                 syncStatus.className = `status-indicator ${connected ? 'status-connected' : 'status-disconnected'}`;
                 syncStatusText.textContent = message;
@@ -722,14 +739,12 @@
             messageWrapper.className = `message ${type}`;
             const messageContent = document.createElement('div');
             messageContent.className = 'message-content';
-            
             if (text.includes('<a href=')) {
                 let processedText = text.replace(/\n/g, '<br>');
                 messageContent.innerHTML = processedText;
             } else {
                 messageContent.innerHTML = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
             }
-            
             messageWrapper.appendChild(messageContent);
             const messageTime = document.createElement('div');
             messageTime.className = 'message-time';
@@ -744,7 +759,6 @@
         // --- フィードバック送信機能 (Supabase版) ---
         async function sendFeedback(element, rating) {
             console.log(`フィードバック送信開始: ${rating}`);
-            
             try {
                 // 1. Supabaseクライアントの確認
                 if (!window.supabaseClient) {
@@ -758,7 +772,7 @@
                 const insertData = {
                     rating: rating,        // 'good' または 'bad'
                     comment: "管理者画面からの評価", // どこから送ったかわかるように変更推奨
-                    created_at: new Date().toISOString() 
+                    created_at: new Date().toISOString()
                 };
 
                 // 3. Supabaseに送信 (anonymous_commentsテーブル)
@@ -775,7 +789,6 @@
                 // 4. 画面の見た目を更新
                 const feedbackContainer = element.parentElement;
                 feedbackContainer.innerHTML = '<span class="feedback-thanks">フィードバックを保存しました</span>';
-                
             } catch(error) {
                 console.error("フィードバック送信エラー:", error);
                 alert("送信に失敗しました。");
@@ -796,7 +809,6 @@
                 return null;
             }
         }
-        
         function updateStatus(elementId, textId, connected, serviceName) {
             const statusIndicator = document.getElementById(elementId);
             const statusText = document.getElementById(textId);
@@ -805,7 +817,6 @@
                 statusText.textContent = connected ? `${serviceName} 接続済み` : `${serviceName} 未接続`;
             }
         }
-        
         function checkDbConnection(dbType) {
             const dbName = dbType || '不明';
             const dbNameCapitalized = dbName.charAt(0).toUpperCase() + dbName.slice(1);
@@ -837,21 +848,19 @@
             if (backendUrlEl) {
                 backendUrlEl.textContent = window.location.origin;
             }
-            
             const dbType = await checkBackendConnection();
-            
             if (backendConnected) {
                 checkDbConnection(dbType);
                 await checkGeminiConnection();
                 await refreshCollections();
-                connectSettingsWebSocket(); 
+                connectSettingsWebSocket();
             }
         }
 
         // --- チャット機能 ---
         // 12/14 チャット停止機能追加
        // ▼▼▼ この変数を sendMessage 関数の「外側」（直前）に追加してください ▼▼▼
-let abortController = null; 
+let abortController = null;
 
 async function sendMessage() {
     const userInput = chatInput.value.trim();
@@ -862,11 +871,9 @@ async function sendMessage() {
     if (abortController) {
         abortController.abort(); // 通信を強制切断
         abortController = null;  // リセット
-        
         // UIを「送信」ボタンに戻す
         sendBtn.classList.remove('generating');
         sendBtn.innerHTML = '<span>送信</span><span>🔍</span>';
-        
         // メッセージに「(停止しました)」と追記
         const generatingMsgs = document.querySelectorAll('.message.bot');
         if(generatingMsgs.length > 0) {
@@ -885,7 +892,6 @@ async function sendMessage() {
     // 【送信ロジック】ここからは通常の送信処理
     // ============================================================
     if (!userInput) return;
-    
     if (!currentCollection) {
         addMessage('❌ コレクションが選択されていません。', 'bot');
         return;
@@ -929,14 +935,14 @@ async function sendMessage() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         botMessageContent.innerHTML = '';
-        let buffer = ''; 
-
+        let buffer = '';
+// 変数初期化
+let isFirstChunk = true; // ★追加: これを while ループの前に置くのが重要
         while (true) {
             const { done, value } = await reader.read();
             if (done) {
                 // 完了処理
                 botMessageElement.dataset.finished = "true";
-                
                 if (botMessageElement.dataset.logId) {
                     const feedbackContainer = document.createElement('div');
                     feedbackContainer.className = 'feedback-container';
@@ -949,41 +955,57 @@ async function sendMessage() {
                 }
                 break;
             }
-            
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
-            buffer = lines.pop(); 
-            
+            buffer = lines.pop();
             for (const line of lines) {
                 if (line.trim().startsWith('data: ')) {
                     const jsonString = line.substring(6).trim();
 
-                    if (jsonString) { 
+                    if (jsonString) {
                         try {
                             const data = JSON.parse(jsonString);
-                            
+                            // ID保存 (既存)
                             if (data.feedback_id) {
-                                botMessageElement.dataset.feedbackId = data.feedback_id; 
-                                botMessageElement.dataset.logId = data.feedback_id;     
+                                botMessageElement.dataset.feedbackId = data.feedback_id;
+                                botMessageElement.dataset.logId = data.feedback_id;
                             }
-                            
+                            // --- ★ここから追加: ステータスメッセージの処理 ---
+                            if (data.status_message) {
+                                // ステータスメッセージで中身を上書き（アニメーション付き）
+                                botMessageContent.innerHTML = `<span class="status-pulse">${data.status_message}</span>`;
+                                // チャット画面を最下部へスクロール
+                                if(chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+                                continue; // コンテンツ処理はスキップして次のデータを待つ
+                            }
+                            // --- ここまで ---
+
+                            // --- ★ここから変更: コンテンツ（回答本文）の処理 ---
                             if (data.content) {
+                                // 最初のコンテンツが来たら、それまでの「ステータスメッセージ」を消す
+                                if (isFirstChunk) {
+                                    botMessageContent.innerHTML = '';
+                                    isFirstChunk = false;
+                                }
+
                                 fullResponse += data.content;
+                                // Markdownリンクの変換処理 (既存)
                                 let htmlText = fullResponse.replace(
-                                    /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, 
+                                    /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g,
                                     '<a href="$2" target="_blank">$1</a>'
                                 );
                                 htmlText = htmlText.replace(/\n/g, '<br>');
                                 botMessageContent.innerHTML = htmlText;
-                                chatMessages.scrollTop = chatMessages.scrollHeight;
+                                if(chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
                             }
+                            // --- ここまで ---
                         } catch (e) {
                             console.error("Error parsing stream data:", e);
                         }
                     }
                 }
             }
-        } 
+        }
     } catch (error) {
         // エラーハンドリング
         if (error.name === 'AbortError') {
@@ -1062,7 +1084,6 @@ async function sendMessage() {
                 addMessage(`❌ 作成中に通信エラー: ${error.message}`, 'bot');
             }
         }
-        
         async function deleteCollection() {
             const collectionName = collectionSelect.value;
             if (!collectionName) return;
@@ -1087,8 +1108,8 @@ async function sendMessage() {
                     const collections = await response.json();
                     updateCollectionList(collections);
                 } else {
-                   addMessage('❌ コレクション一覧の取得に失敗しました。', 'bot');
-                   updateCollectionList([]);
+                addMessage('❌ コレクション一覧の取得に失敗しました。', 'bot');
+                updateCollectionList([]);
                 }
             } catch (error) {
                 addMessage(`❌ コレクションの更新に失敗: ${error.message}`, 'bot');
@@ -1107,7 +1128,7 @@ async function sendMessage() {
                 const data = await response.json();
                 documentList.innerHTML = '';
                 if (response.ok && data.documents && data.documents.length > 0) {
-                     data.documents.forEach(doc => {
+                    data.documents.forEach(doc => {
                         const item = document.createElement('div');
                         item.className = 'document-item';
                         item.textContent = doc.id;
@@ -1135,7 +1156,6 @@ async function sendMessage() {
                 option.textContent = typeof item === 'string' ? item : `${item.name} (${item.count})`;
                 selectElement.appendChild(option);
             });
-            
             const values = items.map(item => typeof item === 'string' ? item : item.name);
 
             if (values.includes(currentValue)) {
@@ -1147,12 +1167,10 @@ async function sendMessage() {
             }
             return selectElement.value || '';
         }
-        
         function updateCollectionList(collections) {
             currentCollection = updateGenericList(collections, collectionSelect);
             updateDocumentList();
         }
-        
         async function scrapeWebsite() {
             const url = scrapeUrlInput.value.trim();
             if (!url || !currentCollection) {
@@ -1208,11 +1226,10 @@ async function sendMessage() {
         window.deleteCollection = deleteCollection;
         window.refreshCollections = refreshCollections;
         window.scrapeWebsite = scrapeWebsite;
-        
         // --- 追加: レコード管理画面を開く関数 ---
         window.openDocumentManager = function() {
     // ファイル名を 'DB.html' に合わせる #12/19 DB.htmlを開くため
-    window.open('DB.html', '_blank'); 
+    window.open('DB.html', '_blank');
 };
 
         window.setScrapeUrl = function(url) {
@@ -1239,7 +1256,6 @@ async function sendMessage() {
             this.style.height = (this.scrollHeight) + 'px';
         });
         fileInput.addEventListener('change', handleFileUpload);
-        
         chatMessages.addEventListener('click', (e) => {
             if (e.target.classList.contains('feedback-btn')) {
                 const rating = e.target.dataset.rating;
