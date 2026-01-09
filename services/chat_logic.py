@@ -181,7 +181,7 @@ class SearchPipeline:
         candidates_text = ""
         for i, doc in enumerate(documents):
             meta = doc.get('metadata', {})
-            snippet = doc.get('content', '')[:1000].replace('\n', ' ')
+            snippet = doc.get('content', '')[:300].replace('\n', ' ')#1/91000文字から300文字渡すように変更
             candidates_text += f"ID:{i} [Source:{meta.get('source', '?')}]\n{snippet}\n\n"
 
         formatted_prompt = PROMPT_RERANK.format(query=query, candidates_text=candidates_text)
