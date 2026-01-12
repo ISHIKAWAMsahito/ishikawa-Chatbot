@@ -32,7 +32,7 @@ USE_MODEL = "gemini-2.5-flash"
 
 # パラメータ
 PARAMS = {
-    "QA_SIMILARITY_THRESHOLD": 0.95, # FAQの即答ライン
+    "QA_SIMILARITY_THRESHOLD": 0.90, # FAQの即答ライン 1/110.90に変更
     "RERANK_SCORE_THRESHOLD": 6.0,   # リランク足切りライン(0-10)
     "MAX_HISTORY_LENGTH": 20,
 }
@@ -326,7 +326,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             return
 
         # Step 6: 回答生成
-        yield send_sse({'status_message': '✍️ 回答を執筆しています...'})
+        yield send_sse({'status_message': '✍️ 回答を生成しています...'})
         
         context_parts = []
         sources_map = {} # {doc_id: source_name}
