@@ -185,70 +185,59 @@ async def delete_document(doc_id: int, user: dict = Depends(require_auth)):
 # アップロード & スクレイピング (Renderメモリ対策版)
 # ----------------------------------------------------------------
 
+# documents.py の process_batch_insert 関数をこれに置き換えてください
+
 async def process_batch_insert(batch_docs: List[Any], embedding_model: str, collection_name: str):
     """
-    バッチ処理用のヘルパー関数。
-    受け取ったドキュメントのリストをベクトル化し、DBに挿入する。
+    バッチ処理用のヘルパー関数（リトライ強化版）。
+    API制限にかかった場合、60秒待機して再試行します。
     """
     if not batch_docs:
         return 0
 
     batch_texts = [doc.page_content for doc in batch_docs]
-    inserted_count = 0
-
-    try:
-        # API呼び出し (まとめて処理)
-        embedding_response = genai.embed_content(
-            model=embedding_model,
-            content=batch_texts,
-            task_type="retrieval_document"
-        )
-        embeddings = embedding_response["embedding"]
-        
-        # DBへの挿入
-        for j, doc in enumerate(batch_docs):
-            if "collection_name" not in doc.metadata:
-                doc.metadata["collection_name"] = collection_name
-            
-            database.db_client.insert_document(
-                content=doc.page_content, 
-                embedding=embeddings[j], 
-                metadata=doc.metadata
+    
+    # 最大リトライ回数
+    max_retries = 3
+    
+    for attempt in range(max_retries + 1):
+        try:
+            # API呼び出し
+            embedding_response = genai.embed_content(
+                model=embedding_model,
+                content=batch_texts,
+                task_type="retrieval_document"
             )
-            inserted_count += 1
+            embeddings = embedding_response["embedding"]
             
-        return inserted_count
-
-    except Exception as e:
-        # クォータエラー時のリトライ処理
-        if "429" in str(e) or "quota" in str(e).lower():
-            logging.warning("API制限(429/Quota)を検知。15秒待機してリトライします...")
-            await asyncio.sleep(15)
-            try:
-                # リトライ
-                embedding_response = genai.embed_content(
-                    model=embedding_model,
-                    content=batch_texts,
-                    task_type="retrieval_document"
+            # DBへの挿入
+            inserted_count = 0
+            for j, doc in enumerate(batch_docs):
+                if "collection_name" not in doc.metadata:
+                    doc.metadata["collection_name"] = collection_name
+                
+                database.db_client.insert_document(
+                    content=doc.page_content, 
+                    embedding=embeddings[j], 
+                    metadata=doc.metadata
                 )
-                embeddings = embedding_response["embedding"]
-                for j, doc in enumerate(batch_docs):
-                    if "collection_name" not in doc.metadata:
-                        doc.metadata["collection_name"] = collection_name
-                    
-                    database.db_client.insert_document(
-                        content=doc.page_content, 
-                        embedding=embeddings[j], 
-                        metadata=doc.metadata
-                    )
-                    inserted_count += 1
-                return inserted_count
-            except Exception as retry_e:
-                logging.error(f"リトライも失敗しました: {retry_e}")
-                raise retry_e
-        else:
-            logging.error(f"バッチベクトル化エラー: {e}")
-            raise e
+                inserted_count += 1
+                
+            return inserted_count
+
+        except Exception as e:
+            # クォータエラー時のリトライ処理
+            is_quota_error = "429" in str(e) or "quota" in str(e).lower()
+            
+            if is_quota_error and attempt < max_retries:
+                wait_time = 60  # 無料枠の回復を考慮して余裕を持って60秒待機
+                logging.warning(f"API制限(429)を検知。{wait_time}秒待機してリトライします... ({attempt + 1}/{max_retries}回目)")
+                await asyncio.sleep(wait_time)
+                continue # 次のループ（再試行）へ
+            else:
+                # リトライ回数切れ、または別のエラーの場合は例外を投げる
+                logging.error(f"バッチベクトル化エラー（リトライ断念）: {e}")
+                raise e
 
 
 # 12/26 既存の cleaning_instruction を upload でも使えるように関数の外、または共通化して定義。upload と scrape の両方で、処理開始直後に 「同じファイル名（source）のデータがあれば削除する」 処理
