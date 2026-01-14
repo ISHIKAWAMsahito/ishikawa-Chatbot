@@ -47,6 +47,7 @@
     </script>
 
     <style>
+        
         /* --- 追加: 生成停止ボタンのスタイル --- */
         .send-btn.generating {
             background: #dc3545 !important; /* 赤色 (importantで強制) */
@@ -209,10 +210,101 @@
             .settings-update-notification { position: fixed; top: auto; bottom: 20px; right: 20px; left: 20px; }
             .comment-btn { position: static; margin-top: 15px; }
         }
+        /* --- ダークモード用スタイル定義 --- */
+:root {
+    --bg-overlay: rgba(255, 255, 255, 0.98);
+    --text-main: #333;
+    --panel-bg: white;
+    --input-bg: white;
+    --input-border: #e9ecef;
+    --bot-msg-bg: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    --bot-msg-text: #333;
+}
+
+body.dark-mode {
+    /* 全体の背景を暗い色に固定（テーマ変更よりも優先されます） */
+    background: #1a1a2e !important;
+    --bg-overlay: rgba(30, 30, 40, 0.98);
+    --text-main: #e0e0e0;
+    --panel-bg: #2d2d3a;
+    --input-bg: #404050;
+    --input-border: #555;
+    --bot-msg-bg: linear-gradient(135deg, #3a3a4a 0%, #2b2b3b 100%);
+    --bot-msg-text: #e0e0e0;
+}
+
+/* ダークモード時の要素ごとの上書き設定 */
+body.dark-mode .container {
+    background: var(--bg-overlay);
+    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5);
+}
+
+body.dark-mode .chat-container,
+body.dark-mode .chat-input-container,
+body.dark-mode .modal-content {
+    background: var(--panel-bg);
+    color: var(--text-main);
+}
+
+body.dark-mode .message-content {
+    color: inherit;
+}
+
+body.dark-mode .message.bot {
+    background: var(--bot-msg-bg);
+    color: var(--bot-msg-text);
+    border-left-color: #667eea;
+}
+
+body.dark-mode .chat-input,
+body.dark-mode .modal textarea {
+    background: var(--input-bg);
+    border-color: var(--input-border);
+    color: var(--text-main);
+}
+
+body.dark-mode .chat-input-container {
+    border-top-color: var(--input-border);
+}
+
+/* ダークモード切り替えボタンのスタイル */
+.dark-mode-toggle {
+    position: absolute;
+    top: 15px;
+    right: 200px;
+    background: white;
+    color: #333;
+    border: none;
+    border-radius: 50%;
+    width: 35px;
+    height: 35px;
+    font-size: 1.2rem;
+    cursor: pointer;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+    z-index: 20;
+}
+body.dark-mode .dark-mode-toggle {
+    background: #444;
+    color: #ffd700; /* 月の色 */
+}
+/* スマホ対応 */
+@media (max-width: 480px) {
+    .dark-mode-toggle {
+        position: static;
+        margin: 10px auto;
+        width: 40px; 
+        height: 40px;
+    }
+}
     </style>
 </head>
 <body>
     <div class="header">
+        <button id="darkModeBtn" class="dark-mode-toggle" title="ダークモード切替">🌙</button>
         <a href="/logout" class="logout-btn">🚪 ログアウト</a>
         <button id="openCommentModalBtn" class="comment-btn">✉️ 回答への意見・要望</button>
         <div class="settings-indicator" id="settingsIndicator">
@@ -295,6 +387,26 @@
 
         let settingsSocket = null;
         let abortController = null; // 生成停止用のコントローラー
+        // ダークモード切替機能
+const darkModeBtn = document.getElementById('darkModeBtn');
+const body = document.body;
+
+// 保存された設定を読み込む
+if (localStorage.getItem('theme') === 'dark') {
+    body.classList.add('dark-mode');
+    darkModeBtn.textContent = '☀️'; // 太陽アイコンに変更
+}
+
+darkModeBtn.addEventListener('click', () => {
+    body.classList.toggle('dark-mode');
+    if (body.classList.contains('dark-mode')) {
+        localStorage.setItem('theme', 'dark');
+        darkModeBtn.textContent = '☀️';
+    } else {
+        localStorage.setItem('theme', 'light');
+        darkModeBtn.textContent = '🌙';
+    }
+});
 
         // --- テーマ変更機能 ---
         const themes = {

@@ -409,11 +409,89 @@
             margin: 10px auto;
         }
     }
+    /* --- Admin用 ダークモード設定 --- */
+body.dark-mode {
+    background: linear-gradient(135deg, #1f1f2e 0%, #161625 100%) !important;
+    color: #e0e0e0;
+}
+
+body.dark-mode .container {
+    background: rgba(35, 35, 45, 0.98);
+}
+
+body.dark-mode .chat-container, 
+body.dark-mode .panel-section,
+body.dark-mode .setting-item,
+body.dark-mode .chat-input-container {
+    background: #2d2d3a;
+    color: #e0e0e0;
+    border-color: #444;
+}
+
+body.dark-mode .section-title {
+    color: #e0e0e0;
+    border-bottom-color: #555;
+}
+
+body.dark-mode .message.bot {
+    background: #3a3a4a;
+    color: #e0e0e0;
+    border-left-color: #667eea;
+}
+
+body.dark-mode .chat-input, 
+body.dark-mode input[type="text"], 
+body.dark-mode select,
+body.dark-mode .document-item {
+    background: #404050;
+    border: 1px solid #555;
+    color: #fff;
+}
+
+body.dark-mode .document-item:hover {
+    background: #505060;
+}
+
+body.dark-mode .model-info {
+    background: #3a3a4a;
+    color: #ccc;
+}
+body.dark-mode .total-chunks-info {
+    color: #bbb;
+}
+
+/* ボタンの位置調整 */
+.admin-dark-toggle {
+    position: absolute;
+    top: 25px;
+    left: 40px;
+    background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.5);
+    color: white;
+    border-radius: 30px;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 1.2rem;
+    z-index: 100;
+    transition: all 0.3s;
+}
+.admin-dark-toggle:hover {
+    background: rgba(255,255,255,0.4);
+}
+@media (max-width: 480px) {
+    .admin-dark-toggle {
+        position: static;
+        display: block;
+        margin: 10px auto;
+        width: fit-content;
+    }
+}
 </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
+            <button id="adminDarkModeBtn" class="admin-dark-toggle">🌙 モード切替</button>
             <a href="/logout" class="logout-btn">🚪 ログアウト</a>
             <h1>🔍 AI chatbot system【管理者】</h1>
             <p>学生支援のためのAIチャットボット (Gemini API版)</p>
@@ -556,6 +634,32 @@
     </div>
 
     <script>
+    document.addEventListener('DOMContentLoaded', () => {
+    // ... 既存のコード ...
+
+    const adminDarkBtn = document.getElementById('adminDarkModeBtn');
+    
+    // 設定読み込み
+    if (localStorage.getItem('adminTheme') === 'dark') {
+        document.body.classList.add('dark-mode');
+        if(adminDarkBtn) adminDarkBtn.textContent = '☀️ モード切替';
+    }
+
+    if(adminDarkBtn) {
+        adminDarkBtn.addEventListener('click', () => {
+            document.body.classList.toggle('dark-mode');
+            if (document.body.classList.contains('dark-mode')) {
+                localStorage.setItem('adminTheme', 'dark');
+                adminDarkBtn.textContent = '☀️ モード切替';
+            } else {
+                localStorage.setItem('adminTheme', 'light');
+                adminDarkBtn.textContent = '🌙 モード切替';
+            }
+        });
+    }
+
+    // ... 既存のコード ...
+});
     const { createClient } = supabase;
     window.supabaseClient = null;
 
