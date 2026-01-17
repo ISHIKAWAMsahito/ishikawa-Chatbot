@@ -4,7 +4,7 @@ import json
 import asyncio
 import re
 import os
-from typing import List, Dict, Any, AsyncGenerator, Optional
+from typing import List, Dict, Any, AsyncGenerator, Optional, Union
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 import typing_extensions as typing
@@ -95,24 +95,32 @@ PROMPT_SYSTEM_GENERATION = """
 # 3. ユーティリティ & クラス
 # -----------------------------------------------------------------------------
 
-def get_session_id(request: Request, query_obj: ChatQuery) -> str:
+def get_or_create_session_id(
+    source: Union[str, Request, None] = None, 
+    query_obj: Optional[ChatQuery] = None
+) -> str:
     """
-    セッションIDを安全に取得します。
-    リクエストオブジェクトかクエリオブジェクトのどちらかからIDを解決します。
+    セッションIDを取得または生成します。
+    ImportErrorを回避するため、関数名は 'get_or_create_session_id' である必要があります。
     """
-    # 1. クライアントから明示的に送られたIDを優先
+    # 1. 文字列が直接渡された場合 (旧コードとの互換性)
+    if isinstance(source, str):
+        return source
+
+    # 2. ChatQueryにIDがある場合 (最優先)
     if query_obj and query_obj.session_id:
         return query_obj.session_id
     
-    # 2. クッキー/セッションミドルウェアから取得
-    if hasattr(request, "session"):
-        sid = request.session.get('chat_session_id')
-        if not sid:
-            sid = str(uuid.uuid4())
-            request.session['chat_session_id'] = sid
-        return sid
-        
-    # 3. 新規生成
+    # 3. Requestオブジェクトから取得 (新仕様)
+    if isinstance(source, Request):
+        if hasattr(source, "session"):
+            sid = source.session.get('chat_session_id')
+            if not sid:
+                sid = str(uuid.uuid4())
+                source.session['chat_session_id'] = sid
+            return sid
+
+    # 4. 解決できない場合は新規発行
     return str(uuid.uuid4())
 
 def log_context(session_id: str, message: str, level: str = "info"):
@@ -141,15 +149,15 @@ async def api_request_with_retry(func, *args, **kwargs):
             else:
                 raise e
 
-# --- ★HistoryManager (Lazy Propertyで初期化エラー回避)★ ---
+# --- HistoryManager (Lazy Initialization) ---
 class ChatHistoryManager:
     def __init__(self):
-        # コンストラクタでのDBアクセスを回避
+        # 起動時のNoneTypeエラーを防ぐため、コンストラクタでは何もしない
         pass
     
     @property
     def supabase(self):
-        # 実際に使うときにクライアントを取得
+        """実際に必要になったタイミングでクライアントを取得"""
         if core_database.db_client is None or getattr(core_database.db_client, 'client', None) is None:
             logging.error("Database client is not initialized.")
             return None
@@ -176,7 +184,6 @@ class ChatHistoryManager:
                 .limit(limit)\
                 .execute()
             if not res.data: return ""
-            # 古い順に並び替え
             history = sorted(res.data, key=lambda x: x['created_at'])
             return "\n".join([f"{h['role']}: {h['content']}" for h in history])
         except Exception as e:
@@ -254,7 +261,6 @@ class SearchPipeline:
 def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
     unique_refs = []
     seen_sources = set()
-    # 形式または [1] 形式に対応
     cited_ids = set(map(int, re.findall(r'\[(?:cite:\s*)?(\d+)\]', response_text)))
     
     for idx, src in sources_map.items():
@@ -268,19 +274,19 @@ def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
     return ""
 
 # -----------------------------------------------------------------------------
-# 5. メインチャットロジック (引数順序を修正)
+# 5. メインチャットロジック
 # -----------------------------------------------------------------------------
 async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
     """
-    注意: api/chat.py から呼び出される際、(request, query_obj) の順序で渡されることを想定しています。
+    【重要】引数の順序は (request, query_obj) です。
+    api/chat.py からの呼び出し仕様に合わせています。
     """
-    # セッションIDの解決
-    session_id = get_session_id(request, query_obj)
+    # セッションIDの取得 (関数名を戻したのでImportErrorは解消します)
+    session_id = get_or_create_session_id(request, query_obj)
     
     feedback_id = str(uuid.uuid4())
     user_input = query_obj.query.strip()
     
-    # 開始通知
     yield send_sse({
         'feedback_id': feedback_id, 
         'status_message': '🔍 データベースを検索しています...',
@@ -308,7 +314,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
             return
 
         # Step 2: FAQ Check
-        if core_database.db_client: # 安全策
+        if core_database.db_client:
             qa_hits = core_database.db_client.search_fallback_qa(query_embedding, match_count=1)
             if qa_hits and qa_hits[0].get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
                 top_qa = qa_hits[0]
