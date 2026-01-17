@@ -266,7 +266,8 @@ def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
     for idx, src in sources_map.items():
         if idx in cited_ids or idx <= 2:
             if src in seen_sources: continue
-            unique_refs.append(f"* {src}")
+            # クリック可能なリンクとして出力（data-source属性にsource名を保存）
+            unique_refs.append(f"* <a href='#' class='source-link' data-source='{src}' onclick='event.preventDefault(); showSourceImage(this.dataset.source); return false;'>{src}</a>")
             seen_sources.add(src)
             
     if unique_refs:
