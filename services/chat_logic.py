@@ -391,9 +391,15 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         # 8.0s: 回答ストリーミング開始
         # ---------------------------------------------------------
         async for chunk in stream:
-            if chunk.text:
-                accumulated_text += chunk.text
-                yield send_sse({'content': chunk.text})
+            # ★修正: 空のチャンク（テキストを含まない完了信号など）によるエラーを回避
+            try:
+                # chunk.text にアクセスするだけで検証が行われるため、try-exceptで囲む
+                if chunk.text:
+                    accumulated_text += chunk.text
+                    yield send_sse({'content': chunk.text})
+            except Exception:
+                # テキストが含まれていないチャンク（メタデータのみ等）は無視して次へ
+                pass
         
         full_resp = accumulated_text
         
