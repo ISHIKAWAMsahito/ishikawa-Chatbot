@@ -6,7 +6,6 @@ import re
 import os
 from typing import List, Dict, Any, AsyncGenerator, Optional
 from concurrent.futures import ThreadPoolExecutor
-from difflib import SequenceMatcher
 import typing_extensions as typing
 
 # 外部ライブラリ
@@ -19,16 +18,12 @@ from dotenv import load_dotenv
 from core.config import GEMINI_API_KEY
 from core import database as core_database
 from models.schemas import ChatQuery
-from services.utils import format_urls_as_links
 
 # -----------------------------------------------------------------------------
-# 1. 設定 & インスタンス初期化
+# 1. 設定 & クラス定義
 # -----------------------------------------------------------------------------
 load_dotenv()
 genai.configure(api_key=GEMINI_API_KEY)
-
-# 履歴管理インスタンスをモジュールレベルで定義 (api/chat.py からのインポート用)
-history_manager = core_database.HistoryManager()
 
 # 使用モデル
 USE_MODEL = "gemini-2.5-flash" 
@@ -48,19 +43,66 @@ SAFETY_SETTINGS = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
 }
 
-# AIメッセージテンプレート
+# AIメッセージ
 AI_MESSAGES = {
     "SYSTEM_ERROR": "システムエラーが発生しました。管理者にお問い合わせください。",
     "NO_INFO": "申し訳ありません。その情報は見つかりませんでした。\n他に知りたいことはありますか？",
     "THINKING": "文献データベースを検索し、回答を作成しています..."
 }
 
+# --- ★ここにHistoryManagerを直接定義してエラーを回避★ ---
+class HistoryManager:
+    def __init__(self):
+        # Supabaseクライアントへの参照
+        self.supabase = core_database.db_client.client
+
+    def get_recent(self, session_id: str, limit: int = 10) -> str:
+        """指定したセッションの直近の会話履歴を取得し、テキスト形式で返す"""
+        try:
+            # chat_historyテーブルから取得 (テーブル名が違う場合は修正してください)
+            res = self.supabase.table("chat_history")\
+                .select("role, content, created_at")\
+                .eq("session_id", session_id)\
+                .order("created_at", desc=True)\
+                .limit(limit)\
+                .execute()
+            
+            if not res.data:
+                return ""
+            
+            # 古い順に並べ替え
+            history_data = sorted(res.data, key=lambda x: x['created_at'])
+            
+            formatted_history = []
+            for msg in history_data:
+                role = "User" if msg['role'] == "user" else "Model"
+                formatted_history.append(f"{role}: {msg['content']}")
+            
+            return "\n".join(formatted_history)
+        except Exception as e:
+            logging.error(f"Failed to fetch history: {e}")
+            return ""
+
+    def add(self, session_id: str, role: str, content: str):
+        """会話履歴をDBに保存する"""
+        try:
+            self.supabase.table("chat_history").insert({
+                "session_id": session_id,
+                "role": role,
+                "content": content
+            }).execute()
+        except Exception as e:
+            logging.error(f"Failed to add history: {e}")
+
+# インスタンス化 (これを api/chat.py からインポートできるようにする)
+history_manager = HistoryManager()
+
 # -----------------------------------------------------------------------------
-# 2. ヘルパー関数 (外部インポート用を含む)
+# 2. ヘルパー関数
 # -----------------------------------------------------------------------------
 
 def get_or_create_session_id(session_id: Optional[str] = None) -> str:
-    """セッションIDが存在しない場合に新規作成する (api/chat.py用)"""
+    """セッションIDが存在しない場合に新規作成する"""
     return session_id if session_id else str(uuid.uuid4())
 
 def get_signed_image_url(image_path: str, expiry_seconds: int = 3600) -> Optional[str]:
@@ -70,6 +112,8 @@ def get_signed_image_url(image_path: str, expiry_seconds: int = 3600) -> Optiona
     try:
         # core.database 経由で Supabase クライアントにアクセス
         res = core_database.db_client.client.storage.from_("images").create_signed_url(image_path, expiry_seconds)
+        
+        # レスポンス形式の揺れに対応
         if isinstance(res, dict):
             return res.get('signedURL')
         elif hasattr(res, 'signedURL'):
@@ -96,10 +140,7 @@ def log_context(session_id: str, message: str, level: str = "info"):
 # -----------------------------------------------------------------------------
 
 def _build_references(response_text: str, sources_map: Dict[int, Dict[str, Any]]) -> str:
-    """
-    回答で使用された情報源のリストを生成。
-    画像パスがある場合は、動的に署名付きURLを発行してリンクを追加する。
-    """
+    """回答で使用された情報源のリストを生成。画像リンク付き。"""
     unique_refs = []
     seen_sources = set()
     cited_ids = set(map(int, re.findall(r'\[(\d+)\]', response_text)))
@@ -133,7 +174,6 @@ def _build_references(response_text: str, sources_map: Dict[int, Dict[str, Any]]
 # -----------------------------------------------------------------------------
 
 async def enhanced_chat_logic(query_obj: ChatQuery, request: Request) -> AsyncGenerator[str, None]:
-    # セッションIDの確定
     session_id = get_or_create_session_id(query_obj.session_id)
     user_message = query_obj.message
     feedback_id = str(uuid.uuid4())
@@ -160,6 +200,7 @@ async def enhanced_chat_logic(query_obj: ChatQuery, request: Request) -> AsyncGe
 
         for idx, doc in enumerate(relevant_docs, 1):
             meta = doc.get('metadata', {})
+            # メタデータが文字列で保存されている場合のパース処理
             if isinstance(meta, str):
                 try: meta = json.loads(meta)
                 except: meta = {}
@@ -176,7 +217,7 @@ async def enhanced_chat_logic(query_obj: ChatQuery, request: Request) -> AsyncGe
 
         context_str = "\n".join(context_parts)
 
-        # 4. プロンプト作成 (システムインストラクション)
+        # 4. プロンプト作成
         system_instruction = f"""あなたは大学の学生生活支援チャットボットです。
 以下の資料に基づいて答えてください。引用元番号 [1] を必ず付けてください。
 資料にないことは「わかりません」と答え、憶測は避けてください。
@@ -218,6 +259,7 @@ async def enhanced_chat_logic(query_obj: ChatQuery, request: Request) -> AsyncGe
 
     except Exception as e:
         log_context(session_id, f"Error: {e}", "error")
+        # エラー時もユーザーにはメッセージを返す
         if not full_resp:
             yield send_sse({'content': AI_MESSAGES["SYSTEM_ERROR"]})
             
