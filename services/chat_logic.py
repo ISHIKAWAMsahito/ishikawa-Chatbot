@@ -111,9 +111,8 @@ def get_or_create_session_id(
 ) -> str:
     """
     セッションIDを取得または生成します。
-    ImportErrorを回避するため、関数名は 'get_or_create_session_id' である必要があります。
     """
-    # 1. 文字列が直接渡された場合 (旧コードとの互換性)
+    # 1. 文字列が直接渡された場合
     if isinstance(source, str):
         return source
 
@@ -121,7 +120,7 @@ def get_or_create_session_id(
     if query_obj and hasattr(query_obj, 'session_id') and query_obj.session_id:
         return query_obj.session_id
     
-    # 3. Requestオブジェクトから取得 (新仕様)
+    # 3. Requestオブジェクトから取得
     if isinstance(source, Request):
         if hasattr(source, "session"):
             sid = source.session.get('chat_session_id')
@@ -159,10 +158,9 @@ async def api_request_with_retry(func, *args, **kwargs):
             else:
                 raise e
 
-# --- HistoryManager (Lazy Initialization) ---
+# --- HistoryManager ---
 class ChatHistoryManager:
     def __init__(self):
-        # 起動時のNoneTypeエラーを防ぐため、コンストラクタでは何もしない
         pass
     
     @property
@@ -268,31 +266,69 @@ class SearchPipeline:
         second_half = documents[1::2][::-1]
         return first_half + second_half
 
+# -----------------------------------------------------------------------------
+# 5. 検索・参照ユーティリティ
+# -----------------------------------------------------------------------------
+
+def get_signed_url(file_path: str, bucket_name: str = "images"):
+    """
+    非公開ストレージ内のファイルに対して、1時間有効な署名付きURLを発行します。
+    """
+    try:
+        # 非公開の 'images' バケットからアクセス権付きのURLを生成
+        response = core_database.db_client.client.storage.from_(bucket_name).create_signed_url(file_path, 3600)
+        
+        if isinstance(response, dict) and "signedURL" in response:
+            return response["signedURL"]
+        return response 
+    except Exception as e:
+        logging.error(f"署名付きURLの発行に失敗しました (Path: {file_path}): {e}")
+        return None
+
 def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
+    """
+    回答内の [1] などの引用タグに基づき、クリック可能な画像リンクを生成します。
+    """
     unique_refs = []
     seen_sources = set()
-    cited_ids = set(map(int, re.findall(r'\[(?:cite:\s*)?(\d+)\]', response_text)))
+    # 本文中の [1] などの数字をすべて抽出
+    cited_ids = set(map(int, re.findall(r'\[(\d+)\]', response_text)))
     
     for idx, src in sources_map.items():
+        # 引用されたID、または最初の2件を常に表示
         if idx in cited_ids or idx <= 2:
             if src in seen_sources: continue
-            # クリック可能なリンクとして出力（data-source属性にsource名を保存）
-            unique_refs.append(f"* <a href='#' class='source-link' data-source='{src}' onclick='event.preventDefault(); showSourceImage(this.dataset.source); return false;'>{src}</a>")
+            
+            # 非公開ストレージ対応：署名付きURLを取得
+            signed_url = get_signed_url(src)
+            
+            if signed_url:
+                # onclickイベントでJavaScriptにURLを渡す
+                unique_refs.append(
+                    f"* <a href='#' class='source-link' "
+                    f"data-url='{signed_url}' "
+                    f"onclick='event.preventDefault(); showSourceImage(this.dataset.url); return false;'>"
+                    f"{src}</a>"
+                )
+            else:
+                # URL取得失敗時のフォールバック
+                unique_refs.append(f"* {src} (プレビュー不可)")
+                
             seen_sources.add(src)
             
     if unique_refs:
+        # 資料の「どこに書いてあったかを表示する」ルールに基づく 
         return "\n\n### 参照元データ\n" + "\n".join(unique_refs)
     return ""
 
 # -----------------------------------------------------------------------------
-# 5. メインチャットロジック
+# 6. メインチャットロジック
 # -----------------------------------------------------------------------------
 async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
     """
     【重要】引数の順序は (request, query_obj) です。
-    api/chat.py からの呼び出し仕様に合わせています。
     """
-    # セッションIDの取得 (関数名を戻したのでImportErrorは解消します)
+    # セッションIDの取得
     session_id = get_or_create_session_id(request, query_obj)
     
     feedback_id = str(uuid.uuid4())
@@ -383,12 +419,12 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
 """
         model = genai.GenerativeModel(USE_MODEL)
         stream = await api_request_with_retry(
-    model.generate_content_async,
-    f"ユーザーの質問: {user_input}",
-    stream=True,
-    generation_config=GenerationConfig(temperature=0.0), # 資料に忠実にする
-    safety_settings=SAFETY_SETTINGS
-)
+            model.generate_content_async,
+            f"ユーザーの質問: {user_input}",
+            stream=True,
+            generation_config=GenerationConfig(temperature=0.0), # 資料に忠実にする
+            safety_settings=SAFETY_SETTINGS
+        )
         
         yield send_sse({'status_message': '', 'type': 'status'})
 
@@ -403,6 +439,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
 
         # Step 6: References
         if "情報が見つかりません" not in full_resp:
+            # ここで修正版の _build_references を呼び出します
             refs_text = _build_references(full_resp, sources_map)
             if refs_text:
                 yield send_sse({'content': refs_text})
@@ -419,7 +456,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
 
 # -----------------------------------------------------------------------------
-# 6. 分析機能
+# 7. 分析機能
 # -----------------------------------------------------------------------------
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
     if not logs:
