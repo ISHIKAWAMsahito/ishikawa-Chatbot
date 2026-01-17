@@ -108,7 +108,7 @@ def get_or_create_session_id(
         return source
 
     # 2. ChatQueryにIDがある場合 (最優先)
-    if query_obj and query_obj.session_id:
+    if query_obj and hasattr(query_obj, 'session_id') and query_obj.session_id:
         return query_obj.session_id
     
     # 3. Requestオブジェクトから取得 (新仕様)
