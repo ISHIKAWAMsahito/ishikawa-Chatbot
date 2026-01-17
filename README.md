@@ -35,8 +35,8 @@ Retrieval-Augmented Generation (RAG) を活用した、札幌学院大学向け�
 
 ⚙️ 技術スタック
 - フロントエンド: HTML + JavaScript (WebSocket対応)
-- バックエンド: FastAPI (Python 3.11)
-- AI: Gemini API (text-embedding-004, gemini-2.5-flash)
+- バックエンド: FastAPI
+- AI: Gemini API (gemini-embedding-001, gemini-2.5-flash)
 - DB: Supabase (PostgreSQL + pgvector)
 - 認証: Auth0 (OAuth2.0)
 - インフラ: Render (無料プラン), Docker
@@ -71,7 +71,7 @@ services:
 
 🔒 セキュリティ
 - 学生: client.html
-- 管理者: admin.html / DB.html
+- 管理者: admin.html / DB.html / stats.html
 - 個人情報入力は禁止（氏名・学籍番号など）
 
 📈 今後の改善予定
