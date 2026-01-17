@@ -50,16 +50,31 @@ AI_MESSAGES = {
     "THINKING": "文献データベースを検索し、回答を作成しています..."
 }
 
-# --- ★ここにHistoryManagerを直接定義してエラーを回避★ ---
+# --- ★HistoryManagerの修正（遅延初期化の実装）★ ---
 class HistoryManager:
     def __init__(self):
-        # Supabaseクライアントへの参照
-        self.supabase = core_database.db_client.client
+        # インポート時のクラッシュを防ぐため、ここではクライアントを取得しません。
+        pass
+
+    @property
+    def supabase(self):
+        """
+        実際に必要になったタイミングで最新のクライアントインスタンスを取得します。
+        これにより、アプリ起動時の初期化順序による NoneType エラーを回避します。
+        """
+        # db_client 自体が None の場合、または client 属性がない場合のガード
+        if core_database.db_client is None or getattr(core_database.db_client, 'client', None) is None:
+            logging.error("Database client is not initialized yet.")
+            # 呼び出し元でハンドリングできるよう、ここでは空の操作を許容するかエラーを投げる
+            # ここでは安全に例外を投げ、呼び出し元の try-except でキャッチさせます
+            raise RuntimeError("Database client is not ready")
+        
+        return core_database.db_client.client
 
     def get_recent(self, session_id: str, limit: int = 10) -> str:
         """指定したセッションの直近の会話履歴を取得し、テキスト形式で返す"""
         try:
-            # chat_historyテーブルから取得 (テーブル名が違う場合は修正してください)
+            # self.supabase プロパティ経由でアクセス
             res = self.supabase.table("chat_history")\
                 .select("role, content, created_at")\
                 .eq("session_id", session_id)\
@@ -80,12 +95,14 @@ class HistoryManager:
             
             return "\n".join(formatted_history)
         except Exception as e:
+            # クライアント未初期化エラーも含めてログ出力
             logging.error(f"Failed to fetch history: {e}")
             return ""
 
     def add(self, session_id: str, role: str, content: str):
         """会話履歴をDBに保存する"""
         try:
+            # self.supabase プロパティ経由でアクセス
             self.supabase.table("chat_history").insert({
                 "session_id": session_id,
                 "role": role,
@@ -111,6 +128,11 @@ def get_signed_image_url(image_path: str, expiry_seconds: int = 3600) -> Optiona
         return None
     try:
         # core.database 経由で Supabase クライアントにアクセス
+        # 念のためここもガードを入れるのが安全ですが、既存ロジックを踏襲しつつエラーハンドリング内で処理
+        if core_database.db_client is None or not hasattr(core_database.db_client, 'client'):
+             logging.error("Database client not ready for signing URL")
+             return None
+
         res = core_database.db_client.client.storage.from_("images").create_signed_url(image_path, expiry_seconds)
         
         # レスポンス形式の揺れに対応
