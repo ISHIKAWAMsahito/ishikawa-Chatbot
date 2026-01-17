@@ -285,7 +285,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     session_id = get_or_create_session_id(request)
     feedback_id = str(uuid.uuid4())
     user_input = chat_req.query.strip()
-    
+    full_resp = ""
     # クライアントへ初期レスポンス
     yield send_sse({'feedback_id': feedback_id, 'status_message': '🔍 データベースを検索しています...'})
 
@@ -397,8 +397,13 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         else:
             msg = AI_MESSAGES["SYSTEM_ERROR"]
             
-        yield send_sse({'content': msg})
-        
+        # ★修正: すでに回答（full_resp）が生成されている場合はエラーを表示しない
+        if not full_resp:
+            yield send_sse({'content': msg})
+        else:
+            # ログには残すが、ユーザー画面にはエラーを出さない
+            logging.warning(f"Error occurred after response generation started: {e}")
+            
     finally:
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
 
