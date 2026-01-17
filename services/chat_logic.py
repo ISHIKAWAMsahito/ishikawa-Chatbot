@@ -32,7 +32,7 @@ USE_MODEL = "gemini-2.5-flash"
 
 # パラメータ
 PARAMS = {
-    "QA_SIMILARITY_THRESHOLD": 0.90, # FAQの即答ライン 1/110.90に変更
+    "QA_SIMILARITY_THRESHOLD": 0.90, # FAQの即答ライン
     "RERANK_SCORE_THRESHOLD": 6.0,   # リランク足切りライン(0-10)
     "MAX_HISTORY_LENGTH": 20,
 }
@@ -45,7 +45,7 @@ SAFETY_SETTINGS = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
 }
 
-# ★修正点1: エラーメッセージの正確な定義
+# エラーメッセージの定義
 AI_MESSAGES = {
     "NOT_FOUND": (
         "申し訳ありません。ご質問に関連する確実な情報が資料内に見つかりませんでした。"
@@ -177,18 +177,17 @@ class SearchPipeline:
         if not documents:
             return []
         
-        # コンテキスト作成 (トークン節約のため、先頭1000文字程度に制限)
+        # コンテキスト作成 (トークン節約のため、先頭300文字程度に制限)
         candidates_text = ""
         for i, doc in enumerate(documents):
             meta = doc.get('metadata', {})
-            snippet = doc.get('content', '')[:300].replace('\n', ' ')#1/91000文字から300文字渡すように変更
+            snippet = doc.get('content', '')[:300].replace('\n', ' ')
             candidates_text += f"ID:{i} [Source:{meta.get('source', '?')}]\n{snippet}\n\n"
 
         formatted_prompt = PROMPT_RERANK.format(query=query, candidates_text=candidates_text)
 
         try:
             model = genai.GenerativeModel(USE_MODEL)
-            # ★改善: response_schemaで型安全にJSONを取得
             resp = await api_request_with_retry(
                 model.generate_content_async,
                 formatted_prompt,
@@ -243,6 +242,26 @@ class SearchPipeline:
                 unique_docs.append(doc)
         return unique_docs
 
+    @staticmethod
+    def reorder_documents(documents: List[Dict]) -> List[Dict]:
+        """
+        ★追加機能: Lost in the Middle対策 (U字型配置)
+        スコアが高い文書をコンテキストの先頭と末尾に配置し、低い文書を中央に配置する。
+        例: [1位, 2位, 3位, 4位, 5位] -> [1位, 3位, 5位, 4位, 2位]
+        """
+        if not documents:
+            return []
+        
+        # Pythonのスライスを利用: 
+        # 0::2 はインデックス 0, 2, 4... (ランク 1位, 3位, 5位...)
+        first_half = documents[0::2]
+        
+        # 1::2 はインデックス 1, 3, 5... (ランク 2位, 4位, 6位...) -> これを反転
+        second_half = documents[1::2][::-1]
+        
+        # 先頭グループ(1,3,5...) + 末尾グループ(...,6,4,2)
+        return first_half + second_half
+
 def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
     """回答生成後に参照元リンクを作成するヘルパー関数"""
     unique_refs = []
@@ -286,12 +305,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             query_embedding = raw_emb_result["embedding"]
         except Exception as e:
             log_context(session_id, f"Embedding Failed: {e}", "error")
-            # ★修正点2: Embedding失敗は「システムエラー」として通知（アクセス集中ではない）
             yield send_sse({'content': AI_MESSAGES["SYSTEM_ERROR"]})
             return
 
         # Step 3: FAQ (QA Database) チェック
-        # 高スコアでヒットすれば即return
         if qa_hits := core_database.db_client.search_fallback_qa(query_embedding, match_count=1):
             top_qa = qa_hits[0]
             if top_qa.get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
@@ -301,7 +318,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 return
 
         # Step 4: ドキュメント検索 (Hybrid)
-        # 処理節約のためクエリ拡張はスキップし、生の入力を使用
         raw_docs = core_database.db_client.search_documents_hybrid(
             collection_name=chat_req.collection,
             query_text=user_input, 
@@ -315,11 +331,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         yield send_sse({'status_message': '🧐 AIが文献を読んで選定中...'})
         
-        # Step 5: フィルタリング & リランク
+        # Step 5: フィルタリング & リランク & 再配置
         unique_docs = await SearchPipeline.filter_diversity(raw_docs)
         
         # Geminiによるリランク実行
-        relevant_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=chat_req.top_k)
+        reranked_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=chat_req.top_k)
+
+        # ★追加: Lost in the Middle対策でU字型に再配置
+        relevant_docs = SearchPipeline.reorder_documents(reranked_docs)
 
         if not relevant_docs:
             yield send_sse({'content': AI_MESSAGES["NOT_FOUND"]})
@@ -353,7 +372,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
                 full_resp += chunk.text
                 yield send_sse({'content': chunk.text})
         
-        # ★修正点3: 回答が空（セーフティ等でブロック）の場合のハンドリング追加
         if not full_resp:
              yield send_sse({'content': AI_MESSAGES["BLOCKED"]})
              history_manager.add(session_id, "assistant", "[[BLOCKED]]")
@@ -371,11 +389,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     except Exception as e:
         log_context(session_id, f"Critical Pipeline Error: {e}", "error")
         
-        # ★修正点4: エラー種別によるメッセージの正確な出し分け
         error_str = str(e)
         if "429" in error_str or "Quota" in error_str:
             msg = AI_MESSAGES["RATE_LIMIT"]
-        elif "finish_reason" in error_str: # Gemini固有のブロックエラーなど
+        elif "finish_reason" in error_str: 
             msg = AI_MESSAGES["BLOCKED"]
         else:
             msg = AI_MESSAGES["SYSTEM_ERROR"]
@@ -383,7 +400,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         yield send_sse({'content': msg})
         
     finally:
-        # どのような終了フローでもフィードバックボタンは表示する
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
 
 # -----------------------------------------------------------------------------
@@ -394,7 +410,6 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
         yield send_sse({'content': '分析対象データがありません。'})
         return
     
-    # ログデータの要約
     summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
     prompt = f"""
     以下のチャットボット利用ログを分析し、Markdownでレポートを作成してください。
