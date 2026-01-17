@@ -19,5 +19,8 @@ COPY services/ ./services/
 COPY api/ ./api/
 COPY static/ ./static/
 
-# Renderが $PORT を正しく解釈できるようにサーバーを起動
-CMD uvicorn main:app --host 0.0.0.0 --port $PORT
+# 修正前
+# CMD uvicorn main:app --host 0.0.0.0 --port $PORT
+
+# 修正後（環境変数を展開しつつ、推奨される形式にする）
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]

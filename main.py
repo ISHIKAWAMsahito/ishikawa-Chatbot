@@ -11,7 +11,6 @@ from fastapi.responses import RedirectResponse, FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 
-#1/1prometheus-fastapi-instrumentationを削除
 # Core & Config
 from core.config import APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY, SUPABASE_ANON_KEY
 from core.database import SupabaseClientManager
@@ -24,6 +23,11 @@ from core.dependencies import require_auth
 # APIルーター
 from api import auth, chat, documents, fallbacks, feedback, system
 
+# --- 環境判定の追加 ---
+# 環境変数 ENVIRONMENT が 'local' の場合はローカルモードとして動作
+ENV_TYPE = os.getenv("ENVIRONMENT", "production")
+IS_LOCAL = ENV_TYPE == "local"
+
 # ログ設定
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
 
@@ -31,13 +35,14 @@ logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """アプリケーションのライフサイクル管理"""
-    logging.info("--- アプリケーション起動 ---")
-    # 1. 設定マネージャー初期化（高速）
+    logging.info(f"--- アプリケーション起動 (モード: {ENV_TYPE}) ---")
+    
+    # 1. 設定マネージャー初期化
     from core import settings as settings_module
     settings_module.settings_manager = SettingsManager()
     logging.info("✅ 設定マネージャー初期化完了")
-    # 2. ドキュメントプロセッサ初期化（高速）
-    # ★修正: 親子チャンキング用に引数を変更
+    
+    # 2. ドキュメントプロセッサ初期化
     from services import document_processor
     document_processor.simple_processor = SimpleDocumentProcessor(
         parent_chunk_size=1500,
@@ -45,11 +50,10 @@ async def lifespan(app: FastAPI):
     )
     logging.info("✅ ドキュメントプロセッサ初期化完了 (Parent-Child Chunking)")
 
-    # 3. Supabase初期化（タイムアウト対応）
+    # 3. Supabase初期化
     if SUPABASE_URL and SUPABASE_KEY:
         try:
             logging.info("⏳ Supabase初期化中...")
-            # ★修正: タイムアウト時間を10秒に設定
             def init_supabase():
                 return SupabaseClientManager(url=SUPABASE_URL, key=SUPABASE_KEY)
             try:
@@ -72,31 +76,44 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# CORS設定
+# --- CORS設定の修正 ---
+# ローカルと本番で許可するオリジンを切り替える
+allowed_origins = ["http://localhost:8000", "http://127.0.0.1:8000"]
+if not IS_LOCAL:
+    # 本番環境（Render等）のURLを環境変数から追加
+    prod_url = os.getenv("APP_URL")
+    if prod_url:
+        allowed_origins.append(prod_url)
+    else:
+        # APP_URLが未設定の場合、本番ではセキュリティのためワイルドカードは避けるべきですが、
+        # 暫定的に動作させる場合は必要に応じて調整してください
+        pass
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# セッション設定 (Brave対策: same_site='lax'に変更)
+# --- セッション設定の修正 ---
+# IS_LOCALがTrueのときは https_only=False にすることでHTTPでのログインを許可
 app.add_middleware(
     SessionMiddleware,
     secret_key=APP_SECRET_KEY,
-    https_only=True,
+    https_only=not IS_LOCAL, 
     same_site='lax'
 )
 
 
 # =========================================================
-# グローバルヘルスチェック (認証なし)
+# グローバルヘルスチェック
 # =========================================================
 @app.get("/health")
 def global_health_check():
     status = "supabase" if database.db_client else "uninitialized"
-    return {"status": "ok", "database": status}
+    return {"status": "ok", "database": status, "mode": ENV_TYPE}
 
 @app.get("/healthz")
 def healthz_check():
@@ -104,22 +121,16 @@ def healthz_check():
 
 
 # =========================================================
-# HTMLファイルのルーティング追加
+# HTMLファイルのルーティング
 # =========================================================
-
-# 1. 統計画面 (認証不要または認証後にアクセス)
 @app.get("/stats.html")
 async def get_stats_page():
     return FileResponse("static/stats.html")
 
-# 2. DB管理画面 (認証はファイル取得時にはかけず、API側で保護)
 @app.get("/DB.html")
 async def get_db_page():
     return FileResponse("static/DB.html")
 
-# 3. 管理画面本体 (Authルーターに任せるか、ここで明示的に返すか)
-# Authルーターが /admin を処理している場合、ここは不要かもしれませんが、
-# 明示的に admin.html にアクセスしたい場合のために追加
 @app.get("/admin.html")
 async def get_admin_page(user: dict = Depends(require_auth)):
     return FileResponse("static/admin.html")
@@ -127,22 +138,15 @@ async def get_admin_page(user: dict = Depends(require_auth)):
 
 @app.get("/api/admin/stats/data", dependencies=[Depends(require_auth)])
 async def get_admin_stats_data():
-    """
-    Supabaseからコメント履歴を取得する（管理者権限が必要）。
-    """
-    # 1. DB接続チェック
     if not database.db_client:
         logging.error("❌ Database client is not initialized")
         raise HTTPException(status_code=503, detail="Database not initialized")
     try:
-        # 2. 【ここが修正点】ラッパークラスから本物のクライアントを取り出す
         client = database.db_client
-        # もし client属性の中に本体が入っているなら、それを取り出す
         if hasattr(client, "client"):
             client = client.client
         logging.info("⏳ Admin Stats: Fetching data from Supabase...")
 
-        # 3. データ取得実行
         response = client.table("anonymous_comments")\
             .select("*")\
             .order("created_at", desc=True)\
@@ -152,10 +156,7 @@ async def get_admin_stats_data():
         return response.data
 
     except Exception as e:
-        # エラーが出たらログに出力して500を返す
         logging.error(f"❌ Stats fetch error: {str(e)}")
-        # 念のためオブジェクトの中身をログに出してデバッグしやすくする
-        logging.error(f"Debug info: db_client type: {type(database.db_client)}, attributes: {dir(database.db_client)}")
         raise HTTPException(status_code=500, detail=f"Server Error: {str(e)}")
 
 
@@ -164,7 +165,6 @@ async def get_admin_stats_data():
 # =========================================================
 @app.websocket("/ws/settings")
 async def websocket_endpoint(websocket: WebSocket):
-    """設定変更通知用WebSocket"""
     if not core_settings.settings_manager:
         await websocket.close(code=1011, reason="Settings manager not initialized")
         return
@@ -187,28 +187,18 @@ async def websocket_endpoint(websocket: WebSocket):
 # ---------------------------------------------------------
 # ルーター登録
 # ---------------------------------------------------------
-
-# 静的ファイルのmountはAPIルーターより前に行う
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Authルーター (HTML配信もここで担当)
 app.include_router(auth.router, tags=["Auth"])
-
-# APIルーター群
-
-# ★修正箇所1: chat.client_router を使用 (学生用)
 app.include_router(chat.client_router, prefix="/api/client/chat", tags=["Client Chat"])
-
 app.include_router(feedback.router, prefix="/api/client/feedback", tags=["Client Feedback"])
 
-# 管理者API (APIエンドポイントは厳密に保護)
+# 管理者API
 app.include_router(documents.router, prefix="/api/admin/documents", tags=["Admin Documents"], dependencies=[Depends(require_auth)])
 app.include_router(fallbacks.router, prefix="/api/admin/fallbacks", tags=["Admin Fallbacks"], dependencies=[Depends(require_auth)])
 app.include_router(system.router, prefix="/api/admin/system", tags=["Admin System"], dependencies=[Depends(require_auth)])
-
-# ★修正箇所2: chat.admin_router を使用 (管理者用)
 app.include_router(chat.admin_router, prefix="/api/admin/chat", tags=["Admin Chat"], dependencies=[Depends(require_auth)])
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
+    # proxy_headers=True, forwarded_allow_ips="*" はRender等のリバースプロキシ環境で有用
     uvicorn.run("main:app", host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
