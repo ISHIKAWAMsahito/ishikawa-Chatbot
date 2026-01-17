@@ -885,19 +885,19 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                             .getPublicUrl(path);
                         
                         if (!error && data) {
-                            // 画像が存在するか確認
-                            const img = new Image();
-                            img.onload = function() {
+                            // 画像が存在するか確認（Promiseでラップ）
+                            const imageLoaded = await new Promise((resolve) => {
+                                const img = new Image();
+                                img.onload = () => resolve(true);
+                                img.onerror = () => resolve(false);
+                                img.src = data.publicUrl;
+                            });
+                            
+                            if (imageLoaded) {
                                 imageUrl = data.publicUrl;
                                 displayImage(imageUrl);
-                            };
-                            img.onerror = function() {
-                                continue;
-                            };
-                            img.src = data.publicUrl;
-                            
-                            // 最初の成功したパスを使用
-                            break;
+                                break; // 最初の成功したパスを使用
+                            }
                         }
                     } catch (err) {
                         console.log(`パス ${path} を試行中...`, err);
