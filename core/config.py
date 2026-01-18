@@ -24,21 +24,25 @@ APP_SECRET_KEY = os.getenv("APP_SECRET_KEY")
 if not APP_SECRET_KEY:
     raise ValueError("環境変数 'APP_SECRET_KEY' が設定されていません。")
 
-# Supabase設定
+# ----------------------------------------------------------------
+# Supabase設定 (ここを修正しました)
+# ----------------------------------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") # 管理者用（秘密）
-
-# ★追加: 学生画面（クライアント）に渡すための公開用キー
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY") # ★変数名を修正
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
-# エラーチェック（ANONキーがない場合も警告を出すようにする）
+# エラーチェック
+if not SUPABASE_URL:
+    raise ValueError("環境変数 'SUPABASE_URL' が設定されていません。")
+
 if not SUPABASE_ANON_KEY:
     logging.warning("### 'SUPABASE_ANON_KEY' が設定されていません。学生画面の機能が一部制限される可能性があります。 ###")
-    raise ValueError("環境変数 'SUPABASE_URL' が設定されていません。")
-if not SUPABASE_KEY:
-    logging.error("### 'SUPABASE_SERVICE_KEY' が None です。インポート順の問題か、環境変数が設定されていません。 ###")
+    # ここは警告のみで落とさない運用もアリですが、必須なら raise してください
+    # raise ValueError("環境変数 'SUPABASE_ANON_KEY' が設定されていません。")
+
+if not SUPABASE_SERVICE_KEY:
+    logging.error("### 'SUPABASE_SERVICE_KEY' が設定されていません。署名付きURLの発行ができません。 ###")
     raise ValueError("環境変数 'SUPABASE_SERVICE_KEY' が設定されていません。")
-# --- ^^^ ここまで修正 ^^^ ---
 
 
 # 定数
@@ -64,7 +68,8 @@ if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
     )
 else:
     logging.warning("Auth0の設定が不完全なため、管理者ページの認証機能は動作しません。")
-# デバッグ用：ログにキーの一部を出力して、どっちのキーを使っているか白黒つける
+
+# デバッグ用
 if GEMINI_API_KEY:
     print(f"DEBUG: Current API Key starts with: {GEMINI_API_KEY[:5]}...", flush=True)
 else:
