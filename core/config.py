@@ -25,11 +25,14 @@ if not APP_SECRET_KEY:
     raise ValueError("環境変数 'APP_SECRET_KEY' が設定されていません。")
 
 # ----------------------------------------------------------------
-# Supabase設定 (ここを修正しました)
+# Supabase設定 (互換性対応版)
 # ----------------------------------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY") # ★変数名を修正
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+
+# ★重要: main.py 等が古い変数名(SUPABASE_KEY)を参照していても動くようにエイリアスを設定
+SUPABASE_KEY = SUPABASE_SERVICE_KEY 
 
 # エラーチェック
 if not SUPABASE_URL:
@@ -37,8 +40,6 @@ if not SUPABASE_URL:
 
 if not SUPABASE_ANON_KEY:
     logging.warning("### 'SUPABASE_ANON_KEY' が設定されていません。学生画面の機能が一部制限される可能性があります。 ###")
-    # ここは警告のみで落とさない運用もアリですが、必須なら raise してください
-    # raise ValueError("環境変数 'SUPABASE_ANON_KEY' が設定されていません。")
 
 if not SUPABASE_SERVICE_KEY:
     logging.error("### 'SUPABASE_SERVICE_KEY' が設定されていません。署名付きURLの発行ができません。 ###")
