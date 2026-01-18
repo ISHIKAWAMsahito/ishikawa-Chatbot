@@ -298,24 +298,71 @@ class SearchPipeline:
 def get_signed_url(file_path: str, bucket_name: str = "images"):
     """
     非公開ストレージ内のファイルに対して、1時間有効な署名付きURLを発行します。
+    複数のパス候補を試行して、最初に見つかった有効なURLを返します。
     """
-    try:
-        if core_database.db_client is None:
-            logging.error("db_client is not initialized")
-            return None
-
-        # ファイル名に含まれる余分な空白を除去
-        clean_path = file_path.strip()
-
-        # 非公開の 'images' バケットからアクセス権付きのURLを生成(1時間有効)
-        response = core_database.db_client.client.storage.from_(bucket_name).create_signed_url(clean_path, 3600)
-        
-        if isinstance(response, dict) and "signedURL" in response:
-            return response["signedURL"]
-        return response 
-    except Exception as e:
-        logging.error(f"Failed to get signed URL for {file_path}: {e}")
+    if core_database.db_client is None:
+        logging.error("db_client is not initialized")
         return None
+
+    # ファイル名に含まれる余分な空白を除去
+    clean_path = file_path.strip()
+    
+    # パス候補リストを生成
+    path_candidates = []
+    
+    # 1. そのままのパス
+    path_candidates.append(clean_path)
+    
+    # 2. converted_images_rules/ と converted_images_common/ ディレクトリを試す
+    # ファイル名が既に画像ファイル名の場合（.jpgなど）
+    if clean_path.endswith(('.jpg', '.jpeg', '.png', '.gif')):
+        # ディレクトリ付きパスを追加
+        path_candidates.append(f"converted_images_rules/{clean_path}")
+        path_candidates.append(f"converted_images_common/{clean_path}")
+        
+        # _016.jpg のような形式から _001.jpg に変換したパスも試す
+        # 例: "02_新札幌_学部共通事項_016.jpg" -> "02_新札幌_学部共通事項_001.jpg"
+        numbered_pattern = re.compile(r'_(\d{3})\.(jpg|jpeg|png|gif)$', re.IGNORECASE)
+        if numbered_pattern.search(clean_path):
+            base_without_number = numbered_pattern.sub(r'_001.\2', clean_path)
+            path_candidates.extend([
+                base_without_number,
+                f"converted_images_rules/{base_without_number}",
+                f"converted_images_common/{base_without_number}"
+            ])
+    else:
+        # PDFファイル名などからbaseNameを抽出して画像パスを生成
+        base_name = re.sub(r'\.(pdf|docx|txt)$', '', clean_path, flags=re.IGNORECASE)
+        path_candidates.extend([
+            f"converted_images_rules/{base_name}_001.jpg",
+            f"converted_images_common/{base_name}_001.jpg",
+            f"{base_name}_001.jpg",
+            f"{base_name}.jpg"
+        ])
+
+    # 各パス候補を試行
+    for candidate_path in path_candidates:
+        try:
+            # 非公開の 'images' バケットからアクセス権付きのURLを生成(1時間有効)
+            response = core_database.db_client.client.storage.from_(bucket_name).create_signed_url(candidate_path, 3600)
+            
+            if isinstance(response, dict) and "signedURL" in response:
+                signed_url = response["signedURL"]
+                # URLが有効かどうか確認（実際にアクセスできるかはフロントエンドで確認）
+                if signed_url:
+                    logging.debug(f"Found signed URL for path: {candidate_path}")
+                    return signed_url
+            elif response:
+                # レスポンスが辞書でない場合（文字列など）
+                return response
+        except Exception as e:
+            # このパスが見つからなかった場合、次の候補を試す
+            logging.debug(f"Failed to get signed URL for path {candidate_path}: {e}")
+            continue
+    
+    # すべてのパス候補が失敗した場合
+    logging.warning(f"Failed to get signed URL for any candidate path. Original: {file_path}")
+    return None
 
 def _build_references(response_text: str, sources_map: Dict[int, Any]) -> str:
     """
