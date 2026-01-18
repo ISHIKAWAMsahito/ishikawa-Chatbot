@@ -95,23 +95,35 @@ PROMPT_SYSTEM_GENERATION = """
 
 # 厳守すべきルール(ガードレール)
 
-1. **情報の限定(Zero-Inference)**:
-   - あなたが元々持っている知識(一般常識や他大学の事例)は一切使用しないでください。
-   - **禁止事項**: 「一般的には」「通常は」「一般論として」といった表現は絶対に使用しないでください。
-   - 文脈に答えが見つからない場合は、正直に「提供された資料内には、その情報が見当たりませんでした」と答えてください。
+1. **情報源の厳格な限定**:
+   - 使用可能な情報源は**以下の2種類のみ**です:
+     * **documents**: ハイブリッド検索で取得された資料データ（大学の文書、規則、ガイドラインなど）
+     * **category_fallbacks**: Q&Aデータベース（よくある質問と回答のペア）
+   - これら以外の情報源（あなたの事前学習知識、一般常識、他大学の事例、推測など）は**一切使用禁止**です。
+   - **絶対禁止事項**: 
+     * 「一般的には」「通常は」「一般的なケースでは」などの表現
+     * 「おそらく」「推測すると」などの推測表現
+     * 資料に記載がない情報の補完や推論
 
-2. **引用フォーマットの徹底**:
+2. **回答が見つからない場合の厳格な制御**:
+   - documentsとcategory_fallbacksの両方に情報が見つからない場合は、以下のメッセージを必ず使用してください:
+     「申し訳ありません。ご質問に関連する情報がデータベース(資料)内に見つかりませんでした。不確かな回答を避けるため、ここではお答えを控えさせていただきます。大学窓口へ直接お問い合わせいただくことをお勧めします。」
+   - 資料に一部しか情報がない場合でも、不足部分を推測や一般知識で補完することは絶対に禁止です。
+   - 情報が不十分な場合は、見つかった部分だけを回答し、不足部分については「この点については、資料内に記載がありませんでした」と明記してください。
+
+3. **引用フォーマットの徹底**:
    - 回答の根拠となる部分には、必ず `[1]` や `[1][2]` という形式で番号を振ってください。
    - **注意**: `(1)` や `Source: 1` は不可です。必ず `[` と `]` で囲んでください。(システムがリンクを生成するために必須です)
 
-3. **トーンとマナー**:
+4. **トーンとマナー**:
    - 学生に寄り添った、親しみやすい「です・ます」調で話してください。
    - 冒頭は「こんにちは!札幌学院大学の学生サポートAIです。」で始めてください。
    - 専門用語や条件分岐が多い場合は、箇条書きや太字を使って視覚的に整理してください。
 
-4. **回答プロセス**:
-   - まず資料を読み、質問に関連する部分があるか確認する。
-   - 一般論を混ぜないよう、資料にある事実だけを抽出して回答を構成する。
+5. **回答プロセス**:
+   - まず提供された資料を読み、質問に関連する部分があるか確認する。
+   - 情報が完全に見つかった場合のみ回答を構成する。
+   - 情報が部分的、または全く見つからない場合は、上記2のルールに従って処理する。
    - 引用番号 `[x]` が正しい位置にあるか確認してから出力する。
 """
 
@@ -170,28 +182,13 @@ async def api_request_with_retry(func, *args, **kwargs):
             else:
                 raise e
 
-# --- HistoryManager ---
+# --- HistoryManager --- (メモリ内のみ、chat_historyテーブルは使用しない)
 class ChatHistoryManager:
     def __init__(self):
         self._histories: Dict[str, List[Dict[str, str]]] = {}
 
-    @property
-    def supabase(self):
-        if core_database.db_client is None or getattr(core_database.db_client, 'client', None) is None:
-            return None
-        return core_database.db_client.client
-
     def add(self, session_id: str, role: str, content: str):
-        if self.supabase:
-            try:
-                self.supabase.table("chat_history").insert({
-                    "session_id": session_id,
-                    "role": role,
-                    "content": content
-                }).execute()
-            except Exception as e:
-                logging.error(f"History add failed: {e}")
-        
+        # メモリ内の履歴に追加のみ
         if session_id not in self._histories:
             self._histories[session_id] = []
         self._histories[session_id].append({"role": role, "content": content})
@@ -199,20 +196,7 @@ class ChatHistoryManager:
             self._histories[session_id] = self._histories[session_id][-PARAMS["MAX_HISTORY_LENGTH"]:]
 
     def get_context_string(self, session_id: str, limit: int = 10) -> str:
-        if self.supabase:
-            try:
-                res = self.supabase.table("chat_history")\
-                    .select("role, content, created_at")\
-                    .eq("session_id", session_id)\
-                    .order("created_at", desc=True)\
-                    .limit(limit)\
-                    .execute()
-                if res.data:
-                    history = sorted(res.data, key=lambda x: x['created_at'])
-                    return "\n".join([f"{h['role']}: {h['content']}" for h in history])
-            except Exception as e:
-                logging.error(f"History fetch failed: {e}")
-        
+        # メモリ内の履歴のみを使用
         hist = self._histories.get(session_id, [])[-limit:]
         return "\n".join([f"{h['role']}: {h['content']}" for h in hist])
 
@@ -394,6 +378,21 @@ def _build_references(response_text: str, sources_map: Dict[int, Any]) -> str:
         else:
             src = source_info.get('source', '不明')
             metadata = source_info.get('metadata', {})
+            
+            # ハイブリッド検索時: docから直接メタデータを取得する場合に対応
+            if not metadata and source_info.get('doc'):
+                doc = source_info.get('doc', {})
+                metadata = doc.get('metadata', {})
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except (json.JSONDecodeError, TypeError):
+                        metadata = {}
+                elif metadata is None:
+                    metadata = {}
+                # メタデータからsourceを再取得
+                if not src or src == '不明':
+                    src = metadata.get('source') or doc.get('source', '不明')
         
         # 引用されている、または上位2つ以内の場合に表示
         if idx in cited_ids or idx <= 2:
@@ -463,12 +462,14 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
             yield send_sse({'content': AI_MESSAGES["SYSTEM_ERROR"]})
             return
 
-        # Step 2: Supabase QA (FAQ) Check
+        # Step 2: Supabase Q&A (category_fallbacks) Check
         if core_database.db_client:
             qa_hits = core_database.db_client.search_fallback_qa(query_embedding, match_count=1)
             if qa_hits and qa_hits[0].get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
                 top_qa = qa_hits[0]
-                resp = format_urls_as_links(f"よくあるご質問に情報がありました。\n\n---\n{top_qa['content']}")
+                # category_fallbacksテーブルのanswerフィールドを参照
+                answer_text = top_qa.get('answer') or top_qa.get('content', '')
+                resp = format_urls_as_links(f"よくあるご質問に情報がありました。\n\n---\n{answer_text}")
                 history_manager.add(session_id, "assistant", resp)
                 yield send_sse({'content': resp, 'show_feedback': True, 'feedback_id': feedback_id})
                 return
@@ -534,15 +535,11 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
             context_parts.append(f"<doc id='{idx}' src='{src}'>\n{doc.get('content','')}\n</doc>")
         
         context_str = "\n".join(context_parts)
-        history_str = history_manager.get_context_string(session_id)
         
         full_system_prompt = f"""{PROMPT_SYSTEM_GENERATION}
         
-### 検索された資料 (Supabase)
+### 検索された資料 (documentsテーブルから取得)
 {context_str}
-
-### これまでの会話
-{history_str}
 """
         model = genai.GenerativeModel(USE_MODEL)
         stream = await api_request_with_retry(
