@@ -33,7 +33,8 @@ USE_MODEL = "gemini-2.5-flash"
 # パラメータ
 PARAMS = {
     "QA_SIMILARITY_THRESHOLD": 0.90, # FAQの即答ライン
-    "RERANK_SCORE_THRESHOLD": 4.0,   # リランク足切りライン
+    "RERANK_SCORE_THRESHOLD": 6.0,   # リランク足切りライン (0-10)
+    "DIVERSITY_THRESHOLD": 0.7,      # 重複排除の類似度ライン
     "MAX_HISTORY_LENGTH": 20,
 }
 
@@ -59,9 +60,10 @@ AI_MESSAGES = {
 executor = ThreadPoolExecutor(max_workers=4)
 
 # -----------------------------------------------------------------------------
-# 2. プロンプト定義
+# 2. プロンプト定義 & スキーマ
 # -----------------------------------------------------------------------------
 
+# リランク用の出力スキーマ
 class RankedItem(typing.TypedDict):
     id: int
     score: float
@@ -78,6 +80,7 @@ PROMPT_RERANK = """
 {candidates_text}
 """
 
+# システムプロンプト（添付ファイルの内容を使用）
 PROMPT_SYSTEM_GENERATION = """
 あなたは**札幌学院大学の学生サポートAI**です。
 提供された <context> タグ内の情報**のみ**を使用して、親しみやすく丁寧な言葉遣いで回答してください。
@@ -109,18 +112,11 @@ def get_or_create_session_id(
     source: Union[str, Request, None] = None, 
     query_obj: Optional[ChatQuery] = None
 ) -> str:
-    """
-    セッションIDを取得または生成します。
-    """
-    # 1. 文字列が直接渡された場合
+    """セッションIDを取得または生成します。"""
     if isinstance(source, str):
         return source
-
-    # 2. ChatQueryにIDがある場合 (最優先)
     if query_obj and hasattr(query_obj, 'session_id') and query_obj.session_id:
         return query_obj.session_id
-    
-    # 3. Requestオブジェクトから取得
     if isinstance(source, Request):
         if hasattr(source, "session"):
             sid = source.session.get('chat_session_id')
@@ -128,8 +124,6 @@ def get_or_create_session_id(
                 sid = str(uuid.uuid4())
                 source.session['chat_session_id'] = sid
             return sid
-
-    # 4. 解決できない場合は新規発行
     return str(uuid.uuid4())
 
 def log_context(session_id: str, message: str, level: str = "info"):
@@ -165,7 +159,6 @@ class ChatHistoryManager:
     
     @property
     def supabase(self):
-        """実際に必要になったタイミングでクライアントを取得"""
         if core_database.db_client is None or getattr(core_database.db_client, 'client', None) is None:
             logging.error("Database client is not initialized.")
             return None
@@ -206,6 +199,9 @@ history_manager = ChatHistoryManager()
 class SearchPipeline:
     @staticmethod
     async def rerank(query: str, documents: List[Dict], top_k: int = 5) -> List[Dict]:
+        """
+        Gemini Structured Outputsを使用したリランキング
+        """
         if not documents: return []
         
         candidates_text = ""
@@ -218,6 +214,7 @@ class SearchPipeline:
 
         try:
             model = genai.GenerativeModel(USE_MODEL)
+            # JSONモードでの生成
             resp = await api_request_with_retry(
                 model.generate_content_async,
                 formatted_prompt,
@@ -228,31 +225,42 @@ class SearchPipeline:
                 safety_settings=SAFETY_SETTINGS
             )
             data = json.loads(resp.text)
+            
             reranked = []
             for item in data.get("ranked_items", []):
                 idx = item.get("id")
                 score = item.get("score")
+                
+                # インデックスチェックとスコアフィルタリング
                 if idx is not None and 0 <= idx < len(documents):
                     if score >= PARAMS["RERANK_SCORE_THRESHOLD"]:
                         doc = documents[idx]
                         doc['rerank_score'] = score
                         reranked.append(doc)
+            
+            # スコア順にソート
             reranked.sort(key=lambda x: x['rerank_score'], reverse=True)
             return reranked[:top_k]
         except Exception as e:
             logging.error(f"Rerank Error: {e}")
+            # エラー時は上位をそのまま返す
             return documents[:top_k]
 
     @staticmethod
     async def filter_diversity(documents: List[Dict], threshold: float = 0.7) -> List[Dict]:
+        """
+        類似度に基づき重複コンテンツを排除 (MMR的アプローチ)
+        """
         loop = asyncio.get_running_loop()
         unique_docs = []
+        
         def _calc_sim(a, b): return SequenceMatcher(None, a, b).ratio()
 
         for doc in documents:
             content = doc.get('content', '')
             is_duplicate = False
             for selected in unique_docs:
+                # 既存の選定済みドキュメントと類似度を計算
                 sim = await loop.run_in_executor(executor, _calc_sim, content, selected.get('content', ''))
                 if sim > threshold:
                     is_duplicate = True; break
@@ -261,6 +269,10 @@ class SearchPipeline:
 
     @staticmethod
     def reorder_documents(documents: List[Dict]) -> List[Dict]:
+        """
+        Lost in the Middle対策: U字型に配置
+        [1位, 2位, 3位, 4位, 5位] -> [1位, 3位, 5位, 4位, 2位]
+        """
         if not documents: return []
         first_half = documents[0::2]
         second_half = documents[1::2][::-1]
@@ -275,6 +287,8 @@ def get_signed_url(file_path: str, bucket_name: str = "images"):
     非公開ストレージ内のファイルに対して、1時間有効な署名付きURLを発行します。
     """
     try:
+        if core_database.db_client is None:
+            return None
         # 非公開の 'images' バケットからアクセス権付きのURLを生成
         response = core_database.db_client.client.storage.from_(bucket_name).create_signed_url(file_path, 3600)
         
@@ -295,7 +309,7 @@ def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
     cited_ids = set(map(int, re.findall(r'\[(\d+)\]', response_text)))
     
     for idx, src in sources_map.items():
-        # 引用されたID、または最初の2件を常に表示
+        # 引用されたID、または上位2件を常に表示(関連度が高いと推定)
         if idx in cited_ids or idx <= 2:
             if src in seen_sources: continue
             
@@ -303,7 +317,8 @@ def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
             signed_url = get_signed_url(src)
             
             if signed_url:
-                # onclickイベントでJavaScriptにURLを渡す
+                # フロントエンド側で画像プレビューを表示するためのHTMLタグ
+                # onclickでモーダル表示等を制御する想定
                 unique_refs.append(
                     f"* <a href='#' class='source-link' "
                     f"data-url='{signed_url}' "
@@ -317,7 +332,6 @@ def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
             seen_sources.add(src)
             
     if unique_refs:
-        # 資料の「どこに書いてあったかを表示する」ルールに基づく 
         return "\n\n### 参照元データ\n" + "\n".join(unique_refs)
     return ""
 
@@ -326,7 +340,7 @@ def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
 # -----------------------------------------------------------------------------
 async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
     """
-    【重要】引数の順序は (request, query_obj) です。
+    メインのチャット処理フロー
     """
     # セッションIDの取得
     session_id = get_or_create_session_id(request, query_obj)
@@ -334,6 +348,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
     feedback_id = str(uuid.uuid4())
     user_input = query_obj.query.strip()
     
+    # 初期ステータス送信
     yield send_sse({
         'feedback_id': feedback_id, 
         'status_message': '🔍 データベースを検索しています...',
@@ -384,11 +399,16 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
             yield send_sse({'content': AI_MESSAGES["NOT_FOUND"]})
             return
 
-        yield send_sse({'status_message': '🧐 AIが文献を読んで選定中...', 'type': 'status'})
+        yield send_sse({'status_message': '🧐 文献の重複を除去し、精査中...', 'type': 'status'})
 
-        # Step 4: Pipeline
-        unique_docs = await SearchPipeline.filter_diversity(raw_docs)
+        # Step 4: Pipeline (Filter -> Rerank -> Reorder)
+        # 4-1. 重複排除
+        unique_docs = await SearchPipeline.filter_diversity(raw_docs, threshold=PARAMS["DIVERSITY_THRESHOLD"])
+        
+        # 4-2. リランク (Geminiによるスコアリング)
         reranked_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=query_obj.top_k)
+        
+        # 4-3. 再配置 (Lost in the Middle対策)
         relevant_docs = SearchPipeline.reorder_documents(reranked_docs)
 
         if not relevant_docs:
@@ -396,7 +416,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
             return
 
         # Step 5: Generation
-        yield send_sse({'status_message': '✍️ 回答を執筆しています...', 'type': 'status'})
+        yield send_sse({'status_message': '✍️ 回答を生成しています...', 'type': 'status'})
         
         context_parts = []
         sources_map = {}
@@ -409,6 +429,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
         context_str = "\n".join(context_parts)
         history_str = history_manager.get_context_string(session_id)
         
+        # システムプロンプト + コンテキスト + 履歴 + ユーザー質問の結合
         full_system_prompt = f"""{PROMPT_SYSTEM_GENERATION}
         
 ### 検索された資料
@@ -422,7 +443,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
             model.generate_content_async,
             f"ユーザーの質問: {user_input}",
             stream=True,
-            generation_config=GenerationConfig(temperature=0.0), # 資料に忠実にする
+            generation_config=GenerationConfig(temperature=0.0), # 事実に基づくため温度は低く
             safety_settings=SAFETY_SETTINGS
         )
         
@@ -437,9 +458,9 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
              yield send_sse({'content': AI_MESSAGES["BLOCKED"]})
              return
 
-        # Step 6: References
+        # Step 6: References (Links Generation)
         if "情報が見つかりません" not in full_resp:
-            # ここで修正版の _build_references を呼び出します
+            # リンク生成付きの参照元ビルド関数を使用
             refs_text = _build_references(full_resp, sources_map)
             if refs_text:
                 yield send_sse({'content': refs_text})
