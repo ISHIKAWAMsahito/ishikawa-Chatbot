@@ -183,22 +183,33 @@ def _generate_signed_url_sync(filename: str) -> Optional[str]:
     
     return None
 
-async def _build_references_async(response_text: str, sources_map: Dict[int, str]) -> str:
+# chat_logic.py 内の既存の同名関数を置き換え
+
+async def _build_references_async(response_text: str, sources_map: Dict[int, Dict[str, str]]) -> str:
     """
-    回答生成後に参照元リンクを作成する（非同期並列処理版）。
-    Supabaseへのアクセスを並列化して高速化を図る。
+    回答生成後に参照元リンクを作成する。
+    sources_mapは {id: {'display': '表示名', 'storage': '保存パス'}} の形式を想定。
     """
     unique_refs = []
     seen_sources = set()
     
     # 処理対象のリストアップ
     target_items = []
-    for idx, src in sources_map.items():
-        if src in seen_sources: continue
+    for idx, src_info in sources_map.items():
+        # src_info が文字列(古い形式)の場合の互換対応
+        if isinstance(src_info, str):
+             src_display = src_info
+             src_storage = src_info
+        else:
+             src_display = src_info.get('display', '資料')
+             src_storage = src_info.get('storage', src_display)
+
+        if src_storage in seen_sources: continue
+
         # テキスト内で引用されているか、または上位3件なら表示対象
         if f"[{idx}]" in response_text or idx <= 3:
-            target_items.append((idx, src))
-            seen_sources.add(src)
+            target_items.append((idx, src_display, src_storage))
+            seen_sources.add(src_storage)
     
     if not target_items:
         return ""
@@ -206,22 +217,20 @@ async def _build_references_async(response_text: str, sources_map: Dict[int, str
     # スレッドプールで並列にURL発行
     loop = asyncio.get_running_loop()
     tasks = []
-    for _, src in target_items:
-        tasks.append(loop.run_in_executor(executor, _generate_signed_url_sync, src))
+    for _, _, storage_path in target_items:
+        # ハッシュ化されたパス(storage_path)を使ってURLを生成
+        tasks.append(loop.run_in_executor(executor, _generate_signed_url_sync, storage_path))
     
     # 全てのURL取得を待機
     signed_urls = await asyncio.gather(*tasks)
     
     # 結果の整形
-    for (idx, src), url in zip(target_items, signed_urls):
+    for (idx, display_name, _), url in zip(target_items, signed_urls):
         if url:
-            # 署名付きURLが取得できた場合: リンク化
-            # ファイル名が見やすいように basename のみを表示しても良いが、ここでは識別のためsrc全体を表示
-            display_name = os.path.basename(src)
+            # リンク化成功: 表示名は元の日本語ファイル名、リンク先はハッシュ化ファイルのURL
             unique_refs.append(f"* [{idx}] [{display_name}]({url}) ⏳リンク有効期限:1時間")
         else:
-            # 取得失敗した場合: 通常のテキスト表示
-            unique_refs.append(f"* [{idx}] {src}")
+            unique_refs.append(f"* [{idx}] {display_name}")
 
     if unique_refs:
         return "\n\n## 参照元 (クリックで資料を表示)\n" + "\n".join(unique_refs)
@@ -356,9 +365,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         sources_map = {} 
         
         for idx, doc in enumerate(relevant_docs, 1):
-            src = doc.get('metadata', {}).get('source', '不明')
-            sources_map[idx] = src
-            context_parts.append(f"<doc id='{idx}' src='{src}'>\n{doc.get('content','')}\n</doc>")
+            meta = doc.get('metadata', {})
+            src_display = meta.get('source', '不明')
+            
+            # ★ここが重要: DBに 'image_path' (ハッシュ名) があればそれを優先的にStorageパスとして使う
+            # なければ従来の 'source' を使う
+            src_storage = meta.get('image_path', src_display)
+            
+            # 辞書形式で保存 (ここが以前と変わります)
+            sources_map[idx] = {
+                'display': src_display, # ユーザーに見せる名前 (例: 10_規程.jpg)
+                'storage': src_storage  # Storageに探しに行く名前 (例: a1b2... .jpg)
+            }
+            
+            context_parts.append(f"<doc id='{idx}' src='{src_display}'>\n{doc.get('content','')}\n</doc>")
         
         context_str = "\n".join(context_parts)
         full_system_prompt = f"{PROMPT_SYSTEM_GENERATION}\n<context>\n{context_str}\n</context>"
