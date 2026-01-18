@@ -4,17 +4,33 @@ from datetime import datetime, timezone, timedelta
 from authlib.integrations.starlette_client import OAuth
 import logging
 
+# ----------------------------------------------------------------
+# 環境変数の読み込み設定
+# ----------------------------------------------------------------
 IS_PRODUCTION = os.getenv('RENDER', False)
-if not IS_PRODUCTION:
-    # ローカル開発環境の場合のみ .env ファイルを読み込む
-    load_dotenv()
-    logging.info("ローカル環境として .env ファイルを読み込みました。")
-else:
-    logging.info("本番環境として起動しました (Renderの環境変数を使用)。")
 
+if not IS_PRODUCTION:
+    # ローカル開発環境: 指定されたフルパスから .env を読み込む
+    # Windowsパスなので raw string (r"...") を使用
+    env_path = r"C:\dev\ishikawa-Chatbot\ishikawa-Chatbot.env"
+    
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        logging.info(f"✅ ローカル環境: {env_path} から設定を読み込みました。")
+    else:
+        logging.warning(f"⚠️ 指定された .env ファイルが見つかりません: {env_path}")
+        logging.info("デフォルトの load_dotenv() を試行します。")
+        load_dotenv()
+else:
+    logging.info("🚀 本番環境として起動しました (Renderの環境変数を使用)。")
+
+# ----------------------------------------------------------------
+# APIキー & 認証設定
+# ----------------------------------------------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    raise ValueError("環境変数 'GEMINI_API_KEY' が設定されていません。")
+    # ローカルでパス指定ミスなどの可能性があるため、詳細なエラーを出す
+    raise ValueError("環境変数 'GEMINI_API_KEY' が設定されていません。.envのパスや内容を確認してください。")
 
 # Auth0設定
 AUTH0_CLIENT_ID = os.getenv("AUTH0_CLIENT_ID")
@@ -43,10 +59,12 @@ if not SUPABASE_ANON_KEY:
 
 if not SUPABASE_SERVICE_KEY:
     logging.error("### 'SUPABASE_SERVICE_KEY' が設定されていません。署名付きURLの発行ができません。 ###")
-    raise ValueError("環境変数 'SUPABASE_SERVICE_KEY' が設定されていません。")
+    raise ValueError("環境変数 'SUPABASE_SERVICE_KEY' (または SUPABASE_KEY) が設定されていません。")
 
 
-# 定数
+# ----------------------------------------------------------------
+# その他定数
+# ----------------------------------------------------------------
 ACTIVE_COLLECTION_NAME = "student-knowledge-base"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JST = timezone(timedelta(hours=+9), 'JST')
@@ -70,8 +88,9 @@ if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
 else:
     logging.warning("Auth0の設定が不完全なため、管理者ページの認証機能は動作しません。")
 
-# デバッグ用
+# デバッグ用ログ
 if GEMINI_API_KEY:
-    print(f"DEBUG: Current API Key starts with: {GEMINI_API_KEY[:5]}...", flush=True)
+    masked_key = GEMINI_API_KEY[:5] + "..."
+    print(f"DEBUG: Current API Key starts with: {masked_key}", flush=True)
 else:
     print("DEBUG: GEMINI_API_KEY is empty!", flush=True)
