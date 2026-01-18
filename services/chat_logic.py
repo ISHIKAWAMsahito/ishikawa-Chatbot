@@ -30,11 +30,11 @@ genai.configure(api_key=GEMINI_API_KEY)
 # 使用モデル
 USE_MODEL = "gemini-2.5-flash"
 
-# パラメータ
+# パラメータ設定
 PARAMS = {
-    "QA_SIMILARITY_THRESHOLD": 0.90, # FAQの即答ライン
-    "RERANK_SCORE_THRESHOLD": 6.0,   # リランク足切りライン (0-10)
-    "DIVERSITY_THRESHOLD": 0.7,      # 重複排除の類似度ライン
+    "QA_SIMILARITY_THRESHOLD": 0.90,  # DB内FAQの即答ライン
+    "RERANK_SCORE_THRESHOLD": 4.0,    # リランク足切りライン (0-10)
+    "DIVERSITY_THRESHOLD": 0.7,       # 重複排除の類似度ライン
     "MAX_HISTORY_LENGTH": 20,
 }
 
@@ -46,24 +46,25 @@ SAFETY_SETTINGS = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
 }
 
-# エラーメッセージ
+# エラーメッセージ定義
 AI_MESSAGES = {
     "NOT_FOUND": (
-        "申し訳ありません。ご質問に関連する確実な情報が資料内に見つかりませんでした。"
+        "申し訳ありません。ご質問に関連する確実な情報がデータベース内に見つかりませんでした。"
         "大学窓口へ直接お問い合わせいただくことをお勧めします。"
     ),
-    "RATE_LIMIT": "現在アクセスが集中しています。1分ほど待ってから再度お試しください。",
+    "RATE_LIMIT": "申し訳ありません。現在アクセスが集中しています。1分ほど待ってから再度お試しください。",
     "SYSTEM_ERROR": "システムエラーが発生しました。しばらく時間をおいて再度お試しください。",
-    "BLOCKED": "生成された回答がガイドラインに抵触したため表示できませんでした。"
+    "BLOCKED": "生成された回答がセーフティガイドラインに抵触したため、表示できませんでした。言い回しを変えて再度お試しください。"
 }
 
+# スレッドプール（CPUバウンドな処理用）
 executor = ThreadPoolExecutor(max_workers=4)
 
 # -----------------------------------------------------------------------------
-# 2. プロンプト定義 & スキーマ
+# 2. プロンプト定義 & スキーマ (Structured Outputs用)
 # -----------------------------------------------------------------------------
 
-# リランク用の出力スキーマ
+# リランク出力用の型定義
 class RankedItem(typing.TypedDict):
     id: int
     score: float
@@ -72,15 +73,15 @@ class RankedItem(typing.TypedDict):
 class RerankResponse(typing.TypedDict):
     ranked_items: list[RankedItem]
 
+# プロンプトテンプレート (リランク用)
 PROMPT_RERANK = """
-あなたは検索システムの評価AIです。
-ユーザーの質問に対し、以下のドキュメントが回答の根拠としてどれほど適切か、0点から10点で採点してください。
+ユーザーの質問に対し、以下のドキュメントが回答根拠として適切か0-10点で採点してください。
 質問: {query}
-候補ドキュメント:
+候補:
 {candidates_text}
 """
 
-# システムプロンプト（添付ファイルの内容を使用）
+# システムプロンプト (厳格なハルシネーション対策済み)
 PROMPT_SYSTEM_GENERATION = """
 あなたは**札幌学院大学の学生サポートAI**です。
 提供された <context> タグ内の情報**のみ**を使用して、親しみやすく丁寧な言葉遣いで回答してください。
@@ -98,14 +99,13 @@ PROMPT_SYSTEM_GENERATION = """
 3. **回答のトーンと構成**:
    - 冒頭に「こんにちは！札幌学院大学の学生サポートAIです。」という挨拶と、共感的な一言を添えてください。
    - 専門用語や複雑な計算式は、太字、箇条書き、水平線（---）を活用し、視覚的にわかりやすく整理してください。
-   - 例：計算式は水平線で挟むなどして強調してください。
 
 4. **ハルシネーションの徹底防止**:
    - 大学名や制度名が <context> 内で特定できない場合は、断定を避けてください。
 """
 
 # -----------------------------------------------------------------------------
-# 3. ユーティリティ & クラス
+# 3. ユーティリティ関数 & クラス
 # -----------------------------------------------------------------------------
 
 def get_or_create_session_id(
@@ -134,6 +134,7 @@ def send_sse(data: Dict[str, Any]) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 async def api_request_with_retry(func, *args, **kwargs):
+    """API制限(429)対策: リトライロジック"""
     max_retries = 3
     default_delay = 4
     for attempt in range(max_retries):
@@ -143,11 +144,17 @@ async def api_request_with_retry(func, *args, **kwargs):
             error_str = str(e)
             if "429" in error_str or "Quota" in error_str:
                 if attempt == max_retries - 1:
-                    logging.error(f"API Quota Exceeded: {e}")
+                    logging.error(f"API Quota Exceeded after {max_retries} retries.")
                     raise e
+                
+                wait_time = default_delay
                 match = re.search(r"retry in (\d+\.?\d*)s", error_str)
-                wait_time = float(match.group(1)) + 1.0 if match else default_delay * (2 ** attempt)
-                logging.warning(f"Rate limit hit. Waiting {wait_time:.1f}s...")
+                if match:
+                    wait_time = float(match.group(1)) + 1.0
+                else:
+                    wait_time = default_delay * (2 ** attempt)
+
+                logging.warning(f"Rate limit hit. Waiting {wait_time:.1f}s. Retrying...")
                 await asyncio.sleep(wait_time)
             else:
                 raise e
@@ -155,41 +162,53 @@ async def api_request_with_retry(func, *args, **kwargs):
 # --- HistoryManager ---
 class ChatHistoryManager:
     def __init__(self):
-        pass
-    
+        self._histories: Dict[str, List[Dict[str, str]]] = {}
+
     @property
     def supabase(self):
+        # DBクライアントが存在する場合のみ使用（フォールバック対応）
         if core_database.db_client is None or getattr(core_database.db_client, 'client', None) is None:
-            logging.error("Database client is not initialized.")
             return None
         return core_database.db_client.client
 
     def add(self, session_id: str, role: str, content: str):
-        if not self.supabase: return
-        try:
-            self.supabase.table("chat_history").insert({
-                "session_id": session_id,
-                "role": role,
-                "content": content
-            }).execute()
-        except Exception as e:
-            logging.error(f"History add failed: {e}")
+        # Supabaseへ保存を試みる
+        if self.supabase:
+            try:
+                self.supabase.table("chat_history").insert({
+                    "session_id": session_id,
+                    "role": role,
+                    "content": content
+                }).execute()
+            except Exception as e:
+                logging.error(f"History add failed: {e}")
+        
+        # メモリ内キャッシュ（フォールバック用）
+        if session_id not in self._histories:
+            self._histories[session_id] = []
+        self._histories[session_id].append({"role": role, "content": content})
+        if len(self._histories[session_id]) > PARAMS["MAX_HISTORY_LENGTH"]:
+            self._histories[session_id] = self._histories[session_id][-PARAMS["MAX_HISTORY_LENGTH"]:]
 
     def get_context_string(self, session_id: str, limit: int = 10) -> str:
-        if not self.supabase: return ""
-        try:
-            res = self.supabase.table("chat_history")\
-                .select("role, content, created_at")\
-                .eq("session_id", session_id)\
-                .order("created_at", desc=True)\
-                .limit(limit)\
-                .execute()
-            if not res.data: return ""
-            history = sorted(res.data, key=lambda x: x['created_at'])
-            return "\n".join([f"{h['role']}: {h['content']}" for h in history])
-        except Exception as e:
-            logging.error(f"History fetch failed: {e}")
-            return ""
+        # Supabaseから取得を試みる
+        if self.supabase:
+            try:
+                res = self.supabase.table("chat_history")\
+                    .select("role, content, created_at")\
+                    .eq("session_id", session_id)\
+                    .order("created_at", desc=True)\
+                    .limit(limit)\
+                    .execute()
+                if res.data:
+                    history = sorted(res.data, key=lambda x: x['created_at'])
+                    return "\n".join([f"{h['role']}: {h['content']}" for h in history])
+            except Exception as e:
+                logging.error(f"History fetch failed: {e}")
+        
+        # メモリから取得（フォールバック）
+        hist = self._histories.get(session_id, [])[-limit:]
+        return "\n".join([f"{h['role']}: {h['content']}" for h in hist])
 
 history_manager = ChatHistoryManager()
 
@@ -199,10 +218,9 @@ history_manager = ChatHistoryManager()
 class SearchPipeline:
     @staticmethod
     async def rerank(query: str, documents: List[Dict], top_k: int = 5) -> List[Dict]:
-        """
-        Gemini Structured Outputsを使用したリランキング
-        """
-        if not documents: return []
+        """Gemini Structured Outputs を使用した高速・確実なリランク"""
+        if not documents:
+            return []
         
         candidates_text = ""
         for i, doc in enumerate(documents):
@@ -214,7 +232,7 @@ class SearchPipeline:
 
         try:
             model = genai.GenerativeModel(USE_MODEL)
-            # JSONモードでの生成
+            # 型安全にJSONを取得
             resp = await api_request_with_retry(
                 model.generate_content_async,
                 formatted_prompt,
@@ -224,6 +242,7 @@ class SearchPipeline:
                 ),
                 safety_settings=SAFETY_SETTINGS
             )
+            
             data = json.loads(resp.text)
             
             reranked = []
@@ -231,36 +250,32 @@ class SearchPipeline:
                 idx = item.get("id")
                 score = item.get("score")
                 
-                # インデックスチェックとスコアフィルタリング
                 if idx is not None and 0 <= idx < len(documents):
                     if score >= PARAMS["RERANK_SCORE_THRESHOLD"]:
                         doc = documents[idx]
                         doc['rerank_score'] = score
                         reranked.append(doc)
             
-            # スコア順にソート
             reranked.sort(key=lambda x: x['rerank_score'], reverse=True)
             return reranked[:top_k]
+
         except Exception as e:
             logging.error(f"Rerank Error: {e}")
-            # エラー時は上位をそのまま返す
             return documents[:top_k]
 
     @staticmethod
     async def filter_diversity(documents: List[Dict], threshold: float = 0.7) -> List[Dict]:
-        """
-        類似度に基づき重複コンテンツを排除 (MMR的アプローチ)
-        """
+        """MMR風フィルタリング（重複排除）"""
         loop = asyncio.get_running_loop()
         unique_docs = []
         
-        def _calc_sim(a, b): return SequenceMatcher(None, a, b).ratio()
+        def _calc_sim(a, b):
+            return SequenceMatcher(None, a, b).ratio()
 
         for doc in documents:
             content = doc.get('content', '')
             is_duplicate = False
             for selected in unique_docs:
-                # 既存の選定済みドキュメントと類似度を計算
                 sim = await loop.run_in_executor(executor, _calc_sim, content, selected.get('content', ''))
                 if sim > threshold:
                     is_duplicate = True; break
@@ -269,66 +284,54 @@ class SearchPipeline:
 
     @staticmethod
     def reorder_documents(documents: List[Dict]) -> List[Dict]:
-        """
-        Lost in the Middle対策: U字型に配置
-        [1位, 2位, 3位, 4位, 5位] -> [1位, 3位, 5位, 4位, 2位]
-        """
+        """Lost in the Middle対策: U字型配置"""
         if not documents: return []
         first_half = documents[0::2]
         second_half = documents[1::2][::-1]
         return first_half + second_half
 
 # -----------------------------------------------------------------------------
-# 5. 検索・参照ユーティリティ
+# 5. 参照リンク生成ユーティリティ (Supabase対応)
 # -----------------------------------------------------------------------------
 
 def get_signed_url(file_path: str, bucket_name: str = "images"):
-    """
-    非公開ストレージ内のファイルに対して、1時間有効な署名付きURLを発行します。
-    """
+    """Supabase Storage内のファイルに対して署名付きURLを発行"""
     try:
-        if core_database.db_client is None:
-            return None
-        # 非公開の 'images' バケットからアクセス権付きのURLを生成
+        if core_database.db_client is None: return None
+        # 非公開の 'images' バケットからアクセス権付きのURLを生成(1時間有効)
         response = core_database.db_client.client.storage.from_(bucket_name).create_signed_url(file_path, 3600)
         
         if isinstance(response, dict) and "signedURL" in response:
             return response["signedURL"]
         return response 
     except Exception as e:
-        logging.error(f"署名付きURLの発行に失敗しました (Path: {file_path}): {e}")
+        # 画像がない場合などはエラーログを出さずにNoneを返す
         return None
 
 def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
-    """
-    回答内の [1] などの引用タグに基づき、クリック可能な画像リンクを生成します。
-    """
+    """回答内の [1] 等のタグを、クリック可能な署名付きURLリンクに変換"""
     unique_refs = []
     seen_sources = set()
-    # 本文中の [1] などの数字をすべて抽出
     cited_ids = set(map(int, re.findall(r'\[(\d+)\]', response_text)))
     
     for idx, src in sources_map.items():
-        # 引用されたID、または上位2件を常に表示(関連度が高いと推定)
+        # 引用されている、または上位2件の資料を表示
         if idx in cited_ids or idx <= 2:
             if src in seen_sources: continue
             
-            # 非公開ストレージ対応：署名付きURLを取得
+            # Supabaseから署名付きURLを取得
             signed_url = get_signed_url(src)
             
             if signed_url:
-                # フロントエンド側で画像プレビューを表示するためのHTMLタグ
-                # onclickでモーダル表示等を制御する想定
+                # フロントエンドでプレビュー表示可能なリンク形式
                 unique_refs.append(
-                    f"* <a href='#' class='source-link' "
-                    f"data-url='{signed_url}' "
+                    f"* <a href='#' class='source-link' data-url='{signed_url}' "
                     f"onclick='event.preventDefault(); showSourceImage(this.dataset.url); return false;'>"
                     f"{src}</a>"
                 )
             else:
-                # URL取得失敗時のフォールバック
-                unique_refs.append(f"* {src} (プレビュー不可)")
-                
+                # URL取得不可の場合はテキストのみ
+                unique_refs.append(f"* {src}")
             seen_sources.add(src)
             
     if unique_refs:
@@ -341,21 +344,18 @@ def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
 async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
     """
     メインのチャット処理フロー
+    Supabase (QA DB & Vector DB) のみを参照します。
     """
-    # セッションIDの取得
     session_id = get_or_create_session_id(request, query_obj)
-    
     feedback_id = str(uuid.uuid4())
     user_input = query_obj.query.strip()
+    full_resp = ""
     
-    # 初期ステータス送信
     yield send_sse({
         'feedback_id': feedback_id, 
         'status_message': '🔍 データベースを検索しています...',
         'type': 'status'
     })
-
-    full_resp = ""
 
     try:
         # Step 1: Embedding
@@ -375,9 +375,10 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
             yield send_sse({'content': AI_MESSAGES["SYSTEM_ERROR"]})
             return
 
-        # Step 2: FAQ Check
+        # Step 2: Supabase QA (FAQ) Check
         if core_database.db_client:
             qa_hits = core_database.db_client.search_fallback_qa(query_embedding, match_count=1)
+            # 類似度が高ければFAQの回答を即座に返す
             if qa_hits and qa_hits[0].get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
                 top_qa = qa_hits[0]
                 resp = format_urls_as_links(f"よくあるご質問に情報がありました。\n\n---\n{top_qa['content']}")
@@ -385,7 +386,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
                 yield send_sse({'content': resp, 'show_feedback': True, 'feedback_id': feedback_id})
                 return
 
-            # Step 3: Search
+            # Step 3: Supabase Document Search (Hybrid)
             raw_docs = core_database.db_client.search_documents_hybrid(
                 collection_name=query_obj.collection,
                 query_text=user_input, 
@@ -402,13 +403,13 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
         yield send_sse({'status_message': '🧐 文献の重複を除去し、精査中...', 'type': 'status'})
 
         # Step 4: Pipeline (Filter -> Rerank -> Reorder)
-        # 4-1. 重複排除
+        # 4-1. 重複排除 (MMR)
         unique_docs = await SearchPipeline.filter_diversity(raw_docs, threshold=PARAMS["DIVERSITY_THRESHOLD"])
         
         # 4-2. リランク (Geminiによるスコアリング)
         reranked_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=query_obj.top_k)
         
-        # 4-3. 再配置 (Lost in the Middle対策)
+        # 4-3. 再配置 (Lost in the Middle対策: U字型配置)
         relevant_docs = SearchPipeline.reorder_documents(reranked_docs)
 
         if not relevant_docs:
@@ -416,11 +417,10 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
             return
 
         # Step 5: Generation
-        yield send_sse({'status_message': '✍️ 回答を生成しています...', 'type': 'status'})
+        yield send_sse({'status_message': '✍️ 回答を執筆しています...', 'type': 'status'})
         
         context_parts = []
         sources_map = {}
-        
         for idx, doc in enumerate(relevant_docs, 1):
             src = doc.get('metadata', {}).get('source', '不明')
             sources_map[idx] = src
@@ -429,10 +429,9 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
         context_str = "\n".join(context_parts)
         history_str = history_manager.get_context_string(session_id)
         
-        # システムプロンプト + コンテキスト + 履歴 + ユーザー質問の結合
         full_system_prompt = f"""{PROMPT_SYSTEM_GENERATION}
         
-### 検索された資料
+### 検索された資料 (Supabase)
 {context_str}
 
 ### これまでの会話
@@ -443,7 +442,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
             model.generate_content_async,
             f"ユーザーの質問: {user_input}",
             stream=True,
-            generation_config=GenerationConfig(temperature=0.0), # 事実に基づくため温度は低く
+            generation_config=GenerationConfig(temperature=0.0), # 事実性重視
             safety_settings=SAFETY_SETTINGS
         )
         
@@ -458,9 +457,9 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
              yield send_sse({'content': AI_MESSAGES["BLOCKED"]})
              return
 
-        # Step 6: References (Links Generation)
+        # Step 6: References
+        # 回答に「見つかりません」が含まれていなければリンクを生成
         if "情報が見つかりません" not in full_resp:
-            # リンク生成付きの参照元ビルド関数を使用
             refs_text = _build_references(full_resp, sources_map)
             if refs_text:
                 yield send_sse({'content': refs_text})
@@ -470,14 +469,23 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
 
     except Exception as e:
         log_context(session_id, f"Critical Pipeline Error: {e}", "error")
+        # エラーメッセージの出し分け
+        error_str = str(e)
+        if "429" in error_str or "Quota" in error_str:
+            msg = AI_MESSAGES["RATE_LIMIT"]
+        elif "finish_reason" in error_str:
+            msg = AI_MESSAGES["BLOCKED"]
+        else:
+            msg = AI_MESSAGES["SYSTEM_ERROR"]
+            
         if not full_resp:
-            yield send_sse({'content': AI_MESSAGES["SYSTEM_ERROR"]})
+            yield send_sse({'content': msg})
             
     finally:
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
 
 # -----------------------------------------------------------------------------
-# 7. 分析機能
+# 7. 分析機能 (管理者用)
 # -----------------------------------------------------------------------------
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
     if not logs:
