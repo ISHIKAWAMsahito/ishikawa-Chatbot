@@ -30,7 +30,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 # 使用モデル
 USE_MODEL = "gemini-2.5-flash"
 
-# パラメータ設定
+# パラメータ設定 (バランス調整済み)
 PARAMS = {
     "QA_SIMILARITY_THRESHOLD": 0.90,  # DB内FAQの即答ライン
     "RERANK_SCORE_THRESHOLD": 4.0,    # リランク足切りライン (0-10)
@@ -49,12 +49,13 @@ SAFETY_SETTINGS = {
 # エラーメッセージ定義
 AI_MESSAGES = {
     "NOT_FOUND": (
-        "申し訳ありません。ご質問に関連する確実な情報がデータベース内に見つかりませんでした。"
-        "大学窓口へ直接お問い合わせいただくことをお勧めします。"
+        "申し訳ありません。ご質問に関連する情報がデータベース（資料）内に見つかりませんでした。"
+        "不確かな回答を避けるため、ここではお答えを控えさせていただきます。"
+        "\n\n大学窓口へ直接お問い合わせいただくことをお勧めします。"
     ),
     "RATE_LIMIT": "申し訳ありません。現在アクセスが集中しています。1分ほど待ってから再度お試しください。",
     "SYSTEM_ERROR": "システムエラーが発生しました。しばらく時間をおいて再度お試しください。",
-    "BLOCKED": "生成された回答がセーフティガイドラインに抵触したため、表示できませんでした。言い回しを変えて再度お試しください。"
+    "BLOCKED": "生成された回答がセーフティガイドラインに抵触したため、表示できませんでした。"
 }
 
 # スレッドプール（CPUバウンドな処理用）
@@ -75,33 +76,44 @@ class RerankResponse(typing.TypedDict):
 
 # プロンプトテンプレート (リランク用)
 PROMPT_RERANK = """
-ユーザーの質問に対し、以下のドキュメントが回答根拠として適切か0-10点で採点してください。
+あなたは厳格な査読者です。
+ユーザーの質問に対し、以下のドキュメントが「回答の根拠」として使用できるかを0-10点で採点してください。
+
+評価基準:
+- 10点: 質問に対する直接的な答えが含まれている。
+- 5-9点: 関連情報が含まれており、回答の構成に役立つ。
+- 0-4点: キーワードは似ているが、文脈が異なる、または無関係。
+
 質問: {query}
 候補:
 {candidates_text}
 """
 
-# システムプロンプト (厳格なハルシネーション対策済み)
+# システムプロンプト (厳格モード維持)
 PROMPT_SYSTEM_GENERATION = """
 あなたは**札幌学院大学の学生サポートAI**です。
-提供された <context> タグ内の情報**のみ**を使用して、親しみやすく丁寧な言葉遣いで回答してください。
+以下の <context> タグ内の情報**のみ**を使用して、質問に回答してください。
 
-# 重要な回答ルール（厳守）
-1. **情報源の限定**:
-   - 必ず提供された <context> 内の情報に基づいて回答してください。
-   - **<context> に記載がない事項については、自身の知識や一般常識で補完せず、必ず「資料内に情報が見つからない」旨を伝えてください。**
-   - 推測や「一般的には〜」といった回答は禁止します。
+# 厳守すべきルール（ガードレール）
 
-2. **引用（インライン引用）**:
-   - 回答の根拠となる事実の末尾に、必ず `[1]` や `[1][2]` の形式で資料IDを付記してください。
-   - 文末だけでなく、重要な数値や条件のすぐ後ろに付けてください。
+1. **情報の限定（Zero-Inference）**:
+   - あなたが元々持っている知識（一般常識や他大学の事例）は一切使用しないでください。
+   - 文脈に答えが見つからない場合は、正直に「提供された資料内には、その情報が見当たりませんでした」と答えてください。
+   - 「一般的には〜」という推測発言は禁止です。
 
-3. **回答のトーンと構成**:
-   - 冒頭に「こんにちは！札幌学院大学の学生サポートAIです。」という挨拶と、共感的な一言を添えてください。
-   - 専門用語や複雑な計算式は、太字、箇条書き、水平線（---）を活用し、視覚的にわかりやすく整理してください。
+2. **引用フォーマットの徹底**:
+   - 回答の根拠となる部分には、必ず `[1]` や `[1][2]` という形式で番号を振ってください。
+   - **注意**: `(1)` や `Source: 1` は不可です。必ず `[` と `]` で囲んでください。（システムがリンクを生成するために必須です）
 
-4. **ハルシネーションの徹底防止**:
-   - 大学名や制度名が <context> 内で特定できない場合は、断定を避けてください。
+3. **トーンとマナー**:
+   - 学生に寄り添った、親しみやすい「です・ます」調で話してください。
+   - 冒頭は「こんにちは！札幌学院大学の学生サポートAIです。」で始めてください。
+   - 専門用語や条件分岐が多い場合は、箇条書きや太字を使って視覚的に整理してください。
+
+4. **回答プロセス**:
+   - まず資料を読み、質問に関連する部分があるか確認する。
+   - 次に、その部分だけを使って回答を構成する。
+   - 最後に、引用番号 `[x]` が正しい位置にあるか確認してから出力する。
 """
 
 # -----------------------------------------------------------------------------
@@ -166,13 +178,11 @@ class ChatHistoryManager:
 
     @property
     def supabase(self):
-        # DBクライアントが存在する場合のみ使用（フォールバック対応）
         if core_database.db_client is None or getattr(core_database.db_client, 'client', None) is None:
             return None
         return core_database.db_client.client
 
     def add(self, session_id: str, role: str, content: str):
-        # Supabaseへ保存を試みる
         if self.supabase:
             try:
                 self.supabase.table("chat_history").insert({
@@ -183,7 +193,6 @@ class ChatHistoryManager:
             except Exception as e:
                 logging.error(f"History add failed: {e}")
         
-        # メモリ内キャッシュ（フォールバック用）
         if session_id not in self._histories:
             self._histories[session_id] = []
         self._histories[session_id].append({"role": role, "content": content})
@@ -191,7 +200,6 @@ class ChatHistoryManager:
             self._histories[session_id] = self._histories[session_id][-PARAMS["MAX_HISTORY_LENGTH"]:]
 
     def get_context_string(self, session_id: str, limit: int = 10) -> str:
-        # Supabaseから取得を試みる
         if self.supabase:
             try:
                 res = self.supabase.table("chat_history")\
@@ -206,7 +214,6 @@ class ChatHistoryManager:
             except Exception as e:
                 logging.error(f"History fetch failed: {e}")
         
-        # メモリから取得（フォールバック）
         hist = self._histories.get(session_id, [])[-limit:]
         return "\n".join([f"{h['role']}: {h['content']}" for h in hist])
 
@@ -232,7 +239,6 @@ class SearchPipeline:
 
         try:
             model = genai.GenerativeModel(USE_MODEL)
-            # 型安全にJSONを取得
             resp = await api_request_with_retry(
                 model.generate_content_async,
                 formatted_prompt,
@@ -265,12 +271,9 @@ class SearchPipeline:
 
     @staticmethod
     async def filter_diversity(documents: List[Dict], threshold: float = 0.7) -> List[Dict]:
-        """MMR風フィルタリング（重複排除）"""
         loop = asyncio.get_running_loop()
         unique_docs = []
-        
-        def _calc_sim(a, b):
-            return SequenceMatcher(None, a, b).ratio()
+        def _calc_sim(a, b): return SequenceMatcher(None, a, b).ratio()
 
         for doc in documents:
             content = doc.get('content', '')
@@ -284,7 +287,6 @@ class SearchPipeline:
 
     @staticmethod
     def reorder_documents(documents: List[Dict]) -> List[Dict]:
-        """Lost in the Middle対策: U字型配置"""
         if not documents: return []
         first_half = documents[0::2]
         second_half = documents[1::2][::-1]
@@ -295,7 +297,6 @@ class SearchPipeline:
 # -----------------------------------------------------------------------------
 
 def get_signed_url(file_path: str, bucket_name: str = "images"):
-    """Supabase Storage内のファイルに対して署名付きURLを発行"""
     try:
         if core_database.db_client is None: return None
         # 非公開の 'images' バケットからアクセス権付きのURLを生成(1時間有効)
@@ -305,32 +306,24 @@ def get_signed_url(file_path: str, bucket_name: str = "images"):
             return response["signedURL"]
         return response 
     except Exception as e:
-        # 画像がない場合などはエラーログを出さずにNoneを返す
         return None
 
 def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
-    """回答内の [1] 等のタグを、クリック可能な署名付きURLリンクに変換"""
     unique_refs = []
     seen_sources = set()
     cited_ids = set(map(int, re.findall(r'\[(\d+)\]', response_text)))
     
     for idx, src in sources_map.items():
-        # 引用されている、または上位2件の資料を表示
         if idx in cited_ids or idx <= 2:
             if src in seen_sources: continue
-            
-            # Supabaseから署名付きURLを取得
             signed_url = get_signed_url(src)
-            
             if signed_url:
-                # フロントエンドでプレビュー表示可能なリンク形式
                 unique_refs.append(
                     f"* <a href='#' class='source-link' data-url='{signed_url}' "
                     f"onclick='event.preventDefault(); showSourceImage(this.dataset.url); return false;'>"
                     f"{src}</a>"
                 )
             else:
-                # URL取得不可の場合はテキストのみ
                 unique_refs.append(f"* {src}")
             seen_sources.add(src)
             
@@ -342,10 +335,6 @@ def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
 # 6. メインチャットロジック
 # -----------------------------------------------------------------------------
 async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
-    """
-    メインのチャット処理フロー
-    Supabase (QA DB & Vector DB) のみを参照します。
-    """
     session_id = get_or_create_session_id(request, query_obj)
     feedback_id = str(uuid.uuid4())
     user_input = query_obj.query.strip()
@@ -378,7 +367,6 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
         # Step 2: Supabase QA (FAQ) Check
         if core_database.db_client:
             qa_hits = core_database.db_client.search_fallback_qa(query_embedding, match_count=1)
-            # 類似度が高ければFAQの回答を即座に返す
             if qa_hits and qa_hits[0].get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
                 top_qa = qa_hits[0]
                 resp = format_urls_as_links(f"よくあるご質問に情報がありました。\n\n---\n{top_qa['content']}")
@@ -387,6 +375,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
                 return
 
             # Step 3: Supabase Document Search (Hybrid)
+            # 【調整】30件取得（エンジニア視点での最適化）
             raw_docs = core_database.db_client.search_documents_hybrid(
                 collection_name=query_obj.collection,
                 query_text=user_input, 
@@ -407,9 +396,10 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
         unique_docs = await SearchPipeline.filter_diversity(raw_docs, threshold=PARAMS["DIVERSITY_THRESHOLD"])
         
         # 4-2. リランク (Geminiによるスコアリング)
+        # 【調整】上位15件をリランク（レイテンシと精度のバランス重視）
         reranked_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=query_obj.top_k)
         
-        # 4-3. 再配置 (Lost in the Middle対策: U字型配置)
+        # 4-3. 再配置
         relevant_docs = SearchPipeline.reorder_documents(reranked_docs)
 
         if not relevant_docs:
@@ -458,7 +448,6 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
              return
 
         # Step 6: References
-        # 回答に「見つかりません」が含まれていなければリンクを生成
         if "情報が見つかりません" not in full_resp:
             refs_text = _build_references(full_resp, sources_map)
             if refs_text:
@@ -469,7 +458,6 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
 
     except Exception as e:
         log_context(session_id, f"Critical Pipeline Error: {e}", "error")
-        # エラーメッセージの出し分け
         error_str = str(e)
         if "429" in error_str or "Quota" in error_str:
             msg = AI_MESSAGES["RATE_LIMIT"]
