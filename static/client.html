@@ -234,7 +234,7 @@
 }
 
 body.dark-mode {
-    /* 全体の背景を暗い色に固定（テーマ変更よりも優先されます） */
+    /* 全体の背景を暗い色に固定(テーマ変更よりも優先されます) */
     background: #1a1a2e !important;
     --bg-overlay: rgba(30, 30, 40, 0.98);
     --text-main: #e0e0e0;
@@ -324,7 +324,7 @@ body.dark-mode .dark-mode-toggle {
             <span id="syncText">設定同期準備中...</span>
         </div>
         <h1>📚 AI chatbot system</h1>
-        <p class="subtitle">学生生活に関する様々な質問にお答えします！</p>
+        <p class="subtitle">学生生活に関する様々な質問にお答えします!</p>
         <div class="theme-selector">
             <p>背景テーマを変更</p>
             <div>
@@ -341,10 +341,10 @@ body.dark-mode .dark-mode-toggle {
             <div class="message bot">
                 <div class="message-content">
                     私は学生支援チャットボットです。🤖<br>
-                    - 学生証をなくした・盗難・汚してしまったときは？<br>
-                    - 新しいサークルを作るには？<br>
-                    - 休学・復学・退学の手続きをしたいときは？<br>
-                    様々な質問にお答えします！
+                    - 学生証をなくした・盗難・汚してしまったときは?<br>
+                    - 新しいサークルを作るには?<br>
+                    - 休学・復学・退学の手続きをしたいときは?<br>
+                    様々な質問にお答えします!
                     <span class="warning-text">
             ※氏名・住所・学籍番号などの個人情報は入力しないでください。
                     重要な決定をする前に、必ず公式情報を確認してください。
@@ -372,10 +372,10 @@ body.dark-mode .dark-mode-toggle {
         <div class="modal-content">
             <span class="modal-close-btn">&times;</span>
             <h2>AIチャットへの意見・要望</h2>
-            <p>今後の改善のため、お気づきの点などをお聞かせください。（匿名で送信されます）</p>
+            <p>今後の改善のため、お気づきの点などをお聞かせください。(匿名で送信されます)</p>
             <textarea id="commentTextarea" placeholder="ここにコメントを入力してください..."></textarea>
             <button id="sendCommentBtn">送信</button>
-            <div class="success-message" id="successMessage">✓ コメントを送信しました。ありがとうございます！</div>
+            <div class="success-message" id="successMessage">✓ コメントを送信しました。ありがとうございます!</div>
             <div class="error-message" id="errorMessage">エラーが発生しました。もう一度お試しください。</div>
         </div>
     </div>
@@ -630,7 +630,7 @@ darkModeBtn.addEventListener('click', () => {
 
                 console.log("Supabaseへの保存成功:", data);
                 const feedbackContainer = element.parentElement;
-                feedbackContainer.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます！</span>';
+                feedbackContainer.innerHTML = '<span style="font-size: 0.8rem; color: #28a745;">フィードバックありがとうございます!</span>';
             } catch(error) {
                 console.error("フィードバック送信エラー:", error);
                 alert("送信に失敗しました。");
@@ -642,7 +642,7 @@ darkModeBtn.addEventListener('click', () => {
             const userInput = chatInput.value.trim();
 
             // ============================================================
-            // 【停止ロジック】すでに生成中（コントローラーがある）場合
+            // 【停止ロジック】すでに生成中(コントローラーがある)場合
             // ============================================================
             if (abortController) {
                 abortController.abort(); // 通信を強制切断
@@ -669,7 +669,7 @@ darkModeBtn.addEventListener('click', () => {
             // ============================================================
             if (!userInput || !chatInput) return;
 
-            // UI: ボタンを「停止」モードに変更（赤色にするクラスを追加）
+            // UI: ボタンを「停止」モードに変更(赤色にするクラスを追加)
             sendBtn.classList.add('generating');
             sendBtn.innerHTML = '<span>停止</span><span>⏹</span>'; // ■のアイコンに変更
 
@@ -729,7 +729,7 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                             const feedbackContainer = document.createElement('div');
                             feedbackContainer.className = 'feedback-container';
                             feedbackContainer.innerHTML = `
-                                <span>この回答は役に立ちましたか？</span>
+                                <span>この回答は役に立ちましたか?</span>
                                 <button class="feedback-btn" data-rating="good">👍</button>
                                 <button class="feedback-btn" data-rating="bad">👎</button>
                             `;
@@ -755,7 +755,7 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                             }
                             // --- ★ここから追加: ステータスメッセージの処理 ---
                             if (data.status_message) {
-                                // ステータスメッセージで中身を上書き（アニメーション付き）
+                                // ステータスメッセージで中身を上書き(アニメーション付き)
                                 botMessageContent.innerHTML = `<span class="status-pulse">${data.status_message}</span>`;
                                 // チャット画面を最下部へスクロール
                                 if(chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -763,7 +763,7 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                             }
                             // --- ここまで ---
 
-                            // --- ★ここから変更: コンテンツ（回答本文）の処理 ---
+                            // --- ★ここから変更: コンテンツ(回答本文)の処理 ---
                             if (data.content) {
                                 // 最初のコンテンツが来たら、それまでの「ステータスメッセージ」を消す
                                 if (isFirstChunk) {
@@ -802,7 +802,7 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                 // ============================================================
                 // 【終了処理】正常完了した場合のボタンリセット
                 // ============================================================
-                // まだコントローラーが存在する＝（中断ではなく）最後まで読み切った場合
+                // まだコントローラーが存在する!(中断ではなく)最後まで読み切った場合
                 if (abortController) {
                     abortController = null;
                     sendBtn.classList.remove('generating');
@@ -851,95 +851,22 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
         // 設定WebSocket開始
         connectSettingsWebSocket();
 
-        // --- 画像表示機能 ---
-        window.showSourceImage = async function(sourceName) {
-            if (!window.supabaseClient) {
-                alert('Supabaseクライアントが初期化されていません');
-                return;
-            }
-
+        // --- 画像表示機能(署名付きURL対応) ---
+        window.showSourceImage = function(signedUrl) {
+            // 署名付きURLが直接渡される場合(chat_logic.pyから生成)
             const modal = document.getElementById('imageModal');
             const content = document.getElementById('imageModalContent');
             
             modal.classList.add('visible');
             content.innerHTML = '<div class="image-modal-loading">画像を読み込み中...</div>';
 
-            try {
-                // source名から画像パスを生成
-                // 例: "10_新札幌_諸規程.pdf" -> "converted_images_rules/10_新札幌_諸規程_001.jpg"
-                const baseName = sourceName.replace(/\.(pdf|docx|txt)$/i, '');
-                const imagePaths = [
-                    `converted_images_rules/${baseName}_001.jpg`,
-                    `converted_images_common/${baseName}_001.jpg`,
-                    `${baseName}_001.jpg`,
-                    `${baseName}.jpg`
-                ];
-
-                // 複数のパスを試して画像を取得
-                let imageUrl = null;
-                for (const path of imagePaths) {
-                    try {
-                        const { data, error } = await window.supabaseClient
-                            .storage
-                            .from('images')
-                            .getPublicUrl(path);
-                        
-                        if (!error && data) {
-                            // 画像が存在するか確認（Promiseでラップ）
-                            const imageLoaded = await new Promise((resolve) => {
-                                const img = new Image();
-                                img.onload = () => resolve(true);
-                                img.onerror = () => resolve(false);
-                                img.src = data.publicUrl;
-                            });
-                            
-                            if (imageLoaded) {
-                                imageUrl = data.publicUrl;
-                                displayImage(imageUrl);
-                                break; // 最初の成功したパスを使用
-                            }
-                        }
-                    } catch (err) {
-                        console.log(`パス ${path} を試行中...`, err);
-                    }
-                }
-
-                // 画像が見つからない場合
-                if (!imageUrl) {
-                    // 全ての画像をリストアップして表示
-                    const { data: files, error: listError } = await window.supabaseClient
-                        .storage
-                        .from('images')
-                        .list('', {
-                            search: baseName
-                        });
-
-                    if (!listError && files && files.length > 0) {
-                        // 見つかった最初の画像を表示
-                        const firstImage = files[0];
-                        const { data: urlData } = await window.supabaseClient
-                            .storage
-                            .from('images')
-                            .getPublicUrl(firstImage.name);
-                        
-                        if (urlData) {
-                            displayImage(urlData.publicUrl);
-                        } else {
-                            content.innerHTML = '<div class="image-modal-error">画像の取得に失敗しました</div>';
-                        }
-                    } else {
-                        content.innerHTML = `<div class="image-modal-error">画像が見つかりませんでした<br><small>Source: ${sourceName}</small></div>`;
-                    }
-                }
-            } catch (error) {
-                console.error('画像取得エラー:', error);
-                content.innerHTML = '<div class="image-modal-error">エラーが発生しました: ' + error.message + '</div>';
-            }
+            // 署名付きURLを直接使用して画像を表示
+            displayImage(signedUrl);
         };
 
         function displayImage(imageUrl) {
             const content = document.getElementById('imageModalContent');
-            content.innerHTML = `<img src="${imageUrl}" alt="参照元画像" class="image-modal-image" onerror="this.parentElement.innerHTML='<div class=\'image-modal-error\'>画像の読み込みに失敗しました</div>'">`;
+            content.innerHTML = `<img src="${imageUrl}" alt="参照元画像" class="image-modal-image" onerror="this.parentElement.innerHTML='<div class=\\'image-modal-error\\'>画像の読み込みに失敗しました。<br><small>URLの有効期限が切れている可能性があります。</small></div>'">`;
         }
 
         window.closeImageModal = function() {

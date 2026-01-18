@@ -33,7 +33,7 @@ USE_MODEL = "gemini-2.5-flash"
 # パラメータ設定 (バランス調整済み)
 PARAMS = {
     "QA_SIMILARITY_THRESHOLD": 0.90,  # DB内FAQの即答ライン
-    "RERANK_SCORE_THRESHOLD": 4.0,    # リランク足切りライン (0-10)
+    "RERANK_SCORE_THRESHOLD": 6.0,    # リランク足切りライン (0-10)
     "DIVERSITY_THRESHOLD": 0.7,       # 重複排除の類似度ライン
     "MAX_HISTORY_LENGTH": 20,
 }
@@ -49,7 +49,7 @@ SAFETY_SETTINGS = {
 # エラーメッセージ定義
 AI_MESSAGES = {
     "NOT_FOUND": (
-        "申し訳ありません。ご質問に関連する情報がデータベース（資料）内に見つかりませんでした。"
+        "申し訳ありません。ご質問に関連する情報がデータベース(資料)内に見つかりませんでした。"
         "不確かな回答を避けるため、ここではお答えを控えさせていただきます。"
         "\n\n大学窓口へ直接お問い合わせいただくことをお勧めします。"
     ),
@@ -58,7 +58,7 @@ AI_MESSAGES = {
     "BLOCKED": "生成された回答がセーフティガイドラインに抵触したため、表示できませんでした。"
 }
 
-# スレッドプール（CPUバウンドな処理用）
+# スレッドプール(CPUバウンドな処理用)
 executor = ThreadPoolExecutor(max_workers=4)
 
 # -----------------------------------------------------------------------------
@@ -77,7 +77,7 @@ class RerankResponse(typing.TypedDict):
 # プロンプトテンプレート (リランク用)
 PROMPT_RERANK = """
 あなたは厳格な査読者です。
-ユーザーの質問に対し、以下のドキュメントが「回答の根拠」として使用できるかを0-10点で採点してください。
+ユーザーの質問に対して、以下のドキュメントが「回答の根拠」として使用できるかを0-10点で採点してください。
 
 評価基準:
 - 10点: 質問に対する直接的な答えが含まれている。
@@ -93,20 +93,20 @@ PROMPT_SYSTEM_GENERATION = """
 あなたは**札幌学院大学の学生サポートAI**です。
 以下の <context> タグ内の情報**のみ**を使用して、質問に回答してください。
 
-# 厳守すべきルール（ガードレール）
+# 厳守すべきルール(ガードレール)
 
-1. **情報の限定（Zero-Inference）**:
-   - あなたが元々持っている知識（一般常識や他大学の事例）は一切使用しないでください。
+1. **情報の限定(Zero-Inference)**:
+   - あなたが元々持っている知識(一般常識や他大学の事例)は一切使用しないでください。
    - **禁止事項**: 「一般的には」「通常は」「一般論として」といった表現は絶対に使用しないでください。
    - 文脈に答えが見つからない場合は、正直に「提供された資料内には、その情報が見当たりませんでした」と答えてください。
 
 2. **引用フォーマットの徹底**:
    - 回答の根拠となる部分には、必ず `[1]` や `[1][2]` という形式で番号を振ってください。
-   - **注意**: `(1)` や `Source: 1` は不可です。必ず `[` と `]` で囲んでください。（システムがリンクを生成するために必須です）
+   - **注意**: `(1)` や `Source: 1` は不可です。必ず `[` と `]` で囲んでください。(システムがリンクを生成するために必須です)
 
 3. **トーンとマナー**:
    - 学生に寄り添った、親しみやすい「です・ます」調で話してください。
-   - 冒頭は「こんにちは！札幌学院大学の学生サポートAIです。」で始めてください。
+   - 冒頭は「こんにちは!札幌学院大学の学生サポートAIです。」で始めてください。
    - 専門用語や条件分岐が多い場合は、箇条書きや太字を使って視覚的に整理してください。
 
 4. **回答プロセス**:
@@ -292,13 +292,21 @@ class SearchPipeline:
         return first_half + second_half
 
 # -----------------------------------------------------------------------------
-# 5. 参照リンク生成ユーティリティ (Supabase対応)
+# 5. 参照リンク生成ユーティリティ (Supabase対応・署名付きURL生成)
 # -----------------------------------------------------------------------------
 
-def get_signed_url(file_path: str, bucket_name: str = "images"):
+def get_signed_url(file_path: str, bucket_name: str = "images", expires_in: int = 3600):
     """
-    非公開ストレージ内のファイルに対して、1時間有効な署名付きURLを発行します。
+    非公開ストレージ内のファイルに対して、署名付きURLを発行します。
     複数のパス候補を試行して、最初に見つかった有効なURLを返します。
+    
+    Args:
+        file_path: ファイル名またはパス
+        bucket_name: Supabaseストレージのバケット名
+        expires_in: URL有効期限(秒) デフォルト3600秒=1時間
+    
+    Returns:
+        署名付きURL、または None
     """
     if core_database.db_client is None:
         logging.error("db_client is not initialized")
@@ -314,7 +322,7 @@ def get_signed_url(file_path: str, bucket_name: str = "images"):
     path_candidates.append(clean_path)
     
     # 2. converted_images_rules/ と converted_images_common/ ディレクトリを試す
-    # ファイル名が既に画像ファイル名の場合（.jpgなど）
+    # ファイル名が既に画像ファイル名の場合(.jpgなど)
     if clean_path.endswith(('.jpg', '.jpeg', '.png', '.gif')):
         # ディレクトリ付きパスを追加
         path_candidates.append(f"converted_images_rules/{clean_path}")
@@ -343,17 +351,20 @@ def get_signed_url(file_path: str, bucket_name: str = "images"):
     # 各パス候補を試行
     for candidate_path in path_candidates:
         try:
-            # 非公開の 'images' バケットからアクセス権付きのURLを生成(1時間有効)
-            response = core_database.db_client.client.storage.from_(bucket_name).create_signed_url(candidate_path, 3600)
+            # 非公開の 'images' バケットからアクセス権付きのURLを生成
+            response = core_database.db_client.client.storage.from_(bucket_name).create_signed_url(
+                candidate_path, 
+                expires_in
+            )
             
             if isinstance(response, dict) and "signedURL" in response:
                 signed_url = response["signedURL"]
-                # URLが有効かどうか確認（実際にアクセスできるかはフロントエンドで確認）
+                # URLが有効かどうか確認(実際にアクセスできるかはフロントエンドで確認)
                 if signed_url:
-                    logging.debug(f"Found signed URL for path: {candidate_path}")
+                    logging.debug(f"Found signed URL for path: {candidate_path} (expires in {expires_in}s)")
                     return signed_url
             elif response:
-                # レスポンスが辞書でない場合（文字列など）
+                # レスポンスが辞書でない場合(文字列など)
                 return response
         except Exception as e:
             # このパスが見つからなかった場合、次の候補を試す
@@ -368,6 +379,8 @@ def _build_references(response_text: str, sources_map: Dict[int, Any]) -> str:
     """
     参照元のリンクを生成します。
     sources_mapの形式: {idx: {'source': str, 'metadata': dict}} または {idx: str} (後方互換性)
+    
+    署名付きURLを使用して、1時間有効なリンクを生成します。
     """
     unique_refs = []
     seen_sources = set()
@@ -391,7 +404,7 @@ def _build_references(response_text: str, sources_map: Dict[int, Any]) -> str:
             url = metadata.get('url')
             source_display = src
             
-            # URLが存在する場合（Webスクレイピングなど）
+            # URLが存在する場合(Webスクレイピングなど)
             if url:
                 # URLを直接リンクとして生成
                 unique_refs.append(
@@ -399,8 +412,8 @@ def _build_references(response_text: str, sources_map: Dict[int, Any]) -> str:
                     f"{source_display}</a>"
                 )
             else:
-                # 画像ファイル用の署名付きURLを試す
-                signed_url = get_signed_url(src)
+                # 画像ファイル用の署名付きURLを試す(1時間有効)
+                signed_url = get_signed_url(src, expires_in=3600)
                 if signed_url:
                     unique_refs.append(
                         f"* <a href='#' class='source-link' data-url='{signed_url}' "
@@ -461,7 +474,7 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
                 return
 
             # Step 3: Supabase Document Search (Hybrid)
-            # 【調整】30件取得（エンジニア視点での最適化）
+            # 【調整】30件取得(エンジニア視点での最適化)
             raw_docs = core_database.db_client.search_documents_hybrid(
                 collection_name=query_obj.collection,
                 query_text=user_input, 
@@ -475,14 +488,14 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
             yield send_sse({'content': AI_MESSAGES["NOT_FOUND"]})
             return
 
-        yield send_sse({'status_message': '🧐 文献の重複を除去し、精査中...', 'type': 'status'})
+        yield send_sse({'status_message': '🧠 文献の重複を除去し、精査中...', 'type': 'status'})
 
         # Step 4: Pipeline (Filter -> Rerank -> Reorder)
         # 4-1. 重複排除 (MMR)
         unique_docs = await SearchPipeline.filter_diversity(raw_docs, threshold=PARAMS["DIVERSITY_THRESHOLD"])
         
         # 4-2. リランク (Geminiによるスコアリング)
-        # 【調整】上位15件をリランク（レイテンシと精度のバランス重視）
+        # 【調整】上位15件をリランク(レイテンシと精度のバランス重視)
         reranked_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=query_obj.top_k)
         
         # 4-3. 再配置
