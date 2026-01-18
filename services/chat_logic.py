@@ -4,7 +4,7 @@ import json
 import asyncio
 import re
 import os
-from typing import List, Dict, Any, AsyncGenerator, Optional, Union
+from typing import List, Dict, Any, AsyncGenerator, Optional
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 import typing_extensions as typing
@@ -30,11 +30,10 @@ genai.configure(api_key=GEMINI_API_KEY)
 # 使用モデル
 USE_MODEL = "gemini-2.5-flash"
 
-# パラメータ設定 (バランス調整済み)
+# パラメータ
 PARAMS = {
-    "QA_SIMILARITY_THRESHOLD": 0.90,  # DB内FAQの即答ライン
-    "RERANK_SCORE_THRESHOLD": 6.0,    # リランク足切りライン (0-10)
-    "DIVERSITY_THRESHOLD": 0.7,       # 重複排除の類似度ライン
+    "QA_SIMILARITY_THRESHOLD": 0.90, # FAQの即答ライン
+    "RERANK_SCORE_THRESHOLD": 6.0,   # リランク足切りライン(0-10)
     "MAX_HISTORY_LENGTH": 20,
 }
 
@@ -46,23 +45,22 @@ SAFETY_SETTINGS = {
     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
 }
 
-# エラーメッセージ定義
+# ★修正点1: エラーメッセージの正確な定義
 AI_MESSAGES = {
     "NOT_FOUND": (
-        "申し訳ありません。ご質問に関連する情報がデータベース(資料)内に見つかりませんでした。"
-        "不確かな回答を避けるため、ここではお答えを控えさせていただきます。"
-        "\n\n大学窓口へ直接お問い合わせいただくことをお勧めします。"
+        "申し訳ありません。ご質問に関連する確実な情報が資料内に見つかりませんでした。"
+        "大学窓口へ直接お問い合わせいただくことをお勧めします。"
     ),
     "RATE_LIMIT": "申し訳ありません。現在アクセスが集中しています。1分ほど待ってから再度お試しください。",
     "SYSTEM_ERROR": "システムエラーが発生しました。しばらく時間をおいて再度お試しください。",
-    "BLOCKED": "生成された回答がセーフティガイドラインに抵触したため、表示できませんでした。"
+    "BLOCKED": "生成された回答がセーフティガイドラインに抵触したため、表示できませんでした。言い回しを変えて再度お試しください。"
 }
 
-# スレッドプール(CPUバウンドな処理用)
+# スレッドプール（CPUバウンドな処理用）
 executor = ThreadPoolExecutor(max_workers=4)
 
 # -----------------------------------------------------------------------------
-# 2. プロンプト定義 & スキーマ (Structured Outputs用)
+# 2. プロンプト & スキーマ定義 (Structured Outputs用)
 # -----------------------------------------------------------------------------
 
 # リランク出力用の型定義
@@ -74,80 +72,36 @@ class RankedItem(typing.TypedDict):
 class RerankResponse(typing.TypedDict):
     ranked_items: list[RankedItem]
 
-# プロンプトテンプレート (リランク用)
+# プロンプトテンプレート
 PROMPT_RERANK = """
-あなたは厳格な査読者です。
-ユーザーの質問に対して、以下のドキュメントが「回答の根拠」として使用できるかを0-10点で採点してください。
-
-評価基準:
-- 10点: 質問に対する直接的な答えが含まれている。
-- 5-9点: 関連情報が含まれており、回答の構成に役立つ。
-- 0-4点: キーワードは似ているが、文脈が異なる、または無関係。
-
+ユーザーの質問に対し、以下のドキュメントが回答根拠として適切か0-10点で採点してください。
 質問: {query}
 候補:
 {candidates_text}
 """
 
 PROMPT_SYSTEM_GENERATION = """
-あなたは**札幌学院大学の学生サポートAI**です。
-以下の <context> タグ内の情報**のみ**を使用して、質問に回答してください。
+あなたは札幌学院大学の学生サポートAIです。
+以下の<context>内の情報**のみ**を使用して、質問に回答してください。
 
-# 厳守すべきルール(ガードレール)
-
-1. **情報源の厳格な限定**:
-   - 使用可能な情報源は**以下の2種類のみ**です:
-     * **documents**: ハイブリッド検索で取得された資料データ（大学の文書、規則、ガイドラインなど）
-     * **category_fallbacks**: Q&Aデータベース（よくある質問と回答のペア）
-   - これら以外の情報源（あなたの事前学習知識、一般常識、他大学の事例、推測など）は**一切使用禁止**です。
-   - **絶対禁止事項**: 
-     * 「一般的には」「通常は」「一般的なケースでは」などの表現
-     * 「おそらく」「推測すると」などの推測表現
-     * 資料に記載がない情報の補完や推論
-
-2. **回答が見つからない場合の厳格な制御**:
-   - documentsとcategory_fallbacksの両方に情報が見つからない場合は、以下のメッセージを必ず使用してください:
-     「申し訳ありません。ご質問に関連する情報がデータベース(資料)内に見つかりませんでした。不確かな回答を避けるため、ここではお答えを控えさせていただきます。大学窓口へ直接お問い合わせいただくことをお勧めします。」
-   - 資料に一部しか情報がない場合でも、不足部分を推測や一般知識で補完することは絶対に禁止です。
-   - 情報が不十分な場合は、見つかった部分だけを回答し、不足部分については「この点については、資料内に記載がありませんでした」と明記してください。
-
-3. **引用フォーマットの徹底**:
-   - 回答の根拠となる部分には、必ず `[1]` や `[1][2]` という形式で番号を振ってください。
-   - **注意**: `(1)` や `Source: 1` は不可です。必ず `[` と `]` で囲んでください。(システムがリンクを生成するために必須です)
-
-4. **トーンとマナー**:
-   - 学生に寄り添った、親しみやすい「です・ます」調で話してください。
-   - 冒頭は「こんにちは!札幌学院大学の学生サポートAIです。」で始めてください。
-   - 専門用語や条件分岐が多い場合は、箇条書きや太字を使って視覚的に整理してください。
-
-5. **回答プロセス**:
-   - まず提供された資料を読み、質問に関連する部分があるか確認する。
-   - 情報が完全に見つかった場合のみ回答を構成する。
-   - 情報が部分的、または全く見つからない場合は、上記2のルールに従って処理する。
-   - 引用番号 `[x]` が正しい位置にあるか確認してから出力する。
+# 回答のルール
+1. **根拠の紐付け**:
+   文章中の重要な事実には、文末に `[1]` のように**短い番号のみ**を付記してください。
+2. **形式**:
+   - 学生に寄り添った、丁寧で親しみやすい「です・ます」調。
+   - 読みやすいように箇条書きや**太字**を活用する。
+   - 情報がない場合は「情報が見つかりません」と答える。
 """
 
 # -----------------------------------------------------------------------------
-# 3. ユーティリティ関数 & クラス
+# 3. ユーティリティ関数
 # -----------------------------------------------------------------------------
-
-def get_or_create_session_id(
-    source: Union[str, Request, None] = None, 
-    query_obj: Optional[ChatQuery] = None
-) -> str:
-    """セッションIDを取得または生成します。"""
-    if isinstance(source, str):
-        return source
-    if query_obj and hasattr(query_obj, 'session_id') and query_obj.session_id:
-        return query_obj.session_id
-    if isinstance(source, Request):
-        if hasattr(source, "session"):
-            sid = source.session.get('chat_session_id')
-            if not sid:
-                sid = str(uuid.uuid4())
-                source.session['chat_session_id'] = sid
-            return sid
-    return str(uuid.uuid4())
+def get_or_create_session_id(request: Request) -> str:
+    session_id = request.session.get('chat_session_id')
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        request.session['chat_session_id'] = session_id
+    return session_id
 
 def log_context(session_id: str, message: str, level: str = "info"):
     msg = f"[Session: {session_id}] {message}"
@@ -157,9 +111,9 @@ def send_sse(data: Dict[str, Any]) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 async def api_request_with_retry(func, *args, **kwargs):
-    """API制限(429)対策: リトライロジック"""
+    """API制限(429)対策: エラーメッセージから待機時間を解析してリトライ"""
     max_retries = 3
-    default_delay = 4
+    default_delay = 5
     for attempt in range(max_retries):
         try:
             return await func(*args, **kwargs)
@@ -182,46 +136,59 @@ async def api_request_with_retry(func, *args, **kwargs):
             else:
                 raise e
 
-# --- HistoryManager --- (メモリ内のみ、chat_historyテーブルは使用しない)
 class ChatHistoryManager:
     def __init__(self):
         self._histories: Dict[str, List[Dict[str, str]]] = {}
 
     def add(self, session_id: str, role: str, content: str):
-        # メモリ内の履歴に追加のみ
         if session_id not in self._histories:
             self._histories[session_id] = []
         self._histories[session_id].append({"role": role, "content": content})
         if len(self._histories[session_id]) > PARAMS["MAX_HISTORY_LENGTH"]:
             self._histories[session_id] = self._histories[session_id][-PARAMS["MAX_HISTORY_LENGTH"]:]
 
-    def get_context_string(self, session_id: str, limit: int = 10) -> str:
-        # メモリ内の履歴のみを使用
-        hist = self._histories.get(session_id, [])[-limit:]
-        return "\n".join([f"{h['role']}: {h['content']}" for h in hist])
-
 history_manager = ChatHistoryManager()
 
 # -----------------------------------------------------------------------------
-# 4. 検索パイプライン
+# 4. コアロジック: 検索パイプライン
 # -----------------------------------------------------------------------------
 class SearchPipeline:
+    @staticmethod
+    async def optimize_query(user_query: str, session_id: str) -> str:
+        """HyDE + Query Expansion (必要に応じて有効化)"""
+        # ※API節約のため、現在は使用していないが機能として残す
+        prompt = f"""
+        ユーザーの質問に基づいて、大学のデータベース検索に最適な「検索キーワード」を作成してください。
+        専門用語への言い換えを含め、出力は検索用テキストのみにしてください。
+        質問: "{user_query}"
+        """
+        try:
+            model = genai.GenerativeModel(USE_MODEL)
+            resp = await api_request_with_retry(
+                model.generate_content_async, prompt, safety_settings=SAFETY_SETTINGS
+            )
+            return resp.text.strip()
+        except Exception:
+            return user_query
+
     @staticmethod
     async def rerank(query: str, documents: List[Dict], top_k: int = 5) -> List[Dict]:
         """Gemini Structured Outputs を使用した高速・確実なリランク"""
         if not documents:
             return []
         
+        # コンテキスト作成 (トークン節約のため、先頭1000文字程度に制限)
         candidates_text = ""
         for i, doc in enumerate(documents):
             meta = doc.get('metadata', {})
-            snippet = doc.get('content', '')[:300].replace('\n', ' ')
+            snippet = doc.get('content', '')[:300].replace('\n', ' ')#1/91000文字から300文字渡すように変更
             candidates_text += f"ID:{i} [Source:{meta.get('source', '?')}]\n{snippet}\n\n"
 
         formatted_prompt = PROMPT_RERANK.format(query=query, candidates_text=candidates_text)
 
         try:
             model = genai.GenerativeModel(USE_MODEL)
+            # ★改善: response_schemaで型安全にJSONを取得
             resp = await api_request_with_retry(
                 model.generate_content_async,
                 formatted_prompt,
@@ -232,6 +199,7 @@ class SearchPipeline:
                 safety_settings=SAFETY_SETTINGS
             )
             
+            # JSONパース処理
             data = json.loads(resp.text)
             
             reranked = []
@@ -239,6 +207,7 @@ class SearchPipeline:
                 idx = item.get("id")
                 score = item.get("score")
                 
+                # インデックスの妥当性とスコアチェック
                 if idx is not None and 0 <= idx < len(documents):
                     if score >= PARAMS["RERANK_SCORE_THRESHOLD"]:
                         doc = documents[idx]
@@ -250,13 +219,17 @@ class SearchPipeline:
 
         except Exception as e:
             logging.error(f"Rerank Error: {e}")
+            # エラー時は元の順序の上位をそのまま返す（フェイルセーフ）
             return documents[:top_k]
 
     @staticmethod
     async def filter_diversity(documents: List[Dict], threshold: float = 0.7) -> List[Dict]:
+        """MMR風フィルタリング（重複排除）"""
         loop = asyncio.get_running_loop()
         unique_docs = []
-        def _calc_sim(a, b): return SequenceMatcher(None, a, b).ratio()
+        
+        def _calc_sim(a, b):
+            return SequenceMatcher(None, a, b).ratio()
 
         for doc in documents:
             content = doc.get('content', '')
@@ -264,304 +237,129 @@ class SearchPipeline:
             for selected in unique_docs:
                 sim = await loop.run_in_executor(executor, _calc_sim, content, selected.get('content', ''))
                 if sim > threshold:
-                    is_duplicate = True; break
-            if not is_duplicate: unique_docs.append(doc)
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                unique_docs.append(doc)
         return unique_docs
 
-    @staticmethod
-    def reorder_documents(documents: List[Dict]) -> List[Dict]:
-        if not documents: return []
-        first_half = documents[0::2]
-        second_half = documents[1::2][::-1]
-        return first_half + second_half
-
-# -----------------------------------------------------------------------------
-# 5. 参照リンク生成ユーティリティ (Supabase対応・署名付きURL生成)
-# -----------------------------------------------------------------------------
-
-def get_signed_url(file_path: str, bucket_name: str = "images", expires_in: int = 3600):
-    """
-    非公開ストレージ内のファイルに対して、署名付きURLを発行します。
-    複数のパス候補を試行して、最初に見つかった有効なURLを返します。
-    
-    Args:
-        file_path: ファイル名またはパス
-        bucket_name: Supabaseストレージのバケット名
-        expires_in: URL有効期限(秒) デフォルト3600秒=1時間
-    
-    Returns:
-        署名付きURL、または None
-    """
-    if core_database.db_client is None:
-        logging.error("db_client is not initialized")
-        return None
-
-    # ファイル名に含まれる余分な空白を除去
-    clean_path = file_path.strip()
-    
-    # パス候補リストを生成
-    path_candidates = []
-    
-    # 1. そのままのパス
-    path_candidates.append(clean_path)
-    
-    # 2. converted_images_rules/ と converted_images_common/ ディレクトリを試す
-    # ファイル名が既に画像ファイル名の場合(.jpgなど)
-    if clean_path.endswith(('.jpg', '.jpeg', '.png', '.gif')):
-        # ディレクトリ付きパスを追加
-        path_candidates.append(f"converted_images_rules/{clean_path}")
-        path_candidates.append(f"converted_images_common/{clean_path}")
-        
-        # _016.jpg のような形式から _001.jpg に変換したパスも試す
-        # 例: "02_新札幌_学部共通事項_016.jpg" -> "02_新札幌_学部共通事項_001.jpg"
-        numbered_pattern = re.compile(r'_(\d{3})\.(jpg|jpeg|png|gif)$', re.IGNORECASE)
-        if numbered_pattern.search(clean_path):
-            base_without_number = numbered_pattern.sub(r'_001.\2', clean_path)
-            path_candidates.extend([
-                base_without_number,
-                f"converted_images_rules/{base_without_number}",
-                f"converted_images_common/{base_without_number}"
-            ])
-    else:
-        # PDFファイル名などからbaseNameを抽出して画像パスを生成
-        base_name = re.sub(r'\.(pdf|docx|txt)$', '', clean_path, flags=re.IGNORECASE)
-        path_candidates.extend([
-            f"converted_images_rules/{base_name}_001.jpg",
-            f"converted_images_common/{base_name}_001.jpg",
-            f"{base_name}_001.jpg",
-            f"{base_name}.jpg"
-        ])
-
-    # 各パス候補を試行
-    for candidate_path in path_candidates:
-        try:
-            # 非公開の 'images' バケットからアクセス権付きのURLを生成
-            response = core_database.db_client.client.storage.from_(bucket_name).create_signed_url(
-                candidate_path, 
-                expires_in
-            )
-            
-            if isinstance(response, dict) and "signedURL" in response:
-                signed_url = response["signedURL"]
-                # URLが有効かどうか確認(実際にアクセスできるかはフロントエンドで確認)
-                if signed_url:
-                    logging.debug(f"Found signed URL for path: {candidate_path} (expires in {expires_in}s)")
-                    return signed_url
-            elif response:
-                # レスポンスが辞書でない場合(文字列など)
-                return response
-        except Exception as e:
-            # このパスが見つからなかった場合、次の候補を試す
-            logging.debug(f"Failed to get signed URL for path {candidate_path}: {e}")
-            continue
-    
-    # すべてのパス候補が失敗した場合
-    logging.warning(f"Failed to get signed URL for any candidate path. Original: {file_path}")
-    return None
-
-def _build_references(response_text: str, sources_map: Dict[int, Any]) -> str:
-    """
-    参照元のリンクを生成します。
-    sources_mapの形式: {idx: {'source': str, 'metadata': dict}} または {idx: str} (後方互換性)
-    
-    署名付きURLを使用して、1時間有効なリンクを生成します。
-    """
+def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
+    """回答生成後に参照元リンクを作成するヘルパー関数"""
     unique_refs = []
     seen_sources = set()
-    cited_ids = set(map(int, re.findall(r'\[(\d+)\]', response_text)))
     
-    for idx, source_info in sources_map.items():
-        # 後方互換性: 文字列の場合
-        if isinstance(source_info, str):
-            src = source_info
-            metadata = {}
-        else:
-            src = source_info.get('source', '不明')
-            metadata = source_info.get('metadata', {})
-            
-            # ハイブリッド検索時: docから直接メタデータを取得する場合に対応
-            if not metadata and source_info.get('doc'):
-                doc = source_info.get('doc', {})
-                metadata = doc.get('metadata', {})
-                if isinstance(metadata, str):
-                    try:
-                        metadata = json.loads(metadata)
-                    except (json.JSONDecodeError, TypeError):
-                        metadata = {}
-                elif metadata is None:
-                    metadata = {}
-                # メタデータからsourceを再取得
-                if not src or src == '不明':
-                    src = metadata.get('source') or doc.get('source', '不明')
-        
-        # 引用されている、または上位2つ以内の場合に表示
-        if idx in cited_ids or idx <= 2:
-            if src in seen_sources:
-                continue
-            
-            # メタデータからURL情報を取得
-            url = metadata.get('url')
-            source_display = src
-            
-            # URLが存在する場合(Webスクレイピングなど)
-            if url:
-                # URLを直接リンクとして生成
-                unique_refs.append(
-                    f"* <a href='{url}' target='_blank' class='source-link' rel='noopener noreferrer'>"
-                    f"{source_display}</a>"
-                )
-            else:
-                # 画像ファイル用の署名付きURLを試す(1時間有効)
-                signed_url = get_signed_url(src, expires_in=3600)
-                if signed_url:
-                    unique_refs.append(
-                        f"* <a href='#' class='source-link' data-url='{signed_url}' "
-                        f"onclick='event.preventDefault(); showSourceImage(this.dataset.url); return false;'>"
-                        f"{source_display}</a>"
-                    )
-                else:
-                    # リンクがない場合はテキストのみ
-                    unique_refs.append(f"* {source_display}")
-            
+    for idx, src in sources_map.items():
+        if src in seen_sources: continue
+        # テキスト内で引用されているか、または上位3件なら表示
+        if f"[{idx}]" in response_text or idx <= 3:
+            unique_refs.append(f"* [{idx}] {src}")
             seen_sources.add(src)
             
     if unique_refs:
-        return "\n\n### 参照元データ\n" + "\n".join(unique_refs)
+        return "\n\n## 参照元\n" + "\n".join(unique_refs)
     return ""
 
 # -----------------------------------------------------------------------------
-# 6. メインチャットロジック
+# 5. メイン: チャットロジック
 # -----------------------------------------------------------------------------
-async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
-    session_id = get_or_create_session_id(request, query_obj)
+async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
+    session_id = get_or_create_session_id(request)
     feedback_id = str(uuid.uuid4())
-    user_input = query_obj.query.strip()
-    full_resp = ""
+    user_input = chat_req.query.strip()
     
-    yield send_sse({
-        'feedback_id': feedback_id, 
-        'status_message': '🔍 データベースを検索しています...',
-        'type': 'status'
-    })
+    # クライアントへ初期レスポンス
+    yield send_sse({'feedback_id': feedback_id, 'status_message': '🔍 データベースを検索しています...'})
 
     try:
-        # Step 1: Embedding
+        # Step 1: Embeddingの非同期実行
         embedding_task = asyncio.create_task(
             genai.embed_content_async(
-                model=query_obj.embedding_model,
+                model=chat_req.embedding_model,
                 content=user_input,
                 task_type="retrieval_query"
             )
         )
-        
+
+        # Step 2: Embedding結果の取得
         try:
             raw_emb_result = await embedding_task
             query_embedding = raw_emb_result["embedding"]
         except Exception as e:
             log_context(session_id, f"Embedding Failed: {e}", "error")
+            # ★修正点2: Embedding失敗は「システムエラー」として通知（アクセス集中ではない）
             yield send_sse({'content': AI_MESSAGES["SYSTEM_ERROR"]})
             return
 
-        # Step 2: Supabase Q&A (category_fallbacks) Check
-        if core_database.db_client:
-            qa_hits = core_database.db_client.search_fallback_qa(query_embedding, match_count=1)
-            if qa_hits and qa_hits[0].get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
-                top_qa = qa_hits[0]
-                # category_fallbacksテーブルのanswerフィールドを参照
-                answer_text = top_qa.get('answer') or top_qa.get('content', '')
-                resp = format_urls_as_links(f"よくあるご質問に情報がありました。\n\n---\n{answer_text}")
+        # Step 3: FAQ (QA Database) チェック
+        # 高スコアでヒットすれば即return
+        if qa_hits := core_database.db_client.search_fallback_qa(query_embedding, match_count=1):
+            top_qa = qa_hits[0]
+            if top_qa.get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
+                resp = format_urls_as_links(f"よくあるご質問に回答が見つかりました。\n\n---\n{top_qa['content']}")
                 history_manager.add(session_id, "assistant", resp)
                 yield send_sse({'content': resp, 'show_feedback': True, 'feedback_id': feedback_id})
                 return
 
-            # Step 3: Supabase Document Search (Hybrid)
-            # 【調整】30件取得(エンジニア視点での最適化)
-            raw_docs = core_database.db_client.search_documents_hybrid(
-                collection_name=query_obj.collection,
-                query_text=user_input, 
-                query_embedding=query_embedding,
-                match_count=30
-            )
-        else:
-            raw_docs = []
+        # Step 4: ドキュメント検索 (Hybrid)
+        # 処理節約のためクエリ拡張はスキップし、生の入力を使用
+        raw_docs = core_database.db_client.search_documents_hybrid(
+            collection_name=chat_req.collection,
+            query_text=user_input, 
+            query_embedding=query_embedding,
+            match_count=30
+        )
 
         if not raw_docs:
             yield send_sse({'content': AI_MESSAGES["NOT_FOUND"]})
             return
 
-        yield send_sse({'status_message': '🧠 文献の重複を除去し、精査中...', 'type': 'status'})
-
-        # Step 4: Pipeline (Filter -> Rerank -> Reorder)
-        # 4-1. 重複排除 (MMR)
-        unique_docs = await SearchPipeline.filter_diversity(raw_docs, threshold=PARAMS["DIVERSITY_THRESHOLD"])
+        yield send_sse({'status_message': '🧐 AIが文献を読んで選定中...'})
         
-        # 4-2. リランク (Geminiによるスコアリング)
-        # 【調整】上位15件をリランク(レイテンシと精度のバランス重視)
-        reranked_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=query_obj.top_k)
+        # Step 5: フィルタリング & リランク
+        unique_docs = await SearchPipeline.filter_diversity(raw_docs)
         
-        # 4-3. 再配置
-        relevant_docs = SearchPipeline.reorder_documents(reranked_docs)
+        # Geminiによるリランク実行
+        relevant_docs = await SearchPipeline.rerank(user_input, unique_docs[:15], top_k=chat_req.top_k)
 
         if not relevant_docs:
             yield send_sse({'content': AI_MESSAGES["NOT_FOUND"]})
             return
 
-        # Step 5: Generation
-        yield send_sse({'status_message': '✍️ 回答を執筆しています...', 'type': 'status'})
+        # Step 6: 回答生成
+        yield send_sse({'status_message': '✍️ 回答を執筆しています...'})
         
         context_parts = []
-        sources_map = {}
+        sources_map = {} # {doc_id: source_name}
+        
         for idx, doc in enumerate(relevant_docs, 1):
-            # ハイブリッド検索の結果からdocumentsを確実に参照
-            # metadataが文字列の場合(JSON)やNoneの場合に対応
-            metadata = doc.get('metadata', {})
-            if isinstance(metadata, str):
-                try:
-                    metadata = json.loads(metadata)
-                except (json.JSONDecodeError, TypeError):
-                    metadata = {}
-            elif metadata is None:
-                metadata = {}
-            
-            # source情報をメタデータから取得、なければdocから直接取得を試す
-            src = metadata.get('source') or doc.get('source', '不明')
-            
-            # sources_mapにdocuments全体とメタデータを含めて、確実に参照できるようにする
-            sources_map[idx] = {
-                'source': src,
-                'metadata': metadata,
-                'doc': doc  # documents全体も保持
-            }
+            src = doc.get('metadata', {}).get('source', '不明')
+            sources_map[idx] = src
             context_parts.append(f"<doc id='{idx}' src='{src}'>\n{doc.get('content','')}\n</doc>")
         
         context_str = "\n".join(context_parts)
-        
-        full_system_prompt = f"""{PROMPT_SYSTEM_GENERATION}
-        
-### 検索された資料 (documentsテーブルから取得)
-{context_str}
-"""
+        full_system_prompt = f"{PROMPT_SYSTEM_GENERATION}\n<context>\n{context_str}\n</context>"
+
         model = genai.GenerativeModel(USE_MODEL)
         stream = await api_request_with_retry(
             model.generate_content_async,
-            f"ユーザーの質問: {user_input}",
+            [full_system_prompt, f"質問: {user_input}"],
             stream=True,
-            generation_config=GenerationConfig(temperature=0.0), # 事実性重視
             safety_settings=SAFETY_SETTINGS
         )
         
-        yield send_sse({'status_message': '', 'type': 'status'})
-
+        full_resp = ""
         async for chunk in stream:
             if chunk.text:
                 full_resp += chunk.text
                 yield send_sse({'content': chunk.text})
         
+        # ★修正点3: 回答が空（セーフティ等でブロック）の場合のハンドリング追加
         if not full_resp:
              yield send_sse({'content': AI_MESSAGES["BLOCKED"]})
+             history_manager.add(session_id, "assistant", "[[BLOCKED]]")
              return
 
-        # Step 6: References
+        # Step 7: 参照元リンクの追記
         if "情報が見つかりません" not in full_resp:
             refs_text = _build_references(full_resp, sources_map)
             if refs_text:
@@ -572,36 +370,49 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
 
     except Exception as e:
         log_context(session_id, f"Critical Pipeline Error: {e}", "error")
+        
+        # ★修正点4: エラー種別によるメッセージの正確な出し分け
         error_str = str(e)
         if "429" in error_str or "Quota" in error_str:
             msg = AI_MESSAGES["RATE_LIMIT"]
-        elif "finish_reason" in error_str:
+        elif "finish_reason" in error_str: # Gemini固有のブロックエラーなど
             msg = AI_MESSAGES["BLOCKED"]
         else:
             msg = AI_MESSAGES["SYSTEM_ERROR"]
             
-        if not full_resp:
-            yield send_sse({'content': msg})
-            
+        yield send_sse({'content': msg})
+        
     finally:
+        # どのような終了フローでもフィードバックボタンは表示する
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
 
 # -----------------------------------------------------------------------------
-# 7. 分析機能 (管理者用)
+# 6. 分析機能 (管理者用)
 # -----------------------------------------------------------------------------
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
     if not logs:
-        yield send_sse({'content': 'データなし'})
+        yield send_sse({'content': '分析対象データがありません。'})
         return
-    summary = "\n".join([f"- {l.get('rating','-')} | {l.get('comment','-')[:50]}" for l in logs[:30]])
+    
+    # ログデータの要約
+    summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
+    prompt = f"""
+    以下のチャットボット利用ログを分析し、Markdownでレポートを作成してください。
+    
+    # ログデータ
+    {summary}
+    
+    # 出力項目
+    1. ユーザーの主な関心事（トレンド）
+    2. 低評価の原因と改善策
+    3. 次のアクションプラン
+    """
+    
     try:
         model = genai.GenerativeModel(USE_MODEL)
-        stream = await api_request_with_retry(
-            model.generate_content_async, 
-            f"分析と改善提案:\n{summary}", 
-            stream=True
-        )
+        stream = await api_request_with_retry(model.generate_content_async, prompt, stream=True)
         async for chunk in stream:
-            if chunk.text: yield send_sse({'content': chunk.text})
+            if chunk.text:
+                yield send_sse({'content': chunk.text})
     except Exception as e:
-        yield send_sse({'content': str(e)})
+        yield send_sse({'content': f'分析エラー: {e}'})
