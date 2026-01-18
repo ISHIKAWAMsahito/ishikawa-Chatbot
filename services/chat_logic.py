@@ -511,12 +511,25 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
         context_parts = []
         sources_map = {}
         for idx, doc in enumerate(relevant_docs, 1):
+            # ハイブリッド検索の結果からdocumentsを確実に参照
+            # metadataが文字列の場合(JSON)やNoneの場合に対応
             metadata = doc.get('metadata', {})
-            src = metadata.get('source', '不明')
-            # sources_mapにメタデータ全体を含めて、URL情報なども参照できるようにする
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except (json.JSONDecodeError, TypeError):
+                    metadata = {}
+            elif metadata is None:
+                metadata = {}
+            
+            # source情報をメタデータから取得、なければdocから直接取得を試す
+            src = metadata.get('source') or doc.get('source', '不明')
+            
+            # sources_mapにdocuments全体とメタデータを含めて、確実に参照できるようにする
             sources_map[idx] = {
                 'source': src,
-                'metadata': metadata
+                'metadata': metadata,
+                'doc': doc  # documents全体も保持
             }
             context_parts.append(f"<doc id='{idx}' src='{src}'>\n{doc.get('content','')}\n</doc>")
         
