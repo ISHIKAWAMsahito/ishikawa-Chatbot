@@ -89,7 +89,6 @@ PROMPT_RERANK = """
 {candidates_text}
 """
 
-# システムプロンプト (厳格モード維持)
 PROMPT_SYSTEM_GENERATION = """
 あなたは**札幌学院大学の学生サポートAI**です。
 以下の <context> タグ内の情報**のみ**を使用して、質問に回答してください。
@@ -98,8 +97,8 @@ PROMPT_SYSTEM_GENERATION = """
 
 1. **情報の限定（Zero-Inference）**:
    - あなたが元々持っている知識（一般常識や他大学の事例）は一切使用しないでください。
+   - **禁止事項**: 「一般的には」「通常は」「一般論として」といった表現は絶対に使用しないでください。
    - 文脈に答えが見つからない場合は、正直に「提供された資料内には、その情報が見当たりませんでした」と答えてください。
-   - 「一般的には〜」という推測発言は禁止です。
 
 2. **引用フォーマットの徹底**:
    - 回答の根拠となる部分には、必ず `[1]` や `[1][2]` という形式で番号を振ってください。
@@ -112,8 +111,8 @@ PROMPT_SYSTEM_GENERATION = """
 
 4. **回答プロセス**:
    - まず資料を読み、質問に関連する部分があるか確認する。
-   - 次に、その部分だけを使って回答を構成する。
-   - 最後に、引用番号 `[x]` が正しい位置にあるか確認してから出力する。
+   - 一般論を混ぜないよう、資料にある事実だけを抽出して回答を構成する。
+   - 引用番号 `[x]` が正しい位置にあるか確認してから出力する。
 """
 
 # -----------------------------------------------------------------------------
@@ -297,34 +296,74 @@ class SearchPipeline:
 # -----------------------------------------------------------------------------
 
 def get_signed_url(file_path: str, bucket_name: str = "images"):
+    """
+    非公開ストレージ内のファイルに対して、1時間有効な署名付きURLを発行します。
+    """
     try:
-        if core_database.db_client is None: return None
+        if core_database.db_client is None:
+            logging.error("db_client is not initialized")
+            return None
+
+        # ファイル名に含まれる余分な空白を除去
+        clean_path = file_path.strip()
+
         # 非公開の 'images' バケットからアクセス権付きのURLを生成(1時間有効)
-        response = core_database.db_client.client.storage.from_(bucket_name).create_signed_url(file_path, 3600)
+        response = core_database.db_client.client.storage.from_(bucket_name).create_signed_url(clean_path, 3600)
         
         if isinstance(response, dict) and "signedURL" in response:
             return response["signedURL"]
         return response 
     except Exception as e:
+        logging.error(f"Failed to get signed URL for {file_path}: {e}")
         return None
 
-def _build_references(response_text: str, sources_map: Dict[int, str]) -> str:
+def _build_references(response_text: str, sources_map: Dict[int, Any]) -> str:
+    """
+    参照元のリンクを生成します。
+    sources_mapの形式: {idx: {'source': str, 'metadata': dict}} または {idx: str} (後方互換性)
+    """
     unique_refs = []
     seen_sources = set()
     cited_ids = set(map(int, re.findall(r'\[(\d+)\]', response_text)))
     
-    for idx, src in sources_map.items():
+    for idx, source_info in sources_map.items():
+        # 後方互換性: 文字列の場合
+        if isinstance(source_info, str):
+            src = source_info
+            metadata = {}
+        else:
+            src = source_info.get('source', '不明')
+            metadata = source_info.get('metadata', {})
+        
+        # 引用されている、または上位2つ以内の場合に表示
         if idx in cited_ids or idx <= 2:
-            if src in seen_sources: continue
-            signed_url = get_signed_url(src)
-            if signed_url:
+            if src in seen_sources:
+                continue
+            
+            # メタデータからURL情報を取得
+            url = metadata.get('url')
+            source_display = src
+            
+            # URLが存在する場合（Webスクレイピングなど）
+            if url:
+                # URLを直接リンクとして生成
                 unique_refs.append(
-                    f"* <a href='#' class='source-link' data-url='{signed_url}' "
-                    f"onclick='event.preventDefault(); showSourceImage(this.dataset.url); return false;'>"
-                    f"{src}</a>"
+                    f"* <a href='{url}' target='_blank' class='source-link' rel='noopener noreferrer'>"
+                    f"{source_display}</a>"
                 )
             else:
-                unique_refs.append(f"* {src}")
+                # 画像ファイル用の署名付きURLを試す
+                signed_url = get_signed_url(src)
+                if signed_url:
+                    unique_refs.append(
+                        f"* <a href='#' class='source-link' data-url='{signed_url}' "
+                        f"onclick='event.preventDefault(); showSourceImage(this.dataset.url); return false;'>"
+                        f"{source_display}</a>"
+                    )
+                else:
+                    # リンクがない場合はテキストのみ
+                    unique_refs.append(f"* {source_display}")
+            
             seen_sources.add(src)
             
     if unique_refs:
@@ -412,8 +451,13 @@ async def enhanced_chat_logic(request: Request, query_obj: ChatQuery):
         context_parts = []
         sources_map = {}
         for idx, doc in enumerate(relevant_docs, 1):
-            src = doc.get('metadata', {}).get('source', '不明')
-            sources_map[idx] = src
+            metadata = doc.get('metadata', {})
+            src = metadata.get('source', '不明')
+            # sources_mapにメタデータ全体を含めて、URL情報なども参照できるようにする
+            sources_map[idx] = {
+                'source': src,
+                'metadata': metadata
+            }
             context_parts.append(f"<doc id='{idx}' src='{src}'>\n{doc.get('content','')}\n</doc>")
         
         context_str = "\n".join(context_parts)

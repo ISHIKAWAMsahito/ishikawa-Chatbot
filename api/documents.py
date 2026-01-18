@@ -523,6 +523,9 @@ async def scrape_website(
         batch_docs = []
         total_count = 0
         for doc in doc_generator:
+            # メタデータに元のURLを追加（参照元リンク生成用）
+            if 'url' not in doc.metadata:
+                doc.metadata['url'] = request.url
             batch_docs.append(doc)
             if len(batch_docs) >= 50:
                 total_count += await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
