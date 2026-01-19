@@ -3,6 +3,7 @@ import uuid
 import logging
 from typing import Dict, Any, List
 from fastapi import Request
+import re
 
 def get_or_create_session_id(request: Request) -> str:
     session_id = request.session.get('chat_session_id')
@@ -29,3 +30,20 @@ class ChatHistoryManager:
         self._histories[session_id].append({"role": role, "content": content})
         if len(self._histories[session_id]) > self.max_length:
             self._histories[session_id] = self._histories[session_id][-self.max_length:]
+
+def format_urls_as_links(text: str) -> str:
+    """
+    テキスト内のURLを検出し、Markdownのリンク形式 [URL](URL) に変換する。
+    """
+    if not text:
+        return ""
+    # URL検出用の正規表現
+    url_pattern = r'(?<!\()https?://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]'
+    def replace_link(match):
+        url = match.group(0)
+        return f"[{url}]({url})"
+
+    # 既にMarkdownリンクの形式になっているURL (例: ](http...)) を避けるための簡易的な対策として
+    # 否定後読み (?<!\() を入れていますが、完全ではありません。
+    # 必要に応じて調整してください。
+    return re.sub(url_pattern, replace_link, text)
