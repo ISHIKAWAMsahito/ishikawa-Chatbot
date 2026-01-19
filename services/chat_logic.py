@@ -1,9 +1,10 @@
-# logic/chat.py
+# services/chat_logic.py
 import logging
-from fastapi import Request
 import uuid
-# 依存モジュールのインポート
 from typing import List, Dict, Any, AsyncGenerator
+from fastapi import Request
+
+# 依存モジュールのインポート
 from core import database as core_database
 from core.constants import PARAMS, AI_MESSAGES
 from models.schemas import ChatQuery
@@ -12,10 +13,9 @@ from services.search import SearchService
 from services.storage import StorageService
 from services.utils import get_or_create_session_id, send_sse, log_context, ChatHistoryManager
 from services import prompts
-from services.utils import format_urls_as_links # 元コードからの既存importを想定
+from services.utils import format_urls_as_links
 
 # DI（依存性の注入）の準備
-# 本番環境ではFastAPIのDepends等で注入するのがベストですが、ここでは初期化
 llm_service = LLMService()
 search_service = SearchService(llm_service)
 storage_service = StorageService()
@@ -25,7 +25,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     """リファクタリング後のメインチャットロジック"""
     session_id = get_or_create_session_id(request)
     user_input = chat_req.query.strip()
-    feedback_id = str(uuid.uuid4()) # 必要に応じて生成
+    feedback_id = str(uuid.uuid4())
     
     yield send_sse({'feedback_id': feedback_id, 'status_message': '🔍 質問を分析しています...'})
 
@@ -33,10 +33,13 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         # 1. クエリ拡張
         expanded_query = await search_service.expand_query(user_input)
         
-        # 2. Embedding生成
-        query_embedding = await llm_service.get_embedding(expanded_query)
+        # 2. Embedding生成 (★ここを修正: モデル名を渡す)
+        query_embedding = await llm_service.get_embedding(
+            text=expanded_query, 
+            model=chat_req.embedding_model  # settings.pyの設定値がここに来ます
+        )
 
-        # 3. FAQチェック (既存DBロジック利用)
+        # 3. FAQチェック
         if qa_hits := core_database.db_client.search_fallback_qa(query_embedding, match_count=1):
             top_qa = qa_hits[0]
             if top_qa.get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
@@ -63,11 +66,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         # 5. フィルタリング & リランク & 並べ替え
         unique_docs = search_service.filter_diversity(raw_docs)
-        
-        # リランク入力：定数で定義した上位30件
         rerank_input = unique_docs[:PARAMS["RERANK_TOP_K_INPUT"]]
         
-        # リランク実行
         relevant_docs = await search_service.rerank(
             query=user_input, 
             documents=rerank_input, 
@@ -96,7 +96,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         
         context_str = "\n".join(context_parts)
         
-        # 7. 回答生成 (Chain of Thought プロンプト使用)
+        # 7. 回答生成
         full_system_prompt = f"{prompts.SYSTEM_GENERATION}\n<context>\n{context_str}\n</context>"
         
         stream = await llm_service.generate_stream(
@@ -127,7 +127,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
     except Exception as e:
         log_context(session_id, f"Critical Pipeline Error: {e}", "error")
-        # エラーハンドリングも共通メッセージ定数を使用
         error_str = str(e)
         if "429" in error_str or "Quota" in error_str:
             msg = AI_MESSAGES["RATE_LIMIT"]
@@ -140,34 +139,23 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     finally:
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
 
-# services/chat_logic.py の末尾に追加
-
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
-    """
-    フィードバックログを分析し、改善レポートを生成する関数
-    (api/chat.py から呼び出されます)
-    """
+    """フィードバック分析用 (前回追加したものと同じ)"""
     if not logs:
         yield send_sse({'content': '分析対象データがありません。'})
         return
     
-    # 最新50件のみを分析対象とする（トークン節約のため）
     summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
-    
     prompt = f"""
     以下のチャットボット利用ログを分析し、Markdownでレポートを作成してください。
-    
     # ログデータ
     {summary}
-    
     # 出力項目
     1. ユーザーの主な関心事（トレンド）
     2. 低評価の原因と改善策
     3. 次のアクションプラン
     """
-    
     try:
-        # グローバルスコープにある llm_service を使用
         stream = await llm_service.generate_stream(prompt)
         async for chunk in stream:
             if chunk.text:

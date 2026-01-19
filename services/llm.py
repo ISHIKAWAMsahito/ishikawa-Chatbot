@@ -13,9 +13,14 @@ class LLMService:
         self.model_name = model_name
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def get_embedding(self, text: str) -> list[float]:
+    async def get_embedding(self, text: str, model: str = "models/text-embedding-004") -> list[float]:
+        """
+        埋め込みベクトルを取得する
+        :param text: テキスト
+        :param model: 使用する埋め込みモデル名 (デフォルトはフォールバック用)
+        """
         result = await genai.embed_content_async(
-            model="models/text-embedding-004",
+            model=model,  # 引数で渡されたモデルを使用
             content=text,
             task_type="retrieval_query"
         )
