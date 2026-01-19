@@ -3,6 +3,7 @@ import logging
 from fastapi import Request
 import uuid
 # 依存モジュールのインポート
+from typing import List, Dict, Any, AsyncGenerator
 from core import database as core_database
 from core.constants import PARAMS, AI_MESSAGES
 from models.schemas import ChatQuery
@@ -138,3 +139,38 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         
     finally:
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
+
+# services/chat_logic.py の末尾に追加
+
+async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
+    """
+    フィードバックログを分析し、改善レポートを生成する関数
+    (api/chat.py から呼び出されます)
+    """
+    if not logs:
+        yield send_sse({'content': '分析対象データがありません。'})
+        return
+    
+    # 最新50件のみを分析対象とする（トークン節約のため）
+    summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
+    
+    prompt = f"""
+    以下のチャットボット利用ログを分析し、Markdownでレポートを作成してください。
+    
+    # ログデータ
+    {summary}
+    
+    # 出力項目
+    1. ユーザーの主な関心事（トレンド）
+    2. 低評価の原因と改善策
+    3. 次のアクションプラン
+    """
+    
+    try:
+        # グローバルスコープにある llm_service を使用
+        stream = await llm_service.generate_stream(prompt)
+        async for chunk in stream:
+            if chunk.text:
+                yield send_sse({'content': chunk.text})
+    except Exception as e:
+        yield send_sse({'content': f'分析エラー: {e}'})
