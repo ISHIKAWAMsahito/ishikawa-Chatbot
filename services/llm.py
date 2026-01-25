@@ -21,14 +21,16 @@ class LLMService:
         self.model_name = model_name
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def get_embedding(self, text: str, model: str = "models/text-embedding-004") -> list[float]:
+    async def get_embedding(self, text: str, model: str = "models/gemini-embedding-001") -> list[float]:
         """
-        埋め込みベクトルを取得する
+        埋め込みベクトルを取得する (モデルを gemini-embedding-001 に変更)
         """
         result = await genai.embed_content_async(
             model=model,
             content=text,
-            task_type="retrieval_query"
+            task_type="retrieval_query",
+            # gemini-embedding-001 の場合は通常不要ですが、念のため 768 を指定
+            output_dimensionality=768 
         )
         return result["embedding"]
 
