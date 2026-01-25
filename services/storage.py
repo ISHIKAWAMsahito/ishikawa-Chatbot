@@ -13,26 +13,38 @@ class StorageService:
         self.bucket_name = bucket_name
         self.executor = ThreadPoolExecutor(max_workers=4)
 
-    def _generate_signed_url_sync(self, filename: str) -> Optional[str]:
-        """同期的に署名付きURLを生成"""
+    def _generate_signed_url_sync(self, filename: str) -> Optional[str]:#1/25　デバッグ用にログ出力を追加
+        """デバッグ用にログ出力を追加したバージョン"""
+        print(f"[DEBUG] URL生成試行: バケット={self.bucket_name}, ファイル={filename}")
+        
         try:
             res = self.client.storage.from_(self.bucket_name).create_signed_url(filename, 3600)
             if res and 'signedURL' in res:
+                print(f"[SUCCESS] URL生成成功: {filename}")
                 return res['signedURL']
-        except Exception:
-            pass
+            else:
+                print(f"[WARN] レスポンスにsignedURLが含まれていません: {res}")
+        except Exception as e:
+            # ここでエラー内容を表示
+            print(f"[ERROR] URL生成失敗 (初回): {filename}, エラー: {e}")
         
-        # テキストファイルの場合、同名の画像を探すフォールバック
+        # テキストファイルの場合のフォールバック
         if filename.endswith(".txt"):
             base_name = os.path.splitext(filename)[0]
             for ext in [".png", ".jpg", ".jpeg", ".pdf"]:
                 try:
                     image_filename = f"{base_name}{ext}"
+                    print(f"[DEBUG] 画像フォールバック試行: {image_filename}")
+                    
                     res = self.client.storage.from_(self.bucket_name).create_signed_url(image_filename, 3600)
                     if res and 'signedURL' in res:
+                        print(f"[SUCCESS] 画像フォールバック成功: {image_filename}")
                         return res['signedURL']
-                except Exception:
+                except Exception as e:
+                    print(f"[ERROR] フォールバック失敗: {image_filename}, エラー: {e}")
                     continue
+        
+        print(f"[FAILED] 最終的にURLを生成できませんでした: {filename}")
         return None
 
     async def build_references_async(self, response_text: str, sources_map: Dict[int, Dict[str, str]]) -> str:
