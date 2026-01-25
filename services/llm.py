@@ -20,19 +20,35 @@ class LLMService:
     def __init__(self, model_name: str = "gemini-2.5-flash"):
         self.model_name = model_name
 
+    # services/llm.py の get_embedding 関数を以下で完全に書き換えてください
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def get_embedding(self, text: str, model: str = "models/gemini-embedding-001") -> list[float]:
         """
-        埋め込みベクトルを取得する (モデルを gemini-embedding-001 に変更)
+        埋め込みベクトルを取得する。
+        DBの仕様(768次元)に合わせて、強制的に次元を制限します。
         """
-        result = await genai.embed_content_async(
-            model=model,
-            content=text,
-            task_type="retrieval_query",
-            # gemini-embedding-001 の場合は通常不要ですが、念のため 768 を指定
-            output_dimensionality=768 
-        )
-        return result["embedding"]
+        try:
+            # text-embedding-004 などの新しいモデルが選ばれた場合でも
+            # 確実に 768 次元で出力されるように設定
+            result = await genai.embed_content_async(
+                model=model,
+                content=text,
+                task_type="retrieval_query",
+                output_dimensionality=768  # ★ 768次元に固定
+            )
+            return result["embedding"]
+        except Exception as e:
+            # もし gemini-embedding-001 が output_dimensionality 未対応でエラーになった場合
+            # 標準形式で再試行する
+            result = await genai.embed_content_async(
+                model=model,
+                content=text,
+                task_type="retrieval_query"
+            )
+            # 万が一 3072次元で返ってきた場合は、先頭 768要素だけを切り出す（最終手段）
+            emb = result["embedding"]
+            return emb[:768] if len(emb) > 768 else emb
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def generate_stream(self, prompt: str, system_prompt: str = None):
