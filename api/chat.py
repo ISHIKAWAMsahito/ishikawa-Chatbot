@@ -1,28 +1,15 @@
+# api/chat.py
 import logging
 from fastapi import APIRouter, Request, HTTPException, Depends
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
+# 依存モジュールのインポート
 from core.dependencies import require_auth_client
 from core import settings as core_settings
-# ★追加: DBアクセス用
 from core import database 
 from core.config import ACTIVE_COLLECTION_NAME, SUPABASE_URL, SUPABASE_ANON_KEY
 from models.schemas import ChatQuery, ClientChatQuery
-# ★追加: analyze_feedback_trends をインポート
+# 修正されたロジックをインポート
 from services.chat_logic import enhanced_chat_logic, get_or_create_session_id, history_manager, analyze_feedback_trends
-
-# #ユーザーおよび管理者との対話を処理する中核部分です。
-
-# ストリーミング応答: StreamingResponse を使用しており、Geminiからの生成テキストをリアルタイムでフロントエンドに流す仕組みになっています。
-
-# 管理者機能 (admin_router):
-
-# 通常のチャットに加え、新規追加された /analyze エンドポイントがあります。これはDB内のフィードバックログを収集し、Geminiに分析・要約させる機能のようです。
-
-# 学生（クライアント）機能 (client_router):
-
-# 会話履歴の取得・削除機能が含まれています。
-
-# enhanced_chat_logic という外部サービス関数（未添付）を呼び出し、RAGや履歴考慮などの複雑なロジックを委譲しています。
 
 # ルーター定義
 admin_router = APIRouter()   # 管理者用
@@ -32,13 +19,11 @@ client_router = APIRouter()  # 学生用
 # 管理者用エンドポイント (admin_router)
 # ============================
 
-# 既存のチャット用
 @admin_router.post("/")
 async def chat_endpoint(request: Request, query: ChatQuery):
     """管理者用チャットエンドポイント"""
     return StreamingResponse(enhanced_chat_logic(request, query), media_type="text/event-stream")
 
-# ★★★ 新規追加: 分析専用エンドポイント ★★★
 @admin_router.post("/analyze")
 async def admin_analyze_endpoint(request: Request):
     """
@@ -63,7 +48,6 @@ async def admin_analyze_endpoint(request: Request):
         logs = response.data
     except Exception as e:
         logging.error(f"Log fetch error: {e}")
-        # エラー時は空リストを渡して、ロジック側でハンドリングさせる
         logs = []
 
     # 2. 取得したログを analyze_feedback_trends に渡してストリーミング
@@ -83,15 +67,18 @@ async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: d
     
     logging.info(f"Chat request from user: {user.get('email', 'N/A')}")
 
+    # 設定マネージャーから値を取得、なければデフォルト
     default_model = "gemini-2.5-flash" 
     default_embedding = "models/gemini-embedding-001"
+    
+    settings = core_settings.settings_manager.settings
 
     chat_query = ChatQuery(
         query=query.query,
-        model=core_settings.settings_manager.settings.get("model", default_model),
-        embedding_model=core_settings.settings_manager.settings.get("embedding_model", default_embedding),
-        top_k=core_settings.settings_manager.settings.get("top_k", 5),
-        collection=core_settings.settings_manager.settings.get("collection", ACTIVE_COLLECTION_NAME)
+        model=settings.get("model", default_model),
+        embedding_model=settings.get("embedding_model", default_embedding),
+        top_k=settings.get("top_k", 5),
+        collection=settings.get("collection", ACTIVE_COLLECTION_NAME)
     )
     
     return StreamingResponse(enhanced_chat_logic(request, chat_query), media_type="text/event-stream")

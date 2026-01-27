@@ -1,8 +1,13 @@
 # services/chat_logic.py
 import logging
 import uuid
+import asyncio
 from typing import List, Dict, Any, AsyncGenerator
 from fastapi import Request
+
+# LangSmith トレース用
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
 # 依存モジュールのインポート
 from core import database as core_database
@@ -21,22 +26,32 @@ search_service = SearchService(llm_service)
 storage_service = StorageService()
 history_manager = ChatHistoryManager(max_length=PARAMS["MAX_HISTORY_LENGTH"])
 
+@traceable(name="Chat_Pipeline_Parent", run_type="chain")
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
-    """リファクタリング後のメインチャットロジック"""
+    """
+    リファクタリング後のメインチャットロジック
+    LangSmith: この関数が実行されると、配下の llm_service や search_service の呼び出しが
+    自動的に子トレースとして記録され、ツリー構造になります。
+    """
     session_id = get_or_create_session_id(request)
     user_input = chat_req.query.strip()
     feedback_id = str(uuid.uuid4())
     
+    # LangSmith: メタデータ（セッションIDなど）を追加
+    run_tree = get_current_run_tree()
+    if run_tree:
+        run_tree.add_metadata({"session_id": session_id, "user_query": user_input})
+
     yield send_sse({'feedback_id': feedback_id, 'status_message': '🔍 質問を分析しています...'})
 
     try:
         # 1. クエリ拡張
         expanded_query = await search_service.expand_query(user_input)
         
-        # 2. Embedding生成 (★ここを修正: モデル名を渡す)
+        # 2. Embedding生成
         query_embedding = await llm_service.get_embedding(
             text=expanded_query, 
-            model=chat_req.embedding_model  # settings.pyの設定値がここに来ます
+            model=chat_req.embedding_model
         )
 
         # 3. FAQチェック
@@ -51,6 +66,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         yield send_sse({'status_message': '📚 資料を広く集めています...'})
 
         # 4. DB検索 (Hybrid)
+        # データベース操作自体をトレースしたい場合は、core/database.py に @traceable をつけるのがベストですが、
+        # ここでは検索結果の件数などをメタデータに残すことも可能です。
         raw_docs = core_database.db_client.search_documents_hybrid(
             collection_name=chat_req.collection,
             query_text=expanded_query,
@@ -68,6 +85,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         unique_docs = search_service.filter_diversity(raw_docs)
         rerank_input = unique_docs[:PARAMS["RERANK_TOP_K_INPUT"]]
         
+        # リランク処理（search_service側で既にトレース設定済み）
         relevant_docs = await search_service.rerank(
             query=user_input, 
             documents=rerank_input, 
@@ -99,6 +117,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         # 7. 回答生成
         full_system_prompt = f"{prompts.SYSTEM_GENERATION}\n<context>\n{context_str}\n</context>"
         
+        # LLM呼び出し（llm_service側でトレース設定済み）
         stream = await llm_service.generate_stream(
             prompt=f"質問: {user_input}",
             system_prompt=full_system_prompt
@@ -127,6 +146,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
     except Exception as e:
         log_context(session_id, f"Critical Pipeline Error: {e}", "error")
+        # エラー詳細をトレースに残す
+        if run_tree:
+            run_tree.end(error=str(e))
+            
         error_str = str(e)
         if "429" in error_str or "Quota" in error_str:
             msg = AI_MESSAGES["RATE_LIMIT"]
@@ -139,8 +162,9 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     finally:
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
 
+@traceable(name="Feedback_Analysis_Job", run_type="chain")
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
-    """フィードバック分析用 (前回追加したものと同じ)"""
+    """フィードバック分析用"""
     if not logs:
         yield send_sse({'content': '分析対象データがありません。'})
         return

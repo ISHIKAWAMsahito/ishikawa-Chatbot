@@ -19,13 +19,12 @@ google-generativeai==0.8.5
 supabase==2.24.0
 
 # --- ドキュメント処理 (軽量版) ---
-
 PyPDF2==3.0.1
 python-docx==1.2.0
-
 langchain-text-splitters
 
-
-# --- その他ユーティリティ ---
+# --- 監視・トレース・リトライ (★重要: LangSmith対応) ---
+langsmith
+tenacity
 python-dotenv==1.1.0
 prometheus-fastapi-instrumentator==7.1.0
