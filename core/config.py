@@ -5,7 +5,7 @@ from authlib.integrations.starlette_client import OAuth
 import logging
 
 # ----------------------------------------------------------------
-# 環境変数の読み込み設定
+# 1. 環境変数の読み込み設定
 # ----------------------------------------------------------------
 IS_PRODUCTION = os.getenv('RENDER', False)
 
@@ -25,7 +25,28 @@ else:
     logging.info("🚀 本番環境として起動しました (Renderの環境変数を使用)。")
 
 # ----------------------------------------------------------------
-# APIキー & 認証設定
+# 2. LangSmith (LangChain) 設定
+# ----------------------------------------------------------------
+# トレース有効化フラグ (文字列 "true" を bool に変換)
+LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
+LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "ishikawa-chatbot-eval") # デフォルトプロジェクト名
+LANGCHAIN_ENDPOINT = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
+
+# 設定診断
+if LANGCHAIN_TRACING_V2:
+    if not LANGCHAIN_API_KEY:
+        logging.warning("⚠️ LangSmithトレースは有効(TRACING_V2=true)ですが、APIキーが設定されていません。送信に失敗する可能性があります。")
+    else:
+        # セキュリティのためキーの一部のみ表示
+        masked_ls_key = LANGCHAIN_API_KEY[:4] + "..."
+        logging.info(f"🔎 LangSmith Tracing: ENABLED (Project: {LANGCHAIN_PROJECT}, Key: {masked_ls_key})")
+else:
+    logging.info("⚪ LangSmith Tracing: DISABLED")
+
+
+# ----------------------------------------------------------------
+# 3. APIキー & 認証設定
 # ----------------------------------------------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -41,7 +62,7 @@ if not APP_SECRET_KEY:
     raise ValueError("環境変数 'APP_SECRET_KEY' が設定されていません。")
 
 # ----------------------------------------------------------------
-# Supabase設定 (互換性対応版)
+# 4. Supabase設定 (互換性対応版)
 # ----------------------------------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
@@ -63,7 +84,7 @@ if not SUPABASE_SERVICE_KEY:
 
 
 # ----------------------------------------------------------------
-# その他定数
+# 5. その他定数
 # ----------------------------------------------------------------
 ACTIVE_COLLECTION_NAME = "student-knowledge-base"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -91,6 +112,6 @@ else:
 # デバッグ用ログ
 if GEMINI_API_KEY:
     masked_key = GEMINI_API_KEY[:5] + "..."
-    print(f"DEBUG: Current API Key starts with: {masked_key}", flush=True)
+    # print(f"DEBUG: Current API Key starts with: {masked_key}", flush=True) # ログがうるさければコメントアウト
 else:
     print("DEBUG: GEMINI_API_KEY is empty!", flush=True)

@@ -12,6 +12,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 
 # Core & Config
+# ★重要: ここで config をインポートすることで、環境変数のロードとLangSmith設定が完了します
+from core import config 
 from core.config import APP_SECRET_KEY, SUPABASE_URL, SUPABASE_KEY, SUPABASE_ANON_KEY
 from core.database import SupabaseClientManager
 from core.settings import SettingsManager
@@ -23,8 +25,7 @@ from core.dependencies import require_auth
 # APIルーター
 from api import auth, chat, documents, fallbacks, feedback, system
 
-# --- 環境判定の追加 ---
-# 環境変数 ENVIRONMENT が 'local' の場合はローカルモードとして動作
+# --- 環境判定 ---
 ENV_TYPE = os.getenv("ENVIRONMENT", "production")
 IS_LOCAL = ENV_TYPE == "local"
 
@@ -37,6 +38,12 @@ async def lifespan(app: FastAPI):
     """アプリケーションのライフサイクル管理"""
     logging.info(f"--- アプリケーション起動 (モード: {ENV_TYPE}) ---")
     
+    # 0. LangSmith 接続確認
+    if config.LANGCHAIN_TRACING_V2:
+        logging.info(f"✅ LangSmith Tracing: ON (Project: {config.LANGCHAIN_PROJECT})")
+    else:
+        logging.info("🚫 LangSmith Tracing: OFF")
+
     # 1. 設定マネージャー初期化
     from core import settings as settings_module
     settings_module.settings_manager = SettingsManager()
@@ -76,18 +83,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# --- CORS設定の修正 ---
-# ローカルと本番で許可するオリジンを切り替える
+# --- CORS設定 ---
 allowed_origins = ["http://localhost:8000", "http://127.0.0.1:8000"]
 if not IS_LOCAL:
-    # 本番環境（Render等）のURLを環境変数から追加
     prod_url = os.getenv("APP_URL")
     if prod_url:
         allowed_origins.append(prod_url)
-    else:
-        # APP_URLが未設定の場合、本番ではセキュリティのためワイルドカードは避けるべきですが、
-        # 暫定的に動作させる場合は必要に応じて調整してください
-        pass
 
 app.add_middleware(
     CORSMiddleware,
@@ -97,12 +98,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- セッション設定の修正 ---
-# IS_LOCALがTrueのときは https_only=False にすることでHTTPでのログインを許可
+# --- セッション設定 ---
 app.add_middleware(
     SessionMiddleware,
     secret_key=APP_SECRET_KEY,
-    https_only=not IS_LOCAL, 
+    https_only=not IS_LOCAL,
     same_site='lax'
 )
 
@@ -113,7 +113,12 @@ app.add_middleware(
 @app.get("/health")
 def global_health_check():
     status = "supabase" if database.db_client else "uninitialized"
-    return {"status": "ok", "database": status, "mode": ENV_TYPE}
+    return {
+        "status": "ok", 
+        "database": status, 
+        "mode": ENV_TYPE,
+        "tracing": "enabled" if config.LANGCHAIN_TRACING_V2 else "disabled"
+    }
 
 @app.get("/healthz")
 def healthz_check():
