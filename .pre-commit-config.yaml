@@ -3,4 +3,5 @@ repos:
     rev: 6.0.0
     hooks:
     -   id: flake8
-        args: [--select=E9,F63,F7,F82] # CIと同じ厳選されたエラーのみ
+        # 引数をダブルクォーテーションで囲むことで、1つのフラグとして認識させます
+        args: ["--select=E9,F63,F7,F82"]
