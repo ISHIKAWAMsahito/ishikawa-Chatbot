@@ -1,5 +1,5 @@
 🎓 学生支援チャットボットシステム
-Retrieval-Augmented Generation (RAG) を活用した、札幌学院大学向けの学生支援チャットボットです。
+Retrieval-Augmented Generation (RAG) を活用した、チャットボットです。
 無料のクラウドサービスを組み合わせ、学生でも持続的に運用可能な構成を目指しました。
 
 🚀 主な機能
