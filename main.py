@@ -207,3 +207,8 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     # proxy_headers=True, forwarded_allow_ips="*" はRender等のリバースプロキシ環境で有用
     uvicorn.run("main:app", host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
+
+# わざとエラーを出すためのテストコード
+def error_test():
+    print("括弧を閉じ忘れるテスト" 
+    # ↑ 閉じ括弧がないため、flake8の「E9 (SyntaxError)」に該当します
