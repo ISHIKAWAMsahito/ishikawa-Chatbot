@@ -337,7 +337,7 @@ async def upload_document(
              raise HTTPException(status_code=400, detail="ファイル処理の初期化に失敗しました")
 
         batch_docs = []
-        batch_size = 50
+        batch_size = 20
         total_count = 0
         
         for doc in doc_generator:
