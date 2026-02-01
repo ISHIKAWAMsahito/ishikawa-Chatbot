@@ -45,9 +45,11 @@ class SearchService:
     @alru_cache(maxsize=100) # 同じ質問に対する拡張結果をキャッシュ
     @traceable(name="Step1_Query_Expansion", run_type="chain")
     @retry(
-        retry=retry_if_exception_type(Exception), # すべての例外でリトライ検討（実際はResourceExhausted等を狙う）
-        wait=wait_exponential(multiplier=2, min=2, max=60), # 2秒, 4秒, 8秒...と待機時間を増やす
-        stop=stop_after_attempt(4), # 最大4回まで挑戦
+        retry=retry_if_exception_type(Exception),
+        # 4秒, 8秒, 16秒... と待機時間を増やし、最大60秒まで待つ
+        wait=wait_exponential(multiplier=2, min=4, max=60),
+        # 試行回数を増やして、より粘り強くする
+        stop=stop_after_attempt(8),
         reraise=True
     )
     async def expand_query(self, query: str) -> str:
