@@ -6,7 +6,6 @@ from difflib import SequenceMatcher
 from collections import deque
 
 import typing_extensions as typing
-# AsyncRetrying を追加インポート
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, AsyncRetrying, RetryError
 from async_lru import alru_cache
 from langsmith import traceable
@@ -17,7 +16,6 @@ from core.constants import PARAMS
 
 logger = logging.getLogger(__name__)
 
-# （型定義などは変更なし）
 class RankedItem(typing.TypedDict):
     id: int
     score: float
@@ -31,18 +29,17 @@ class SearchService:
         self.llm = llm_service
 
     # ----------------------------------------------------------------
-    # Step 1: クエリ拡張 (デコレータ版のまま、設定を強化)
+    # Step 1: クエリ拡張
     # ----------------------------------------------------------------
     @alru_cache(maxsize=100)
     @traceable(name="Step1_Query_Expansion", run_type="chain")
     @retry(
         retry=retry_if_exception_type(Exception),
-        wait=wait_exponential(multiplier=2, min=4, max=60),
-        stop=stop_after_attempt(8), # 8回まで粘る
+        wait=wait_exponential(multiplier=2, min=2, max=20),
+        stop=stop_after_attempt(5), 
         reraise=True 
     )
     async def expand_query(self, query: str) -> str:
-        # （中身は前回のまま変更なし）
         cot_prompt = f"""
         あなたは世界最高峰の検索エンジニアです。以下のユーザーの質問に対して、最適な検索クエリを作成してください。
         【プロセス】
@@ -63,22 +60,30 @@ class SearchService:
             raise e
 
     # ----------------------------------------------------------------
-    # Step 2: AIリランク (★ここを大幅修正★)
+    # Step 2: AIリランク (親子チャンキング対応版)
     # ----------------------------------------------------------------
     @traceable(name="Step2_AI_Rerank", run_type="chain")
     async def rerank(self, query: str, documents: List[Dict], top_k: int) -> List[Dict]:
         """
         Step 2: リランク
-        内部で AsyncRetrying を使い、失敗時はクラッシュせず元のリストを返す安全設計に変更。
+        - 親子チャンキング対応: 親コンテンツ(parent_content)があれば優先して使用
+        - 耐障害性: エラー時は元の順序でフォールバック（その際も親コンテンツへの差替は実施）
         """
         if not documents:
             return []
 
-        # リランク用プロンプト作成（前回と同じ）
+        # 1. リランク用プロンプト作成
+        # ここでAIに読ませるテキストを「親チャンク」にする
         candidates_text = ""
         for i, doc in enumerate(documents):
             meta = doc.get('metadata', {})
-            snippet = doc.get('content', '')[:1200].replace('\n', ' ') 
+            
+            # ★ 親子チャンキング対応: 親があれば親を使う
+            content_for_llm = meta.get('parent_content', doc.get('content', ''))
+            
+            # 親チャンクは情報量が多いので、文字数制限を少し緩和 (1200 -> 2500)
+            snippet = content_for_llm[:2500].replace('\n', ' ') 
+            
             candidates_text += f"Document ID: {i}\nSource: {meta.get('source', 'Unknown')}\nContent: {snippet}\n\n---\n\n"
 
         rerank_prompt = f"""
@@ -101,19 +106,16 @@ class SearchService:
         }}
         """
 
-        # ★ ここから変更：関数内でリトライループを回す
         try:
             async for attempt in AsyncRetrying(
                 retry=retry_if_exception_type(Exception),
-                wait=wait_exponential(multiplier=2, min=4, max=60), # 4秒〜60秒待機
-                stop=stop_after_attempt(10), # ★10回まで挑戦（約2分粘る）
+                wait=wait_exponential(multiplier=2, min=2, max=30),
+                stop=stop_after_attempt(5), # UXを考慮し、最大5回程度に留める
                 reraise=True
             ):
                 with attempt:
-                    # ここでAPIコール
                     resp = await self.llm.generate_json(rerank_prompt, RerankResponse)
                     
-                    # JSONパース処理
                     raw_json = resp.text if hasattr(resp, 'text') else str(resp)
                     raw_json = raw_json.replace("```json", "").replace("```", "").strip()
                     data = json.loads(raw_json)
@@ -127,30 +129,45 @@ class SearchService:
                         if idx is not None and isinstance(idx, int) and 0 <= idx < len(documents):
                             if score >= PARAMS.get("RERANK_SCORE_THRESHOLD", 3.0):
                                 doc = documents[idx].copy()
+                                
+                                # ★ 重要: 回答生成用に、中身を「親チャンク」に差し替える
+                                # これにより、最終回答を作るAIが文脈全体を読めるようになる
+                                if 'parent_content' in doc.get('metadata', {}):
+                                    doc['content'] = doc['metadata']['parent_content']
+
                                 doc['rerank_score'] = score
                                 doc['rerank_reason'] = reason
                                 reranked_docs.append(doc)
 
                     reranked_docs.sort(key=lambda x: x['rerank_score'], reverse=True)
                     
-                    # 成功したらここでリターン
                     logger.info(f"Rerank success. Top score: {reranked_docs[0]['rerank_score'] if reranked_docs else 0}")
                     return reranked_docs[:top_k]
 
         except RetryError:
-            # ★ 10回失敗しても諦めない（システムを落とさない）
-            # エラーログは出すが、元のドキュメントをそのまま返して処理を続行させる
-            logger.error("Rerank failed after 10 attempts (Resource Exhausted). Falling back to original order.")
-            # 最低限の品質担保のため、元のリストをそのまま返す
-            return documents[:top_k]
+            logger.error("Rerank failed after retries. Falling back to original order.")
+            # フォールバック時も、可能な限り親チャンクに差し替えて返す（回答精度維持のため）
+            fallback_docs = []
+            for doc in documents[:top_k]:
+                d = doc.copy()
+                if 'parent_content' in d.get('metadata', {}):
+                    d['content'] = d['metadata']['parent_content']
+                fallback_docs.append(d)
+            return fallback_docs
             
         except Exception as e:
-            # その他の予期せぬエラー
             logger.error(f"Unexpected rerank error: {e}")
-            return documents[:top_k]
+            # 予期せぬエラー時も同様にフォールバック
+            fallback_docs = []
+            for doc in documents[:top_k]:
+                d = doc.copy()
+                if 'parent_content' in d.get('metadata', {}):
+                    d['content'] = d['metadata']['parent_content']
+                fallback_docs.append(d)
+            return fallback_docs
 
     # ----------------------------------------------------------------
-    # Step 3 & 4 (変更なし)
+    # Step 3: LitM対策 (配置最適化)
     # ----------------------------------------------------------------
     @traceable(name="Step3_LitM_Reorder", run_type="tool")
     def reorder_litm(self, documents: List[Dict]) -> List[Dict]:
@@ -165,6 +182,9 @@ class SearchService:
                 reordered.append(dq.popleft())
         return reordered + temp_tail[::-1]
 
+    # ----------------------------------------------------------------
+    # Step 4: 多様性フィルタリング
+    # ----------------------------------------------------------------
     @traceable(name="Step4_Diversity_Filter", run_type="tool")
     def filter_diversity(self, documents: List[Dict], threshold: float = 0.65) -> List[Dict]:
         unique_docs = []
