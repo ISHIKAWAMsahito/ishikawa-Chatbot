@@ -133,6 +133,8 @@ class SimpleDocumentProcessor:
         for parent_idx, parent_text in enumerate(parent_chunks):
             # 親の中から子チャンクを生成
             child_chunks = self.child_splitter.split_text(parent_text)
+            # document_processor.py の process_and_chunk メソッド内
+
             for child_text in child_chunks:
                 metadata = {
                     "source": filename,
@@ -140,9 +142,9 @@ class SimpleDocumentProcessor:
                     "category": category,
                     "element_type": "ParentChild",
                     "parent_index": parent_idx,
-                    # ★重要: ここにMarkdown形式の親テキストが入るため
-                    # LLMは「# 見出し」などの構造情報を読んで回答できるようになる
-                    "parent_context": parent_text
+                    # ★修正: キー名を "parent_context" から "parent_content" に統一
+                    # これにより、search.py や documents.py での扱いが統一されます
+                    "parent_content": parent_text
                 }
                 yield LangChainDocument(page_content=child_text, metadata=metadata)
         logging.info(f"{filename}: Processing complete (Stream finished).")
