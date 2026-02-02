@@ -5,7 +5,500 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI chatbot system【管理者画面】</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<link rel="stylesheet" href="/static/style.css">
+<style>
+     /* --- 追加: 生成停止ボタンのスタイル --- */  /*12/14チャット送信停止ボタンのスタイル追加*/
+.send-btn.generating {
+    background: #dc3545; /* 赤色 */
+    box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+}
+.send-btn.generating:hover {
+    background: #c82333;
+    box-shadow: 0 6px 16px rgba(220, 53, 69, 0.4);
+}
+/* ローディングアニメーション（送信中アイコン用） */
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+.fa-spinner { animation: spin 1s linear infinite; }
+    /* ... (CSSスタイルは変更なしのため省略。元のCSSをそのまま使用してください) ... */
+    /* --- 基本設定 --- */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* Fix: model-select-row for AI設定 select row */
+    .model-select-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 24px;
+        overflow-x: hidden;
+    }
+/* --- ステータス表示アニメーション --- */
+.status-pulse {
+    display: inline-flex;
+    align-items: center;
+    color: #666;
+    font-size: 0.95rem;
+    font-weight: 500;
+    background: #f0f2f5;
+    padding: 8px 16px;
+    border-radius: 20px;
+    animation: pulse-bg 1.5s infinite alternate;
+}
+
+.status-pulse::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background-color: #4facfe;
+    border-radius: 50%;
+    margin-right: 8px;
+    animation: blink 1s infinite;
+}
+
+@keyframes pulse-bg {
+    0% { background-color: #f0f2f5; }
+    100% { background-color: #e1e4e8; }
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+    /* --- レイアウトコンテナ --- */
+    .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        background: rgba(255, 255, 255, 0.98);
+        border-radius: 16px; /* 統一 */
+        box-shadow: 0 32px 64px rgba(0, 0, 0, 0.15);
+        overflow: hidden;
+    }
+    .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 40px;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+    }
+    .header h1 {
+        font-size: 2.5rem;
+        margin-bottom: 16px; /* 統一 */
+        text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3);
+        position: relative;
+        z-index: 1;
+    }
+    .header p {
+        font-size: 1.1rem;
+        opacity: 0.9;
+        position: relative;
+        z-index: 1;
+    }
+    /* ---------------------------------------------------- */
+    /* ★ 追加: 管理者用ログアウトボタン（白背景・黒文字） */
+    /* ---------------------------------------------------- */
+    .logout-btn {
+        position: absolute;
+        top: 25px;
+        right: 25px;
+        z-index: 100;
+
+        /* 色の設定 */
+        background-color: #ffffff;
+        color: #333333;
+        border: none;
+
+        /* 形と配置 */
+        padding: 10px 24px;
+        border-radius: 30px;
+        text-decoration: none;
+        font-weight: bold;
+        font-size: 0.95rem;
+
+        /* 影とアニメーション */
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    .logout-btn:hover {
+        background-color: #f8f9fa;   /* ホバー時は明るいグレー */
+        color: #000000;              /* 文字を完全な黒に */
+        box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+        transform: translateY(-2px);
+    }
+    .main-content {
+        display: grid;
+        grid-template-columns: 1fr 300px;
+        gap: 32px; /* 統一 */
+        padding: 32px; /* 統一 */
+        min-height: 600px;
+    }
+
+    /* --- チャットエリア --- */
+    .chat-container {
+        display: flex;
+        flex-direction: column;
+        background: white;
+        border-radius: 16px; /* 統一 */
+        box-shadow: 0 16px 32px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        position: relative;
+    }
+    .chat-header {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        padding: 16px; /* 統一 */
+        text-align: center;
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+    .chat-messages {
+        flex: 1;
+        padding: 24px; /* 統一 */
+        overflow-y: auto;
+        max-height: 500px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px; /* 統一 */
+    }
+    .message {
+        max-width: 80%;
+        padding: 12px 16px; /* 統一 */
+        border-radius: 16px; /* 統一 */
+        position: relative;
+        animation: slideIn 0.3s ease-out;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+    .message.user {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        align-self: flex-end;
+        margin-left: auto;
+    }
+    .message.bot {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        color: #333;
+        align-self: flex-start;
+        border-left: 4px solid #4facfe;
+    }
+    .message-content { line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; }
+    .message-content a { color: #007bff; text-decoration: underline; }
+    .message-content a:hover { color: #0056b3; }
+    .message-time { font-size: 0.8rem; opacity: 0.7; margin-top: 8px; /* 統一 */ }
+    .important-note {
+        color: red;
+        font-weight: bold;
+    }
+
+    .chat-input-container { padding: 24px; /* 統一 */ background: #f8f9fa; border-top: 1px solid #e9ecef; }
+    .chat-input-box { display: flex; gap: 8px; /* 統一 */ align-items: flex-end; }
+    .chat-input {
+        flex: 1;
+        padding: 12px 16px; /* 統一 */
+        border: 2px solid #e9ecef;
+        border-radius: 9999px; /* Pill Shape */
+        font-size: 1rem; /* 統一 */
+        outline: none;
+        transition: all 0.3s ease;
+        resize: none;
+        min-height: 48px; /* 統一 */
+        max-height: 120px;
+    }
+    .chat-input:focus { border-color: #4facfe; box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1); }
+    .send-btn {
+        padding: 12px 24px; /* 統一 */
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        color: white;
+        border: none;
+        border-radius: 9999px; /* Pill Shape */
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        display:flex;
+        gap: 8px; /* 統一 */
+        align-items:center;
+    }
+    .send-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(79, 172, 254, 0.3); }
+    .send-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+    /* --- 右側パネル --- */
+    .right-panel { display: flex; flex-direction: column; gap: 24px; /* 統一 */ }
+    .panel-section { background: white; padding: 24px; /* 統一 */ border-radius: 16px; /* 統一 */ box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); }
+    .section-title {
+        font-size: 1.3rem;
+        font-weight: 700;
+        margin-bottom: 16px; /* 統一 */
+        color: #333;
+        border-bottom: 3px solid #4facfe;
+        padding-bottom: 8px; /* 統一 */
+    }
+
+    /* --- 汎用 & 状態表示 --- */
+    .status-indicator { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; /* 統一 */ animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(79, 172, 254, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(79, 172, 254, 0); } 100% { box-shadow: 0 0 0 0 rgba(79, 172, 254, 0); } }
+    .status-connected { background-color: #28a745; }
+    .status-disconnected { background-color: #dc3545; }
+    .margin-top-10 { margin-top: 8px; /* 統一 */ }
+    .db-info { font-size: 0.9rem; color: #666; margin-top: 8px; /* 統一 */ }
+
+    /* --- フォーム要素 --- */
+    .model-info { background: #e3f2fd; padding: 16px; /* 統一 */ border-radius: 8px; /* 統一 */ margin-top: 8px; /* 統一 */ font-size: 0.9rem; }
+    .model-select, .collection-select, .embedding-model-select, .collection-input, .scrape-input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        margin-top: 10px;
+    }
+    .model-select {
+        flex: 1;
+    }
+    .topk-select { width: 64px; /* 統一 */ padding: 4px; /* 統一 */ }
+    .document-upload { margin-top: 15px; /* 統一 */ }
+    #fileInput { display: none; }
+    .upload-btn {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 5px;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 10px;
+    }
+    .upload-btn:hover {
+        background: #218838;
+    }
+    .upload-btn.danger { background: #dc3545; }
+    .upload-btn.danger:hover { background: #c82333; }
+    .upload-note {
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 5px;
+    }
+.document-list {
+    max-height: 150px;
+    overflow-y: auto;
+    margin-top: 10px;
+}
+.document-item {
+    padding: 8px 12px;
+    background: #f8f9fa;
+    margin: 5px 0;
+    border-radius: 5px;
+    font-size: 0.9rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.total-chunks-info {
+    text-align: right;
+    font-size: 0.9rem;
+    margin-top: 10px;
+    color: #333;
+}
+.document-item:hover {
+    background: #e9ecef;
+}
+    .db-controls { display: flex; gap: 8px; /* 統一 */ margin-top: 8px; /* 統一 */ }
+    .small-btn { padding: 4px 8px; /* 統一 */ font-size: 0.8rem; border: none; border-radius: 4px; /* 統一 */ cursor: pointer; }
+    .small-btn.primary { background: #007bff; color: white; }
+    .small-btn.success { background: #28a745; color: white; }
+    .small-btn.danger { background: #dc3545; color: white; }
+
+    /* --- その他 --- */
+    .feedback-container { margin-top: 12px; padding-top: 8px; /* 統一 */ border-top: 1px solid #ddd; }
+    .feedback-btn { background: none; border: 1px solid #ccc; border-radius: 16px; /* 統一 */ padding: 4px 8px; /* 統一 */ margin-left: 8px; /* 統一 */ cursor: pointer; transition: all 0.2s ease; }
+    .feedback-btn:hover { background: #e9ecef; transform: scale(1.1); }
+    .feedback-thanks {
+        font-size: 0.8rem;
+        color: #28a745;
+    }
+    /* --- 文書管理・ウェブサイト取得 --- */
+    .scrape-btn {
+        margin-top: 16px; /* 統一 */
+        padding: 10px 15px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 8px; /* 統一 */
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-weight: 600;
+    }
+    .scrape-btn:hover {
+        background: #0056b3;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+    }
+    .scrape-btn:disabled {
+        background-color: #6c757d;
+        cursor: not-allowed;
+        transform: none;
+        opacity: 0.6;
+    }
+    .website-example {
+        padding: 12px 16px; /* 統一 */
+        background: #f0f8ff;
+        border-radius: 8px; /* 統一 */
+        margin-bottom: 8px; /* 統一 */
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-size: 0.9rem;
+        border-left: 4px solid #007bff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+    }
+    .website-example:hover {
+        background: #e0f0ff;
+        transform: translateX(4px);
+        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.15);
+    }
+    .admin-tool-btn { display: block; width: 100%; padding: 12px; background: linear-gradient(135deg, #6c757d 0%, #343a40 100%); color: white; border: none; border-radius: 8px; /* 統一 */ cursor: pointer; font-weight: 700; }
+    .admin-tool-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2); }
+    .sync-status { font-size: 0.85rem; color: #28a745; margin-top: 4px; /* 統一 */ font-style: italic; }
+    .sync-status.error { color: #dc3545; }
+    .setting-item { margin-bottom: 16px; /* 統一 */ padding: 16px; /* 統一 */ border: 1px solid #e9ecef; border-radius: 8px; /* 統一 */ background: #f8f9fa; }
+    .setting-item.active { border-color: #28a745; background: #e8f5e8; }
+    .auto-sync-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #28a745; margin-left: 8px; /* 統一 */ animation: blink 1s infinite; }
+    @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
+
+    /* --- モーダル --- */
+    .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.2s; }
+    .modal-overlay.visible { opacity: 1; visibility: visible; }
+    .modal-content { background: white; padding: 32px; /* 統一 */ border-radius: 16px; /* 統一 */ box-shadow: 0 16px 40px rgba(0,0,0,0.2); text-align: center; max-width: 400px; transform: scale(0.9); transition: transform 0.2s; }
+    .modal-overlay.visible .modal-content { transform: scale(1); }
+    .modal-message { font-size: 1.1rem; margin-bottom: 24px; /* 統一 */ color: #333; }
+    .modal-buttons { display: flex; gap: 16px; /* 統一 */ justify-content: center; }
+    .modal-btn { padding: 8px 24px; /* 統一 */ border: none; border-radius: 8px; /* 統一 */ cursor: pointer; font-weight: 600; transition: all 0.2s; }
+    .modal-btn.confirm { background: #dc3545; color: white; }
+    .modal-btn.confirm:hover { background: #c82333; }
+    .modal-btn.cancel { background: #e9ecef; color: #333; }
+    .modal-btn.cancel:hover { background: #ced4da; }
+
+    /* --- 画像表示用モーダル --- */
+    .image-modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; z-index: 2000; opacity: 0; visibility: hidden; transition: all 0.3s; }
+    .image-modal-overlay.visible { opacity: 1; visibility: visible; }
+    .image-modal-content { position: relative; max-width: 90%; max-height: 90%; background: white; border-radius: 8px; padding: 20px; }
+    .image-modal-close { position: absolute; top: 10px; right: 10px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 18px; font-weight: bold; }
+    .image-modal-close:hover { background: #c82333; }
+    .image-modal-image { max-width: 100%; max-height: 80vh; display: block; margin: 0 auto; }
+    .image-modal-loading { text-align: center; padding: 40px; color: #666; }
+    .image-modal-error { text-align: center; padding: 40px; color: #dc3545; }
+    .source-link { cursor: pointer; color: #007bff; text-decoration: underline; }
+    .source-link:hover { color: #0056b3; }
+
+    /* --- レスポンシブ対応 --- */
+    @media (max-width: 820px) {
+        body { padding: 16px; /* 統一 */ }
+        .container { border-radius: 16px; /* 統一 */ }
+        .main-content { grid-template-columns: 1fr; padding: 16px; /* 統一 */ gap: 24px; /* 統一 */ }
+        .header { padding: 24px; /* 統一 */ }
+        .header h1 { font-size: 2rem; }
+        .header p { font-size: 1rem; }
+        .chat-messages { max-height: 45vh; }
+        .panel-section { padding: 16px; /* 統一 */ }
+        .section-title { font-size: 1.2rem; }
+    }
+    @media (max-width: 480px) {
+        body { padding: 8px; /* 統一 */ }
+        .main-content { padding: 8px; /* 統一 */ }
+        .header { padding: 16px; /* 統一 */ }
+        .header h1 { font-size: 1.6rem; }
+        .header p { font-size: 0.9rem; }
+        .chat-input-container { padding: 16px; /* 統一 */ }
+        .chat-input-box { flex-direction: column; align-items: stretch; }
+        .send-btn { justify-content: center; padding: 12px; /* 統一 */ }
+        .panel-section { padding: 16px; /* 統一 */ }
+        /* スマホ用ログアウトボタン調整 */
+        .logout-btn {
+            position: static;
+            display: block;
+            width: fit-content;
+            margin: 10px auto;
+        }
+    }
+    /* --- Admin用 ダークモード設定 --- */
+body.dark-mode {
+    background: linear-gradient(135deg, #1f1f2e 0%, #161625 100%) !important;
+    color: #e0e0e0;
+}
+
+body.dark-mode .container {
+    background: rgba(35, 35, 45, 0.98);
+}
+
+body.dark-mode .chat-container, 
+body.dark-mode .panel-section,
+body.dark-mode .setting-item,
+body.dark-mode .chat-input-container {
+    background: #2d2d3a;
+    color: #e0e0e0;
+    border-color: #444;
+}
+
+body.dark-mode .section-title {
+    color: #e0e0e0;
+    border-bottom-color: #555;
+}
+
+body.dark-mode .message.bot {
+    background: #3a3a4a;
+    color: #e0e0e0;
+    border-left-color: #667eea;
+}
+
+body.dark-mode .chat-input, 
+body.dark-mode input[type="text"], 
+body.dark-mode select,
+body.dark-mode .document-item {
+    background: #404050;
+    border: 1px solid #555;
+    color: #fff;
+}
+
+body.dark-mode .document-item:hover {
+    background: #505060;
+}
+
+body.dark-mode .model-info {
+    background: #3a3a4a;
+    color: #ccc;
+}
+body.dark-mode .total-chunks-info {
+    color: #bbb;
+}
+
+/* ボタンの位置調整 */
+.admin-dark-toggle {
+    position: absolute;
+    top: 25px;
+    left: 40px;
+    background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.5);
+    color: white;
+    border-radius: 30px;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 1.2rem;
+    z-index: 100;
+    transition: all 0.3s;
+}
+.admin-dark-toggle:hover {
+    background: rgba(255,255,255,0.4);
+}
+@media (max-width: 480px) {
+    .admin-dark-toggle {
+        position: static;
+        display: block;
+        margin: 10px auto;
+        width: fit-content;
+    }
+}
+</style>
 </head>
 <body>
     <div class="container">
