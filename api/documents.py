@@ -140,7 +140,7 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         main_html = str(soup.body) if soup.body else str(soup)
 
         # 2. Geminiによる整形
-        extract_model = genai.GenerativeModel("gemini-1.5-flash")
+        extract_model = genai.GenerativeModel("gemini-2.5-flash")
         extracted_info = "\n".join(output_blocks)
         prompt = f"""
         以下のHTMLから本文を抽出してください。
