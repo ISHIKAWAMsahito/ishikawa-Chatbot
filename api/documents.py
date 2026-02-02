@@ -410,3 +410,31 @@ async def get_collection_documents(
     except Exception as e:
         logging.error(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+# documents.py に追加
+
+@router.get("/{document_id}")
+async def get_document_by_id(document_id: int):
+    """IDを指定して単一のドキュメントを取得する"""
+    if not database.db_client:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+    
+    client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
+    response = client.table("documents").select("*").eq("id", document_id).single().execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    return response.data
+
+@router.delete("/{document_id}")
+async def delete_document(document_id: int, user: dict = Depends(require_auth)):
+    """IDを指定してドキュメントを削除する"""
+    if not database.db_client:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+        
+    client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
+    try:
+        client.table("documents").delete().eq("id", document_id).execute()
+        return {"message": f"Document {document_id} deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
