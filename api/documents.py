@@ -330,22 +330,31 @@ async def get_all_documents(
         raise HTTPException(status_code=503, detail="Database not initialized")
 
     try:
-        # 1. クエリの基本形を作成 (総件数取得のため count="exact" を指定)
-        query = database.db_client.client.table("documents").select("*", count="exact")
+        # 1. クライアントの安全な取得 (main.pyと同様のロジック)
+        client = database.db_client
+        if hasattr(client, "client"):
+            client = client.client
+        
+        # 2. クエリの基本形を作成
+        query = client.table("documents").select("*", count="exact")
 
-        # 2. 検索・フィルタリング
+        # 3. 検索・フィルタリング
         if search:
-            # コンテンツ内容またはメタデータのソース名から部分一致検索
-            query = query.or_(f"content.ilike.%{search}%,metadata->>source.ilike.%{search}%")
+            # ilikeフィルタの構文エラーを防ぐため、単純な文字列であることを想定
+            # (高度な検索が必要な場合はrpcを使う等の検討が必要ですが、まずは簡易実装)
+            clean_search = search.replace(",", "").replace("%", "") # 簡易サニタイズ
+            query = query.or_(f"content.ilike.%{clean_search}%,metadata->>source.ilike.%{clean_search}%")
         
         if category:
             query = query.eq("metadata->>category", category)
 
-        # 3. ページネーションの範囲計算
+        # 4. ページネーションの範囲計算
         start = (page - 1) * limit
         end = start + limit - 1
 
-        # 4. 実行 (最新順にソート)
+        # 5. 実行
+        # 注意: 'created_at' カラムがない場合はエラーになるため、
+        # エラーが出る場合は .order("id", desc=True) に変更してみてください。
         response = query.order("created_at", desc=True).range(start, end).execute()
 
         return {
@@ -356,46 +365,16 @@ async def get_all_documents(
         }
 
     except Exception as e:
-        logging.error(f"Error fetching documents: {e}")
-        raise HTTPException(status_code=500, detail="データ取得に失敗しました")
+        # ログに詳細を出力し、フロントエンドにもエラー内容を返す
+        error_msg = str(e)
+        logging.error(f"Error fetching documents: {traceback.format_exc()}")
+        
+        # クライアント属性エラーの場合のヒント
+        if "'client'" in error_msg:
+             error_msg += " (DBクライアントの構造が想定と異なります)"
+        
+        # カラムエラーの場合のヒント
+        if "created_at" in error_msg:
+             error_msg += " (テーブルに created_at カラムがない可能性があります)"
 
-@router.get("/{id}")
-async def get_document_by_id(id: int):
-    """
-    指定されたIDのドキュメントを1件取得 (編集モーダル用)
-    """
-    try:
-        res = database.db_client.client.table("documents").select("*").eq("id", id).single().execute()
-        if not res.data:
-            raise HTTPException(status_code=404, detail="Document not found")
-        return res.data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.put("/{id}")
-async def update_document(id: int, data: Dict[str, Any]):
-    """
-    レコードの編集内容を保存
-    """
-    try:
-        # DB.html から送られてくる content と metadata を更新
-        database.db_client.client.table("documents").update({
-            "content": data.get("content"),
-            "metadata": data.get("metadata")
-        }).eq("id", id).execute()
-        return {"message": "Updated successfully"}
-    except Exception as e:
-        logging.error(f"Update error: {e}")
-        raise HTTPException(status_code=500, detail="更新に失敗しました")
-
-@router.delete("/{id}")
-async def delete_document(id: int):
-    """
-    指定されたレコードを個別に削除
-    """
-    try:
-        database.db_client.client.table("documents").delete().eq("id", id).execute()
-        return {"message": "Deleted successfully"}
-    except Exception as e:
-        logging.error(f"Delete error: {e}")
-        raise HTTPException(status_code=500, detail="削除に失敗しました")
+        raise HTTPException(status_code=500, detail=f"データ取得エラー: {error_msg}")
