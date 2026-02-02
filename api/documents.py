@@ -312,5 +312,90 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         logging.error(f"Scrape error: {traceback.format_exc()}")
         raise HTTPException(500, f"スクレイピング失敗: {str(e)}")
 
-# CRUD系エンドポイント(get_all, update, delete)は既存のロジックで問題ありませんが、
-# 必要であれば提示してください。基本はこのupload/scrapeとhelper関数が重要です。
+# ----------------------------------------------------------------
+# DB管理画面 (DB.html) 用のエンドポイント群
+# ----------------------------------------------------------------
+
+@router.get("/all")
+async def get_all_documents(
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1),
+    search: Optional[str] = None,
+    category: Optional[str] = None
+):
+    """
+    DB管理画面用：すべてのドキュメントをページネーション付きで取得
+    """
+    if not database.db_client:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+
+    try:
+        # 1. クエリの基本形を作成 (総件数取得のため count="exact" を指定)
+        query = database.db_client.client.table("documents").select("*", count="exact")
+
+        # 2. 検索・フィルタリング
+        if search:
+            # コンテンツ内容またはメタデータのソース名から部分一致検索
+            query = query.or_(f"content.ilike.%{search}%,metadata->>source.ilike.%{search}%")
+        
+        if category:
+            query = query.eq("metadata->>category", category)
+
+        # 3. ページネーションの範囲計算
+        start = (page - 1) * limit
+        end = start + limit - 1
+
+        # 4. 実行 (最新順にソート)
+        response = query.order("created_at", desc=True).range(start, end).execute()
+
+        return {
+            "documents": response.data,
+            "total": response.count,
+            "page": page,
+            "limit": limit
+        }
+
+    except Exception as e:
+        logging.error(f"Error fetching documents: {e}")
+        raise HTTPException(status_code=500, detail="データ取得に失敗しました")
+
+@router.get("/{id}")
+async def get_document_by_id(id: int):
+    """
+    指定されたIDのドキュメントを1件取得 (編集モーダル用)
+    """
+    try:
+        res = database.db_client.client.table("documents").select("*").eq("id", id).single().execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return res.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/{id}")
+async def update_document(id: int, data: Dict[str, Any]):
+    """
+    レコードの編集内容を保存
+    """
+    try:
+        # DB.html から送られてくる content と metadata を更新
+        database.db_client.client.table("documents").update({
+            "content": data.get("content"),
+            "metadata": data.get("metadata")
+        }).eq("id", id).execute()
+        return {"message": "Updated successfully"}
+    except Exception as e:
+        logging.error(f"Update error: {e}")
+        raise HTTPException(status_code=500, detail="更新に失敗しました")
+
+@router.delete("/{id}")
+async def delete_document(id: int):
+    """
+    指定されたレコードを個別に削除
+    """
+    try:
+        database.db_client.client.table("documents").delete().eq("id", id).execute()
+        return {"message": "Deleted successfully"}
+    except Exception as e:
+        logging.error(f"Delete error: {e}")
+        raise HTTPException(status_code=500, detail="削除に失敗しました")
