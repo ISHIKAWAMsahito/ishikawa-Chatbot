@@ -367,3 +367,46 @@ async def get_all_documents(
         logging.error(f"Error fetching documents: {traceback.format_exc()}")
         
         raise HTTPException(status_code=500, detail=f"データ取得エラー: {error_msg}")
+# documents.py の末尾などに追加
+
+@router.get("/collections/{collection_name}/documents")
+async def get_collection_documents(
+    collection_name: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1),
+    search: Optional[str] = None
+):
+    """
+    フロントエンドの要求に合わせて、特定のコレクションに属するドキュメントを取得する
+    """
+    if not database.db_client:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+
+    try:
+        client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
+        
+        # 1. 基本クエリ（メタデータ内の collection_name でフィルタリング）
+        # ※ スクレイピング時に metadata に collection_name を入れている仕様に合わせる
+        query = client.table("documents").select("*", count="exact") \
+                      .eq("metadata->>collection_name", collection_name)
+
+        # 2. 検索キーワードがある場合
+        if search:
+            query = query.or_(f"content.ilike.%{search}%,metadata->>source.ilike.%{search}%")
+
+        # 3. ページネーション設定
+        start = (page - 1) * limit
+        end = start + limit - 1
+
+        # 4. 実行（ID順にソート）
+        response = query.order("id", desc=True).range(start, end).execute()
+
+        return {
+            "documents": response.data,
+            "total": response.count,
+            "page": page,
+            "limit": limit
+        }
+    except Exception as e:
+        logging.error(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
