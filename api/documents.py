@@ -2,6 +2,7 @@ import logging
 import asyncio
 import traceback
 import json
+import hashlib
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 import google.generativeai as genai
@@ -225,91 +226,92 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
     if not database.db_client or not document_processor.simple_processor:
         raise HTTPException(503, "システム初期化エラー")
 
-    logging.info(f"Scrape Request: {request.url}")
-
     try:
         # 1. サイトへのアクセス
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
+        headers = {"User-Agent": "Mozilla/5.0 ..."} # 既存のヘッダー
         async with httpx.AsyncClient(verify=False, headers=headers, follow_redirects=True) as client:
             resp = await client.get(request.url, timeout=30.0)
             resp.raise_for_status()
             content_body = resp.content
 
-        # 2. PDF判定
-        is_pdf = content_body.startswith(b'%PDF') or "application/pdf" in resp.headers.get("content-type", "").lower()
-        target_type = "PDF" if is_pdf else "HTML"
-
-        # 3. Gemini Flash による抽出・整形
-        extract_model = genai.GenerativeModel("gemini-2.5-flash")
+        soup = BeautifulSoup(resp.text, 'html.parser')
         
-        if target_type == "PDF":
-            prompt = f"このPDFのテキストを抽出・整形してください。\n{COMMON_CLEANING_INSTRUCTION}"
-            ai_data = {"mime_type": "application/pdf", "data": content_body}
-        else:
-            # HTMLの場合、余計なタグを消してからAIへ
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            for tag in soup(["script", "style", "nav", "footer"]): tag.decompose()
-            main_html = str(soup.body) if soup.body else str(soup)
-            prompt = f"以下のHTMLから本文を抽出・整形してください。\n{COMMON_CLEANING_INSTRUCTION}"
-            ai_data = main_html
+        # --- ★ 独自ロジックの注入: contactBox等の事前抽出 ---
+        output_blocks = []
+        # 連絡先ボックスの解析 (提示いただいたコードを最適化して挿入)
+        contact_main = soup.find('div', class_='contactBox__main')
+        if contact_main:
+            desc_p = contact_main.find('p', class_='contactBox__desc')
+            if desc_p: output_blocks.append(f"【窓口説明】: {desc_p.get_text(strip=True)}")
+            
+            office_div = contact_main.find('div', class_='contactBox__office')
+            if office_div:
+                title = office_div.find('p', class_='title')
+                phone = office_div.find('dl', class_='phone')
+                if title and phone:
+                    output_blocks.append(f"【部署名】: {title.get_text(strip=True)}")
+                    output_blocks.append(f"【電話番号】: {phone.get_text(strip=True)}")
 
-        ai_resp = await extract_model.generate_content_async([prompt, ai_data])
-        extracted_text = ai_resp.text
+        # --- ★ 重複防止策: URLに基づく一意のソース名生成 ---
+        # URLを元にした固定のIDを作ることで、職員が何度ボタンを押しても「上書き」になるようにする
+        url_hash = hashlib.md5(request.url.encode()).hexdigest()[:8]
+        page_title = soup.title.string.strip() if soup.title else "名称未設定"
+        source_name = f"scrape_{page_title}_{url_hash}"
 
-        # 4. 保存準備 (画像パス引継ぎなど)
-        url_filename = request.url.split('/')[-1].split('?')[0] or "index.html"
-        source_name = f"scrape_{url_filename}"
-        
-        # 既存画像パスの救出
-        preserved_image_path = None
-        try:
-            res = database.db_client.client.table("documents").select("metadata").eq("metadata->>source", source_name).limit(1).execute()
-            if res.data:
-                meta = res.data[0].get('metadata', {})
-                if isinstance(meta, str): meta = json.loads(meta)
-                preserved_image_path = meta.get('image_path')
-        except Exception: pass
+        # 不要なタグを消してメイン本文も取得
+        for tag in soup(["script", "style", "nav", "footer", "iframe"]): tag.decompose()
+        main_html = str(soup.body) if soup.body else str(soup)
 
-        # 古いデータ削除
+        # 2. Geminiによる整形 (抽出したcontactBox情報をヒントとして渡す)
+        extract_model = genai.GenerativeModel("gemini-1.5-flash")
+        extracted_info = "\n".join(output_blocks)
+        prompt = f"""
+        以下のHTMLから本文を抽出してください。
+        特に以下の情報は重要なので、正確に含めてください:
+        {extracted_info}
+        {COMMON_CLEANING_INSTRUCTION}
+        """
+        ai_resp = await extract_model.generate_content_async([prompt, main_html])
+        cleaned_text = ai_resp.text
+
+        # 3. 古いデータの削除 (source_nameが一致するものを全削除してから入れ直す)
         database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
 
-        # 5. 親子チャンキング処理
+        # 4. 親子チャンキング保存
         doc_generator = document_processor.simple_processor.process_and_chunk(
-            filename=source_name + ".txt", 
-            content=extracted_text.encode('utf-8'), 
-            category=f"WebScrape({target_type})", 
+            filename=source_name, 
+            content=cleaned_text.encode('utf-8'), 
+            category="Webスクレイピング", 
             collection_name=request.collection_name
         )
 
+        # 重複チャンクの排除（同じ親の中に同じ文章が生成された場合のガード）
+        seen_contents = set()
         batch_docs = []
         total_chunks = 0
+
         for doc in doc_generator:
-            doc.metadata["url"] = request.url
-            doc.metadata["source"] = source_name
-            if preserved_image_path:
-                doc.metadata["image_path"] = preserved_image_path
+            # 完全に同じ内容のチャンクがあればスキップ
+            chunk_hash = hashlib.md5(doc.page_content.encode()).hexdigest()
+            if chunk_hash in seen_contents:
+                continue
+            seen_contents.add(chunk_hash)
 
+            doc.metadata.update({"url": request.url, "source": source_name})
             batch_docs.append(doc)
-            if len(batch_docs) >= 50:
-                inserted = await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
-                total_chunks += inserted
+            
+            if len(batch_docs) >= 30:
+                total_chunks += await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
                 batch_docs = []
-                await asyncio.sleep(0.5)
-
+                
         if batch_docs:
             total_chunks += await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
 
-        return {
-            "chunks": total_chunks, 
-            "message": "Webサイト情報の取り込み完了（親子チャンキング適用）",
-            "source": source_name
-        }
+        return {"message": f"「{page_title}」の取り込みが完了しました", "chunks": total_chunks}
 
     except Exception as e:
-        logging.error(f"Scrape error: {traceback.format_exc()}")
-        raise HTTPException(500, f"スクレイピング失敗: {str(e)}")
+        logging.error(f"Error: {e}")
+        raise HTTPException(500, f"エラーが発生しました: {str(e)}")
 
 # ----------------------------------------------------------------
 # DB管理画面 (DB.html) 用のエンドポイント群
