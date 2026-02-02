@@ -60,20 +60,19 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
                 if "collection_name" not in doc.metadata:
                     doc.metadata["collection_name"] = collection_name
                 
-                # 親コンテンツの取得ロジック
-                final_content = doc.metadata.get("parent_content")
-                if "parent_content" in doc.metadata:
-                    del doc.metadata["parent_content"]
-
-                if not final_content:
-                    final_content = doc.metadata.get("parent_context", doc.page_content)
-                    if "parent_context" in doc.metadata:
-                        del doc.metadata["parent_context"]
+                # --- ★修正ポイント: 重複保存の解消 ---
+                # 以前はここで親コンテンツ(parent_content)をcontentカラムに入れていたため、
+                # 同じ親を持つ複数のレコードが「重複」して見えていました。
+                # 今回から、ユニークな「子チャンク(doc.page_content)」をcontentカラムに入れます。
                 
-                doc.metadata["child_content"] = doc.page_content
+                # 子チャンク（短い固有の文章）をメインコンテンツとする
+                child_content = doc.page_content
+                
+                # 親コンテンツはメタデータ側で保持する（検索後の回答生成時に利用可能）
+                # document_processor側ですでに metadata["parent_content"] に入っている想定
                 
                 database.db_client.insert_document(
-                    content=final_content, 
+                    content=child_content,  # ★修正: 子チャンクを保存（これで重複しなくなる）
                     embedding=embeddings[j],
                     metadata=doc.metadata
                 )
@@ -93,7 +92,7 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
                 raise e
 
 # ----------------------------------------------------------------
-# Webスクレイピング処理 (Markdown保存対応版)
+# Webスクレイピング処理 (Gemini 2.5 Flash & 重複解消版)
 # ----------------------------------------------------------------
 @router.post("/scrape")
 async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_auth)):
@@ -109,7 +108,7 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
 
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # --- ★ 独自ロジック: 連絡先情報の事前抽出 ---
+        # --- 独自ロジック: 連絡先情報の事前抽出 ---
         output_blocks = []
         contact_box_main = soup.find('div', class_='contactBox__main')
         if contact_box_main:
@@ -126,22 +125,19 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
                 if phone_dl:
                     output_blocks.append(f"【電話番号】: {phone_dl.get_text(strip=True)}")
 
-        # --- ★ Markdownファイル名生成ロジック ---
-        # URLハッシュ化
+        # --- Markdownファイル名生成ロジック ---
         url_hash = hashlib.md5(request.url.encode()).hexdigest()[:8]
-        # ページタイトル取得 & ファイル名に使えない文字を除去
         raw_title = soup.title.string.strip() if soup.title else "名称未設定"
         safe_title = re.sub(r'[\\/:*?"<>|]', '', raw_title)
         
-        # ★変更点: 拡張子を .md に設定
+        # 拡張子を .md に設定（processorの警告回避とMarkdown認識のため）
         source_name = f"scrape_{safe_title}_{url_hash}.md"
 
-        # 不要なタグを消去してHTMLを綺麗にする
+        # 不要なタグを消去
         for tag in soup(["script", "style", "nav", "footer", "iframe", "noscript"]): tag.decompose()
         main_html = str(soup.body) if soup.body else str(soup)
 
-        # 2. GeminiによるMarkdown整形
-       
+        # 2. GeminiによるMarkdown整形 (★モデルを gemini-2.5-flash に変更)
         extract_model = genai.GenerativeModel("gemini-2.5-flash")
         extracted_info = "\n".join(output_blocks)
         prompt = f"""
@@ -156,12 +152,10 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         ai_resp = await extract_model.generate_content_async([prompt, main_html])
         cleaned_text = ai_resp.text
 
-        # 3. 古いデータの削除 (source_name完全一致で削除)
+        # 3. 古いデータの削除 (source_name完全一致で削除し、実行ごとの重複を防ぐ)
         database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
 
         # 4. 親子チャンキング保存
-        # ★重要: ファイル名(source_name)が .md で終わっているため、
-        # document_processor はMarkdownとして適切にチャンキング処理を行います。
         doc_generator = document_processor.simple_processor.process_and_chunk(
             filename=source_name, 
             content=cleaned_text.encode('utf-8'), 
@@ -174,7 +168,7 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         total_chunks = 0
 
         for doc in doc_generator:
-            # 重複チェック
+            # チャンクごとの重複チェック (doc.page_content = 子チャンク のハッシュで判定)
             chunk_hash = hashlib.md5(doc.page_content.encode()).hexdigest()
             if chunk_hash in seen_contents:
                 continue
