@@ -26,14 +26,14 @@ from services import document_processor
 router = APIRouter()
 
 # ----------------------------------------------------------------
-# 共通設定: 整形ルール
+# 共通設定: 整形ルール (Markdown化を強制)
 # ----------------------------------------------------------------
 COMMON_CLEANING_INSTRUCTION = """
 【整形ルール】
-1. テキストは読みやすいMarkdown形式に整形してください。
-2. カレンダーや行事予定表は「YYYY年M月D日(曜): 内容」の形式に統一してください。
-3. 無意味な記号、装飾、ヘッダー/フッターの繰り返しは削除してください。
-4. 丸数字（①など）は標準数字に変換してください。
+1. HTMLの構造（h1, h2, ul, liなど）を維持し、適切なMarkdown形式（# 見出し, - リスト）に変換してください。
+2. リンクは `[リンクテキスト](URL)` の形式にしてください。
+3. カレンダーや行事予定表は「YYYY年M月D日(曜): 内容」の形式に統一してください。
+4. 無意味な装飾やナビゲーションメニューは削除し、本文のみを抽出してください。
 """
 
 # ----------------------------------------------------------------
@@ -93,7 +93,7 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
                 raise e
 
 # ----------------------------------------------------------------
-# Webスクレイピング処理 (重複防止 & 警告修正版)
+# Webスクレイピング処理 (Markdown保存対応版)
 # ----------------------------------------------------------------
 @router.post("/scrape")
 async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_auth)):
@@ -126,38 +126,44 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
                 if phone_dl:
                     output_blocks.append(f"【電話番号】: {phone_dl.get_text(strip=True)}")
 
-        # --- ★ 重複防止 & 警告回避ロジック ---
-        # URLをハッシュ化して、同じURLなら必ず同じ source 名になるように固定
+        # --- ★ Markdownファイル名生成ロジック ---
+        # URLハッシュ化
         url_hash = hashlib.md5(request.url.encode()).hexdigest()[:8]
-        # 事務職員が直感的に判別できるようページタイトルを取得（記号は排除）
+        # ページタイトル取得 & ファイル名に使えない文字を除去
         raw_title = soup.title.string.strip() if soup.title else "名称未設定"
         safe_title = re.sub(r'[\\/:*?"<>|]', '', raw_title)
-        # DB管理用のソース名 (ハッシュを付けることで、別URLで同タイトルの競合を防ぐ)
-        source_name = f"scrape_{safe_title}_{url_hash}"
+        
+        # ★変更点: 拡張子を .md に設定
+        source_name = f"scrape_{safe_title}_{url_hash}.md"
 
-        # 不要なタグを消去
-        for tag in soup(["script", "style", "nav", "footer", "iframe"]): tag.decompose()
+        # 不要なタグを消去してHTMLを綺麗にする
+        for tag in soup(["script", "style", "nav", "footer", "iframe", "noscript"]): tag.decompose()
         main_html = str(soup.body) if soup.body else str(soup)
 
-        # 2. Geminiによる整形
+        # 2. GeminiによるMarkdown整形
+       
         extract_model = genai.GenerativeModel("gemini-2.5-flash")
         extracted_info = "\n".join(output_blocks)
         prompt = f"""
-        以下のHTMLから本文を抽出してください。
-        特に「連絡先情報」については、以下の解析結果を優先して記載してください:
+        以下のHTMLコンテンツを解析し、情報を漏らさず整理されたMarkdownテキストに変換してください。
+        
+        【重要事項】
+        - 以下の連絡先情報が含まれている場合は、必ず目立つように記載してください:
         {extracted_info}
+        
         {COMMON_CLEANING_INSTRUCTION}
         """
         ai_resp = await extract_model.generate_content_async([prompt, main_html])
         cleaned_text = ai_resp.text
 
-        # 3. 古いデータの削除 (URLハッシュに基づくsource名で一括削除し、重複を防止)
+        # 3. 古いデータの削除 (source_name完全一致で削除)
         database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
 
         # 4. 親子チャンキング保存
-        # ★重要: filenameに ".txt" を付与して document_processor の警告を回避
+        # ★重要: ファイル名(source_name)が .md で終わっているため、
+        # document_processor はMarkdownとして適切にチャンキング処理を行います。
         doc_generator = document_processor.simple_processor.process_and_chunk(
-            filename=f"{source_name}.txt", 
+            filename=source_name, 
             content=cleaned_text.encode('utf-8'), 
             category="Webスクレイピング", 
             collection_name=request.collection_name
@@ -168,13 +174,12 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         total_chunks = 0
 
         for doc in doc_generator:
-            # 同一ページ内での物理的な重複を排除
+            # 重複チェック
             chunk_hash = hashlib.md5(doc.page_content.encode()).hexdigest()
             if chunk_hash in seen_contents:
                 continue
             seen_contents.add(chunk_hash)
 
-            # メタデータにURLと元のソース名（拡張子なし）を保持
             doc.metadata.update({"url": request.url, "source": source_name})
             batch_docs.append(doc)
             
@@ -186,14 +191,13 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         if batch_docs:
             total_chunks += await process_batch_insert(batch_docs, request.embedding_model, request.collection_name)
 
-        return {"message": f"「{raw_title}」の取り込みが完了しました", "chunks": total_chunks}
+        return {"message": f"「{raw_title}」の取り込み完了 (.md保存)", "chunks": total_chunks}
 
     except Exception as e:
         logging.error(f"Scrape Error: {e}")
         raise HTTPException(500, f"スクレイピング失敗: {str(e)}")
 
-# --- 以下、既存の管理用エンドポイント (変更なし) ---
-
+# --- 以下、既存のエンドポイント (変更なし) ---
 @router.get("/all")
 async def get_all_documents(page: int = Query(1, ge=1), limit: int = Query(100, ge=1), search: Optional[str] = None, category: Optional[str] = None):
     if not database.db_client: raise HTTPException(503, "Database not initialized")
