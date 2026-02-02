@@ -70,20 +70,19 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
                 # メタデータに親コンテンツがあれば、それをメインの content に採用
                 # なければ（短い文書などの場合）、子コンテンツをそのまま使う
                 final_content = doc.metadata.get("parent_content")
+                if "parent_content" in doc.metadata:
+                     # メタデータからは削除（DB容量節約のため）
+                    del doc.metadata["parent_content"]
+
                 if not final_content:
                     # document_processorの旧バージョン対応
                     final_content = doc.metadata.get("parent_context", doc.page_content)
+                    if "parent_context" in doc.metadata:
+                        del doc.metadata["parent_context"]
                 
                 # デバッグ・リランク精度向上のため、子チャンクの内容もメタデータに記録
                 doc.metadata["child_content"] = doc.page_content
                 
-                # DB容量削減: contentカラムに保存する親テキストは、メタデータからは削除しても良い
-                # (ただし、念のため残しておきたい場合はこの delete 行をコメントアウト)
-                if "parent_content" in doc.metadata:
-                    del doc.metadata["parent_content"]
-                if "parent_context" in doc.metadata:
-                    del doc.metadata["parent_context"]
-
                 # DBへの保存
                 database.db_client.insert_document(
                     content=final_content,  # AIが読むのは「親（文脈あり）」
@@ -341,7 +340,6 @@ async def get_all_documents(
         # 3. 検索・フィルタリング
         if search:
             # ilikeフィルタの構文エラーを防ぐため、単純な文字列であることを想定
-            # (高度な検索が必要な場合はrpcを使う等の検討が必要ですが、まずは簡易実装)
             clean_search = search.replace(",", "").replace("%", "") # 簡易サニタイズ
             query = query.or_(f"content.ilike.%{clean_search}%,metadata->>source.ilike.%{clean_search}%")
         
@@ -353,9 +351,8 @@ async def get_all_documents(
         end = start + limit - 1
 
         # 5. 実行
-        # 注意: 'created_at' カラムがない場合はエラーになるため、
-        # エラーが出る場合は .order("id", desc=True) に変更してみてください。
-        response = query.order("created_at", desc=True).range(start, end).execute()
+        # 【修正】 created_at がテーブルに存在しないため、id でソートするように変更
+        response = query.order("id", desc=True).range(start, end).execute()
 
         return {
             "documents": response.data,
@@ -369,12 +366,4 @@ async def get_all_documents(
         error_msg = str(e)
         logging.error(f"Error fetching documents: {traceback.format_exc()}")
         
-        # クライアント属性エラーの場合のヒント
-        if "'client'" in error_msg:
-             error_msg += " (DBクライアントの構造が想定と異なります)"
-        
-        # カラムエラーの場合のヒント
-        if "created_at" in error_msg:
-             error_msg += " (テーブルに created_at カラムがない可能性があります)"
-
         raise HTTPException(status_code=500, detail=f"データ取得エラー: {error_msg}")
