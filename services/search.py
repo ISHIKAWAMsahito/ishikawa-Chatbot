@@ -81,8 +81,8 @@ class SearchService:
             # ★ 親子チャンキング対応: 親があれば親を使う
             content_for_llm = meta.get('parent_content', doc.get('content', ''))
             
-            # 1000文字に制限して送る
-            snippet = content_for_llm[:1000].replace('\n', ' ') 
+            #500文字に制限
+            snippet = content_for_llm[:500].replace('\n', ' ') 
             
             candidates_text += f"Document ID: {i}\nSource: {meta.get('source', 'Unknown')}\nContent: {snippet}\n\n---\n\n"
 
