@@ -112,6 +112,6 @@ else:
 # デバッグ用ログ
 if GEMINI_API_KEY:
     masked_key = GEMINI_API_KEY[:5] + "..."
-    # print(f"DEBUG: Current API Key starts with: {masked_key}", flush=True) # ログがうるさければコメントアウト
+    print(f"DEBUG: Current API Key starts with: {masked_key}", flush=True)
 else:
     print("DEBUG: GEMINI_API_KEY is empty!", flush=True)
