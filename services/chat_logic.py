@@ -1,7 +1,6 @@
 # services/chat_logic.py
 import logging
 import uuid
-import asyncio
 from typing import List, Dict, Any, AsyncGenerator
 from fastapi import Request
 
@@ -16,9 +15,8 @@ from models.schemas import ChatQuery
 from services.llm import LLMService
 from services.search import SearchService
 from services.storage import StorageService
-from services.utils import get_or_create_session_id, send_sse, log_context, ChatHistoryManager
+from services.utils import get_or_create_session_id, send_sse, log_context, ChatHistoryManager, format_urls_as_links
 from services import prompts
-from services.utils import format_urls_as_links
 
 # DI（依存性の注入）の準備
 llm_service = LLMService()
@@ -30,8 +28,6 @@ history_manager = ChatHistoryManager(max_length=PARAMS["MAX_HISTORY_LENGTH"])
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     """
     リファクタリング後のメインチャットロジック
-    LangSmith: この関数が実行されると、配下の llm_service や search_service の呼び出しが
-    自動的に子トレースとして記録され、ツリー構造になります。
     """
     session_id = get_or_create_session_id(request)
     user_input = chat_req.query.strip()
@@ -58,16 +54,18 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         if qa_hits := core_database.db_client.search_fallback_qa(query_embedding, match_count=1):
             top_qa = qa_hits[0]
             if top_qa.get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
-                resp = format_urls_as_links(f"よくあるご質問に回答が見つかりました。\n\n---\n{top_qa['content']}")
-                history_manager.add(session_id, "assistant", resp)
-                yield send_sse({'content': resp, 'show_feedback': True, 'feedback_id': feedback_id})
+                # FAQ回答にもリンク化処理を適用
+                resp_content = top_qa['content']
+                resp_formatted = format_urls_as_links(resp_content)
+                
+                formatted_response = f"よくあるご質問に回答が見つかりました。\n\n---\n{resp_formatted}"
+                history_manager.add(session_id, "assistant", formatted_response)
+                yield send_sse({'content': formatted_response, 'show_feedback': True, 'feedback_id': feedback_id})
                 return
 
         yield send_sse({'status_message': '📚 資料を広く集めています...'})
 
         # 4. DB検索 (Hybrid)
-        # データベース操作自体をトレースしたい場合は、core/database.py に @traceable をつけるのがベストですが、
-        # ここでは検索結果の件数などをメタデータに残すことも可能です。
         raw_docs = core_database.db_client.search_documents_hybrid(
             collection_name=chat_req.collection,
             query_text=expanded_query,
@@ -85,7 +83,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         unique_docs = search_service.filter_diversity(raw_docs)
         rerank_input = unique_docs[:PARAMS["RERANK_TOP_K_INPUT"]]
         
-        # リランク処理（search_service側で既にトレース設定済み）
         relevant_docs = await search_service.rerank(
             query=user_input, 
             documents=rerank_input, 
@@ -109,15 +106,21 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             src_display = meta.get('source', '不明')
             src_storage = meta.get('image_path', src_display)
             
+            # コンテキストにURL(source)を明示的に含めることで、AIが参照しやすくする
+            doc_context = f"<doc id='{idx}' src='{src_display}'>\n"
+            doc_context += f"Source URL: {src_display}\n" # AIへのヒントとして追加
+            doc_context += f"Content: {doc.get('content','')}\n"
+            doc_context += "</doc>"
+            
             sources_map[idx] = {'display': src_display, 'storage': src_storage}
-            context_parts.append(f"<doc id='{idx}' src='{src_display}'>\n{doc.get('content','')}\n</doc>")
+            context_parts.append(doc_context)
         
         context_str = "\n".join(context_parts)
         
         # 7. 回答生成
-        full_system_prompt = f"{prompts.SYSTEM_GENERATION}\n<context>\n{context_str}\n</context>"
+        # プロンプト内の {context_text} を埋め込む
+        full_system_prompt = prompts.SYSTEM_GENERATION.format(context_text=context_str)
         
-        # LLM呼び出し（llm_service側でトレース設定済み）
         stream = await llm_service.generate_stream(
             prompt=f"質問: {user_input}",
             system_prompt=full_system_prompt
@@ -126,6 +129,9 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         full_resp = ""
         async for chunk in stream:
             if chunk.text:
+                # チャンク受信時もリアルタイムでリンク化を試みることも可能だが、
+                # URLが分割されるリスクがあるため、ここでは生のテキストを送り、
+                # フロントエンド側または最終結合時に処理する方針とする。
                 full_resp += chunk.text
                 yield send_sse({'content': chunk.text})
 
@@ -134,19 +140,34 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
              history_manager.add(session_id, "assistant", "[[BLOCKED]]")
              return
 
-        # 8. 参照リンク生成
+        # 8. 参照リンク生成と最終整形
+        final_content_updates = ""
+        
         if "情報が見つかりません" not in full_resp:
             yield send_sse({'status_message': '🔗 参照リンクを生成中...'})
+            
+            # StorageServiceによる署名付きURL等の処理（PDF等へのリンク）
             refs_text = await storage_service.build_references_async(full_resp, sources_map)
+            
             if refs_text:
-                yield send_sse({'content': refs_text})
                 full_resp += refs_text
-        
-        history_manager.add(session_id, "assistant", full_resp)
+                final_content_updates += refs_text
+
+        # 最後に全文に対してURLリンク化処理を適用
+        # （注: ストリームですでに流したテキストは変更できないため、
+        #  本来はフロントエンドでMarkdownパース時にリンク化するのが理想だが、
+        #  ここでは補完的な処理として、もし最後にまとめて置換版を送る必要があれば送る設計）
+        # 今回は、AIがプロンプト指示に従ってMarkdown形式でURLを出力することを期待しつつ、
+        # 念のため履歴にはリンク化済みのものを保存する。
+        formatted_full_resp = format_urls_as_links(full_resp)
+        history_manager.add(session_id, "assistant", formatted_full_resp)
+
+        # もし `refs_text` があった場合、それをクライアントに追送
+        if final_content_updates:
+            yield send_sse({'content': final_content_updates})
 
     except Exception as e:
         log_context(session_id, f"Critical Pipeline Error: {e}", "error")
-        # エラー詳細をトレースに残す
         if run_tree:
             run_tree.end(error=str(e))
             
