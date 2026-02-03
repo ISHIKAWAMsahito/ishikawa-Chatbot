@@ -1,6 +1,7 @@
 # services/chat_logic.py
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone  # 日時操作用に追加
 from typing import List, Dict, Any, AsyncGenerator
 from fastapi import Request
 
@@ -15,7 +16,13 @@ from models.schemas import ChatQuery
 from services.llm import LLMService
 from services.search import SearchService
 from services.storage import StorageService
-from services.utils import get_or_create_session_id, send_sse, log_context, ChatHistoryManager, format_urls_as_links
+from services.utils import (
+    get_or_create_session_id, 
+    send_sse, 
+    log_context, 
+    ChatHistoryManager, 
+    format_urls_as_links
+)
 from services import prompts
 
 # DI（依存性の注入）の準備
@@ -28,29 +35,52 @@ history_manager = ChatHistoryManager(max_length=PARAMS["MAX_HISTORY_LENGTH"])
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
     """
     リファクタリング後のメインチャットロジック
+    
+    主な変更点:
+    - 日本時間 (JST) での現在日時取得を追加
+    - システムプロンプトへ現在日時 (current_date) を注入する処理を追加
     """
     session_id = get_or_create_session_id(request)
     user_input = chat_req.query.strip()
     feedback_id = str(uuid.uuid4())
     
+    # ---------------------------------------------------------
+    # 日時取得ロジック (JST固定)
+    # ---------------------------------------------------------
+    # サーバーのタイムゾーン設定に依存せず、常に日本時間を取得します。
+    # これにより「現在が2025年度か」などをAIが正確に判断できます。
+    JST = timezone(timedelta(hours=9), 'JST')
+    now = datetime.now(JST)
+    current_date_str = now.strftime("%Y年%m月%d日") # 例: 2025年10月27日
+    
     # LangSmith: メタデータ（セッションIDなど）を追加
     run_tree = get_current_run_tree()
     if run_tree:
-        run_tree.add_metadata({"session_id": session_id, "user_query": user_input})
+        run_tree.add_metadata({
+            "session_id": session_id, 
+            "user_query": user_input,
+            "current_date_jst": current_date_str
+        })
 
     yield send_sse({'feedback_id': feedback_id, 'status_message': '🔍 質問を分析しています...'})
 
     try:
+        # -----------------------------------------------------
         # 1. クエリ拡張
+        # -----------------------------------------------------
         expanded_query = await search_service.expand_query(user_input)
         
+        # -----------------------------------------------------
         # 2. Embedding生成
+        # -----------------------------------------------------
         query_embedding = await llm_service.get_embedding(
             text=expanded_query, 
             model=chat_req.embedding_model
         )
 
-        # 3. FAQチェック
+        # -----------------------------------------------------
+        # 3. FAQチェック (Fallback)
+        # -----------------------------------------------------
         if qa_hits := core_database.db_client.search_fallback_qa(query_embedding, match_count=1):
             top_qa = qa_hits[0]
             if top_qa.get('similarity', 0) >= PARAMS["QA_SIMILARITY_THRESHOLD"]:
@@ -65,7 +95,9 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         yield send_sse({'status_message': '📚 資料を広く集めています...'})
 
-        # 4. DB検索 (Hybrid)
+        # -----------------------------------------------------
+        # 4. DB検索 (Hybrid Search)
+        # -----------------------------------------------------
         raw_docs = core_database.db_client.search_documents_hybrid(
             collection_name=chat_req.collection,
             query_text=expanded_query,
@@ -79,10 +111,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
 
         yield send_sse({'status_message': '🧐 AIが文献を精読・選別中...'})
 
+        # -----------------------------------------------------
         # 5. フィルタリング & リランク & 並べ替え
+        # -----------------------------------------------------
         unique_docs = search_service.filter_diversity(raw_docs)
         rerank_input = unique_docs[:PARAMS["RERANK_TOP_K_INPUT"]]
         
+        # リランク処理
+        # (注: prompts.py の RERANK プロンプトも最新情報の優先指示があることが望ましい)
         relevant_docs = await search_service.rerank(
             query=user_input, 
             documents=rerank_input, 
@@ -93,12 +129,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             yield send_sse({'content': AI_MESSAGES["NOT_FOUND"]})
             return
 
-        # Lost in the Middle 対策
+        # Lost in the Middle 対策 (重要なドキュメントを先頭と末尾に配置)
         final_docs = search_service.reorder_litm(relevant_docs)
 
         yield send_sse({'status_message': '✍️ 回答を生成しています...'})
 
+        # -----------------------------------------------------
         # 6. コンテキスト構築
+        # -----------------------------------------------------
         context_parts = []
         sources_map = {}
         for idx, doc in enumerate(final_docs, 1):
@@ -106,9 +144,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
             src_display = meta.get('source', '不明')
             src_storage = meta.get('image_path', src_display)
             
-            # コンテキストにURL(source)を明示的に含めることで、AIが参照しやすくする
+            # AIへのヒントとして Source URL を明示
+            # これによりファイル名に含まれる日付や年度情報もAIが認識しやすくなります
             doc_context = f"<doc id='{idx}' src='{src_display}'>\n"
-            doc_context += f"Source URL: {src_display}\n" # AIへのヒントとして追加
+            doc_context += f"Source Reference: {src_display}\n" 
             doc_context += f"Content: {doc.get('content','')}\n"
             doc_context += "</doc>"
             
@@ -117,9 +156,20 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         
         context_str = "\n".join(context_parts)
         
-        # 7. 回答生成
-        # プロンプト内の {context_text} を埋め込む
-        full_system_prompt = prompts.SYSTEM_GENERATION.format(context_text=context_str)
+        # -----------------------------------------------------
+        # 7. 回答生成 (LLM)
+        # -----------------------------------------------------
+        # プロンプト内の {context_text} と {current_date} を埋め込む
+        # 注: prompts.SYSTEM_GENERATION に {current_date} プレースホルダーが必要です
+        try:
+            full_system_prompt = prompts.SYSTEM_GENERATION.format(
+                context_text=context_str,
+                current_date=current_date_str
+            )
+        except KeyError:
+            # 万が一 prompts.py が更新されていない場合のフォールバック
+            logging.warning("SYSTEM_GENERATION prompt does not have 'current_date' placeholder.")
+            full_system_prompt = prompts.SYSTEM_GENERATION.format(context_text=context_str)
         
         stream = await llm_service.generate_stream(
             prompt=f"質問: {user_input}",
@@ -129,9 +179,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         full_resp = ""
         async for chunk in stream:
             if chunk.text:
-                # チャンク受信時もリアルタイムでリンク化を試みることも可能だが、
-                # URLが分割されるリスクがあるため、ここでは生のテキストを送り、
-                # フロントエンド側または最終結合時に処理する方針とする。
                 full_resp += chunk.text
                 yield send_sse({'content': chunk.text})
 
@@ -140,25 +187,22 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
              history_manager.add(session_id, "assistant", "[[BLOCKED]]")
              return
 
+        # -----------------------------------------------------
         # 8. 参照リンク生成と最終整形
+        # -----------------------------------------------------
         final_content_updates = ""
         
         if "情報が見つかりません" not in full_resp:
             yield send_sse({'status_message': '🔗 参照リンクを生成中...'})
             
-            # StorageServiceによる署名付きURL等の処理（PDF等へのリンク）
+            # StorageServiceによる署名付きURL等の処理
             refs_text = await storage_service.build_references_async(full_resp, sources_map)
             
             if refs_text:
                 full_resp += refs_text
                 final_content_updates += refs_text
 
-        # 最後に全文に対してURLリンク化処理を適用
-        # （注: ストリームですでに流したテキストは変更できないため、
-        #  本来はフロントエンドでMarkdownパース時にリンク化するのが理想だが、
-        #  ここでは補完的な処理として、もし最後にまとめて置換版を送る必要があれば送る設計）
-        # 今回は、AIがプロンプト指示に従ってMarkdown形式でURLを出力することを期待しつつ、
-        # 念のため履歴にはリンク化済みのものを保存する。
+        # 最後に全文に対してURLリンク化処理を適用して履歴に保存
         formatted_full_resp = format_urls_as_links(full_resp)
         history_manager.add(session_id, "assistant", formatted_full_resp)
 
@@ -181,11 +225,14 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery):
         yield send_sse({'content': msg})
         
     finally:
+        # 完了またはエラー時にフィードバックUIを表示
         yield send_sse({'show_feedback': True, 'feedback_id': feedback_id})
 
 @traceable(name="Feedback_Analysis_Job", run_type="chain")
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
-    """フィードバック分析用"""
+    """
+    フィードバック分析用ロジック (変更なし)
+    """
     if not logs:
         yield send_sse({'content': '分析対象データがありません。'})
         return
