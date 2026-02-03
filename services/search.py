@@ -81,8 +81,8 @@ class SearchService:
             # ★ 親子チャンキング対応: 親があれば親を使う
             content_for_llm = meta.get('parent_content', doc.get('content', ''))
             
-            # 親チャンクは情報量が多いので、文字数制限を少し緩和 (1200 -> 2500)
-            snippet = content_for_llm[:2500].replace('\n', ' ') 
+            # 1000文字に制限して送る
+            snippet = content_for_llm[:1000].replace('\n', ' ') 
             
             candidates_text += f"Document ID: {i}\nSource: {meta.get('source', 'Unknown')}\nContent: {snippet}\n\n---\n\n"
 
@@ -109,7 +109,7 @@ class SearchService:
         try:
             async for attempt in AsyncRetrying(
                 retry=retry_if_exception_type(Exception),
-                wait=wait_exponential(multiplier=2, min=2, max=30),
+                wait=wait_exponential(multiplier=2, min=4, max=60),#リトライの最大待ち時間を少し長く
                 stop=stop_after_attempt(5), # UXを考慮し、最大5回程度に留める
                 reraise=True
             ):
