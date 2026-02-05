@@ -40,18 +40,15 @@ class SearchService:
         reraise=True 
     )
     async def expand_query(self, query: str) -> str:
+        #プロンプトをシンプルにし、応答時間を短縮
         """
         ユーザーの曖昧な質問を、検索エンジンに最適化された明確なクエリに変換する。
         """
         cot_prompt = f"""
-        あなたは世界最高峰の検索エンジニアです。以下のユーザーの質問に対して、最適な検索クエリを作成してください。
-        【プロセス】
-        1. ユーザーの質問の「真の意図」と「不足している前提知識」を深く分析してください。
-        2. 専門用語や同義語、具体的な関連語句をリストアップしてください。
-        3. それらを踏まえ、検索エンジンに投げるべき「具体的かつ網羅的な検索クエリ」を生成してください。
-        質問: {query}
-        出力は最終的な検索クエリ文字列のみを行ってください。余計な説明は不要です。
-        """
+ユーザーの質問を、検索エンジンでのヒット率が高まるキーワード・フレーズの羅列に変換してください。
+質問: {query}
+出力は検索クエリ（キーワード）のみ。余計な説明、挨拶、思考プロセスは一切不要です。
+"""
         try:
             response = await self.llm.generate_stream(cot_prompt)
             full_text = ""
@@ -76,10 +73,8 @@ class SearchService:
         if not documents:
             return []
 
-        # 1. 候補の厳選 (Pre-Selection)
-        # 検索スコア上位のドキュメントにリソースを集中させ、深層分析を行う。
-        # 全量を処理するのではなく、有望なトップ10件を徹底的に精査する方針とする。
-        initial_candidates = documents[:10]
+        # 1. 上位5件を選出 (リランク対象) 応答時間削減。上位５件の断片に絞ることで、LLMの処理負荷とコストを抑制。
+        initial_candidates = documents[:5]
 
         # 2. 分析用スニペットの生成
         candidates_text = ""
@@ -118,12 +113,10 @@ class SearchService:
         """
 
         try:
-            # 4. 確実な実行のためのリトライ戦略
-            # 応答速度よりも「処理の完遂」と「結果の品質」を最優先する。
-            # 外部APIの負荷が高い場合でも、十分なバックオフ時間を設け、確実に高品質なスコアリング結果を取得するまで粘り強く試行する。
+            #待機時間を減らす
             async for attempt in AsyncRetrying(
                 retry=retry_if_exception_type(Exception),
-                wait=wait_exponential(multiplier=2, min=5, max=60), # 最小5秒、最大60秒まで待機し、最適なタイミングでの処理成功を狙う
+                wait=wait_exponential(multiplier=1, min=1, max=10), 
                 stop=stop_after_attempt(5),
                 reraise=True
             ):
