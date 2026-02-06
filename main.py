@@ -6,11 +6,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# 修正ポイント1: 存在しない SupabaseClientManager を削除し、db_client をインポート
+# core.database から db_client をインポート
 from core.database import db_client
 from core.constants import PARAMS
 
-# APIルーターのインポート（プロジェクト構成に合わせて調整してください）
+# APIルーターのインポート
 from api import chat, feedback, system, auth, documents, fallbacks
 
 # .env ファイルの読み込み
@@ -31,8 +31,6 @@ async def lifespan(app: FastAPI):
     """
     logger.info("🚀 Starting up University Support AI...")
 
-    # 修正ポイント2: db_client を使用して接続状態をログ出力
-    # core/database.py で既に初期化されているため、ここでは確認のみ行います
     if db_client.client:
         logger.info("✅ Supabase client initialized successfully.")
     else:
@@ -49,16 +47,16 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS設定（フロントエンドからのアクセス許可）
+# CORS設定
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 本番環境では具体的なドメイン（例: ["https://myapp.onrender.com"]）を指定推奨
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 静的ファイルの配信設定（staticディレクトリが存在する場合のみ）
+# 静的ファイルの配信
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
@@ -66,19 +64,18 @@ if os.path.exists("static"):
 app.include_router(chat.router, prefix="/api", tags=["Chat"])
 app.include_router(feedback.router, prefix="/api", tags=["Feedback"])
 
-# 以下のルーターは必要に応じてコメントアウトを解除してください
-# app.include_router(auth.router, prefix="/api", tags=["Auth"])
-# app.include_router(documents.router, prefix="/api", tags=["Documents"])
-# app.include_router(system.router, prefix="/api", tags=["System"])
-# app.include_router(fallbacks.router, prefix="/api", tags=["Fallbacks"])
-
+# ヘルスチェック用エンドポイント (ルート)
 @app.get("/")
 def read_root():
-    """ヘルスチェック用エンドポイント"""
     return {"status": "ok", "message": "University Support AI is running."}
+
+# ★★★ ここを追加！ ★★★
+# Renderのヘルスチェックがここを叩きに来るため、これがないと404エラーになります
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn
-    # Renderなどの環境変数 PORT に対応
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
