@@ -1,21 +1,27 @@
 import json
 import logging
 import asyncio
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from difflib import SequenceMatcher
 from collections import deque
 
+import google.generativeai as genai
 import typing_extensions as typing
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, AsyncRetrying, RetryError
 from async_lru import alru_cache
 from langsmith import traceable
 
 from services.llm import LLMService
-from services import prompts # ★プロンプトモジュールをインポート
+from services import prompts
 from core.constants import PARAMS
-from core.database import db_client # ★インポート追加（searchメソッドで必要になる可能性があるため）
+from core.database import db_client
+from core.config import GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
+
+# Gemini API設定
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 class RankedItem(typing.TypedDict):
     id: int
@@ -29,24 +35,35 @@ class SearchService:
     def __init__(self, llm_service: LLMService):
         self.llm = llm_service
 
+    async def get_embedding(self, text: str, model: str = "models/gemini-embedding-001") -> List[float]:
+        """テキストをベクトル化する"""
+        try:
+            result = genai.embed_content(
+                model=model,
+                content=text,
+                task_type="retrieval_query"
+            )
+            return result['embedding']
+        except Exception as e:
+            logger.error(f"Embedding generation failed: {e}")
+            raise e
+
     # ----------------------------------------------------------------
-    # Step 1: クエリ拡張 (高精度化)
+    # Step 1: クエリ拡張 (高速化: 思考プロセス省略)
     # ----------------------------------------------------------------
     @alru_cache(maxsize=100)
     @traceable(name="Step1_Query_Expansion", run_type="chain")
     @retry(
         retry=retry_if_exception_type(Exception),
-        wait=wait_exponential(multiplier=2, min=2, max=20),
-        stop=stop_after_attempt(5), 
+        wait=wait_exponential(multiplier=1, min=1, max=10), # 待機時間を短縮 [cite: 21]
+        stop=stop_after_attempt(3), 
         reraise=True 
     )
     async def expand_query(self, query: str) -> str:
         """
-        ユーザーの曖昧な質問を、検索エンジンに最適化された明確なクエリに変換する。
+        ユーザーの質問を、検索ヒット率が高まるキーワード・フレーズに変換する。
         """
-        # ★プロンプトを prompts.py から取得
         cot_prompt = prompts.QUERY_EXPANSION.format(query=query)
-
         try:
             response = await self.llm.generate_stream(cot_prompt)
             full_text = ""
@@ -55,47 +72,40 @@ class SearchService:
             return full_text.strip()
         except Exception as e:
             logger.warning(f"Query expansion error: {e}")
-            raise e
+            return query # 失敗時は元のクエリを使用
 
     # ----------------------------------------------------------------
-    # Step 2: AIリランク (品質重視・深層分析モード)
+    # Step 2: AIリランク (精度向上: 上位5件精査・6点切り捨て)
     # ----------------------------------------------------------------
     @traceable(name="Step2_AI_Rerank", run_type="chain")
     async def rerank(self, query: str, documents: List[Dict], top_k: int) -> List[Dict]:
-        """
-        Step 2: リランク
-        - 精度優先: 上位候補に対し、LLMを用いて意味論的な適合度を厳密に評価。
-        """
+        """AIを用いて検索結果を再ランク付けする"""
         if not documents:
             return []
 
-        # 1. 上位5件を選出 (リランク対象) 応答時間削減
-        initial_candidates = documents[:5]
+        # 処理量削減のため上位5件に絞る [cite: 25]
+        initial_candidates = documents[:5] 
 
-        # 2. 分析用スニペットの生成
         candidates_text = ""
         for i, doc in enumerate(initial_candidates):
             meta = doc.get('metadata', {})
-            content_for_llm = meta.get('parent_content', doc.get('content', ''))
-            
-            # 情報密度が高い先頭部分(300文字)を抽出
-            snippet = content_for_llm[:300].replace('\n', ' ') 
+            # 親コンテンツ（全文）を評価に使用 [cite: 26]
+            content = meta.get('parent_content', doc.get('content', ''))
+            snippet = content[:300].replace('\n', ' ')
             candidates_text += f"Document ID: {i}\nSource: {meta.get('source', 'Unknown')}\nContent: {snippet}...\n\n"
 
-        # 3. ★プロンプトを prompts.py から取得
         rerank_prompt = prompts.RERANK.format(query=query, candidates_text=candidates_text)
 
         try:
-            #待機時間を減らす
+            # 待機時間を短縮してリトライ [cite: 21]
             async for attempt in AsyncRetrying(
                 retry=retry_if_exception_type(Exception),
-                wait=wait_exponential(multiplier=1, min=1, max=10), 
-                stop=stop_after_attempt(5),
+                wait=wait_exponential(multiplier=1, min=1, max=5), 
+                stop=stop_after_attempt(3),
                 reraise=True
             ):
                 with attempt:
                     resp = await self.llm.generate_json(rerank_prompt, RerankResponse)
-                    
                     raw_json = resp.text if hasattr(resp, 'text') else str(resp)
                     raw_json = raw_json.replace("```json", "").replace("```", "").strip()
                     data = json.loads(raw_json)
@@ -107,34 +117,25 @@ class SearchService:
                         reason = item.get("reason", "")
                         
                         if idx is not None and isinstance(idx, int) and 0 <= idx < len(initial_candidates):
-                            # 品質の低いドキュメントは足切り
-                            if score >= PARAMS.get("RERANK_SCORE_THRESHOLD", 3.0):
+                            # 6点未満は切り捨て [cite: 60]
+                            if score >= 6.0: 
                                 doc = initial_candidates[idx].copy()
-                                
-                                # 親コンテンツ(全文)に復元
+                                # 全文情報の保持
                                 if 'parent_content' in doc.get('metadata', {}):
                                     doc['content'] = doc['metadata']['parent_content']
-
                                 doc['rerank_score'] = score
                                 doc['rerank_reason'] = reason
                                 reranked_docs.append(doc)
 
-                    # スコア順に並び替え
                     reranked_docs.sort(key=lambda x: x['rerank_score'], reverse=True)
-                    
-                    logger.info(f"Rerank completed. Quality selection: {len(reranked_docs)} docs identified.")
                     return reranked_docs[:top_k]
 
-        except RetryError:
-            logger.error("Rerank failed after extended retries. Maintaining quality by falling back to vector search order.")
-            return self._fallback_docs(documents, top_k)
-            
         except Exception as e:
-            logger.error(f"Unexpected rerank error: {e}. Executing fallback strategy.")
+            logger.error(f"Rerank failed: {e}. Fallback to vector order.")
             return self._fallback_docs(documents, top_k)
 
     def _fallback_docs(self, documents: List[Dict], top_k: int) -> List[Dict]:
-        """フォールバック処理用ヘルパーメソッド"""
+        """エラー時のフォールバック処理"""
         fallback_docs = []
         for doc in documents[:top_k]:
             d = doc.copy()
@@ -144,26 +145,26 @@ class SearchService:
         return fallback_docs
 
     # ----------------------------------------------------------------
-    # Step 3: LitM対策 (配置最適化)
+    # Step 3: LitM対策 (U字型配置)
     # ----------------------------------------------------------------
-    @traceable(name="Step3_LitM_Reorder", run_type="tool")
     def reorder_litm(self, documents: List[Dict]) -> List[Dict]:
+        """重要情報を先頭と末尾に配置 """
         if not documents: return []
         dq = deque(documents)
         reordered = []
-        if dq: reordered.append(dq.popleft()) # 1位を先頭へ
+        if dq: reordered.append(dq.popleft()) # 1位
         temp_tail = []
         while dq:
-            temp_tail.append(dq.popleft())    # 真ん中へ
+            temp_tail.append(dq.popleft())
             if dq:
-                reordered.append(dq.popleft()) # 次点をリストへ
+                reordered.append(dq.popleft())
         return reordered + temp_tail[::-1]
 
     # ----------------------------------------------------------------
     # Step 4: 多様性フィルタリング
     # ----------------------------------------------------------------
-    @traceable(name="Step4_Diversity_Filter", run_type="tool")
-    def filter_diversity(self, documents: List[Dict], threshold: float = 0.65) -> List[Dict]:
+    def filter_diversity(self, documents: List[Dict], threshold: float = 0.7) -> List[Dict]:
+        """重複度70%以上をカット """
         unique_docs = []
         for doc in documents:
             content = doc.get('content', '')
@@ -176,3 +177,58 @@ class SearchService:
             if not is_duplicate:
                 unique_docs.append(doc)
         return unique_docs
+
+    # ----------------------------------------------------------------
+    # 統合検索メソッド (パイプライン実行)
+    # ----------------------------------------------------------------
+    @traceable(name="Search_Pipeline", run_type="chain")
+    async def search(self, query: str, session_id: str, collection_name: str, top_k: int = 5, embedding_model: str = None) -> Dict[str, Any]:
+        try:
+            # 1. Embedding生成
+            model = embedding_model or "models/gemini-embedding-001"
+            query_embedding = await self.get_embedding(query, model=model)
+
+            if not db_client.client:
+                return {"documents": []}
+
+            # ハイブリッド検索の準備 
+            # ベクトル検索とキーワード検索を併用
+            match_count = top_k * 3 # リランク用に多めに取得
+            if match_count < 10: match_count = 10
+
+            params = {
+                "p_query_text": query,          # キーワード
+                "p_query_embedding": query_embedding, # ベクトル
+                "p_match_count": match_count,
+                "p_collection_name": collection_name
+            }
+            
+            # ハイブリッド関数呼び出し (なければベクトル検索へフォールバック)
+            try:
+                response = db_client.client.rpc("match_documents_hybrid", params).execute()
+            except Exception:
+                vector_params = {
+                    "p_query_embedding": query_embedding,
+                    "p_match_count": match_count,
+                    "p_collection_name": collection_name
+                }
+                response = db_client.client.rpc("match_documents", vector_params).execute()
+
+            documents = response.data if response.data else []
+            if not documents:
+                return {"documents": []}
+
+            # 3. Rerank (上位5件精査)
+            reranked_docs = await self.rerank(query, documents, top_k)
+
+            # 4. LitM Reorder
+            reordered_docs = self.reorder_litm(reranked_docs)
+            
+            # 5. Diversity Filter
+            final_docs = self.filter_diversity(reordered_docs, threshold=0.7)
+
+            return {"documents": final_docs}
+
+        except Exception as e:
+            logger.error(f"Search execution failed: {e}")
+            return {"documents": []}
