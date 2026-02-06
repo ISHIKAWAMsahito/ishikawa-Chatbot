@@ -135,13 +135,22 @@ async def websocket_settings(websocket: WebSocket):
         if core_settings.settings_manager:
             core_settings.settings_manager.remove_websocket(websocket)
 
+# main.py
+
 # ---------------------------------------------------------
 # ヘルスチェック
 # ---------------------------------------------------------
 @app.get("/health")
 def health_check():
-    """Render用ヘルスチェック"""
-    return {"status": "ok"}
+    """
+    Render用ヘルスチェックおよび管理画面用ステータス確認
+    'database' キーを返すことで管理画面の「不明」表示を解消します。
+    """
+    return {
+        "status": "ok",
+        # db_client.client が存在すれば "supabase" という文字列を返します
+        "database": "supabase" if db_client.client else "uninitialized"
+    }
 
 if __name__ == "__main__":
     import uvicorn
