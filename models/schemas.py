@@ -56,4 +56,17 @@ class FeedbackRead(BaseModel):
     created_at: Any 
 
     class Config:
-        from_attributes = True
+        from_attributes = True 
+
+# -----------------------------------------------------------------------------
+# System Settings Models
+# -----------------------------------------------------------------------------
+class Settings(BaseModel):
+    """
+    システム設定変更用スキーマ
+    api/system.py で使用されます。
+    """
+    model: Optional[str] = None
+    collection: Optional[str] = None
+    embedding_model: Optional[str] = None
+    top_k: Optional[int] = None
