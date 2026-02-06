@@ -1,7 +1,7 @@
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # ★追加: WebSocket関連
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 
 # coreモジュールのインポート
 from core.database import db_client
-from core import settings as core_settings  # ★追加: 設定マネージャー用
+from core import settings as core_settings
+# SettingsManagerクラスをインポート
+# ※ core/settings.py に class SettingsManager がある前提です
+from core.settings import SettingsManager 
 
 # APIルーターのインポート
 from api import chat, feedback, system, auth, documents, fallbacks
@@ -30,11 +33,19 @@ async def lifespan(app: FastAPI):
     """アプリケーションのライフサイクル管理"""
     logger.info("🚀 Starting up University Support AI...")
     
-    # Supabaseクライアントの初期化確認
+    # 1. Supabaseクライアントの初期化確認
     if db_client.client:
         logger.info("✅ Supabase client initialized successfully.")
     else:
         logger.error("⚠️ Supabase client is NOT initialized. Check your SUPABASE_URL and KEY.")
+
+    # 2. SettingsManager の初期化
+    try:
+        # DBクライアントを渡して初期化
+        core_settings.settings_manager = SettingsManager(db_client)
+        logger.info("✅ Settings Manager initialized.")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Settings Manager: {e}")
 
     yield
     
@@ -56,70 +67,74 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# セッションミドルウェア（ログイン機能に必須）
-secret_key = os.getenv("SECRET_KEY", "change-this-to-a-secure-random-string-in-production")
-app.add_middleware(SessionMiddleware, secret_key=secret_key)
+# ---------------------------------------------------------
+# ★修正ポイント: 環境変数名の不一致を解消
+# ---------------------------------------------------------
+# Renderの設定に合わせて "APP_SECRET_KEY" を優先的に読み込みます
+secret_key = os.getenv("APP_SECRET_KEY") or os.getenv("SECRET_KEY", "default-insecure-key")
+
+# Render環境かどうか判定 (HTTPS強制用)
+is_production = os.getenv("RENDER") is not None
+
+app.add_middleware(
+    SessionMiddleware, 
+    secret_key=secret_key,
+    https_only=is_production, # 本番環境(Render)ではHTTPS必須にする
+    same_site="lax"           # CSRF対策
+)
 
 # 静的ファイルの配信
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
 # ---------------------------------------------------------
-# ルーターの登録
+# ルーターの登録 (パス修正済み)
 # ---------------------------------------------------------
 
-# API系ルーター
-app.include_router(chat.router, prefix="/api", tags=["Chat"])
+# Chat API: フロントエンドのアクセス先 /api/client/chat/... に合わせる
+app.include_router(chat.router, prefix="/api/client/chat", tags=["Chat"])
+
+# System API: フロントエンドのアクセス先 /api/admin/system/... に合わせる
+app.include_router(system.router, prefix="/api/admin/system", tags=["System"])
+
+# Feedback API
 app.include_router(feedback.router, prefix="/api", tags=["Feedback"])
 
-# systemルーター（HTTPエンドポイント用）
-# /api/health や /api/config などを提供します
-app.include_router(system.router, prefix="/api", tags=["System"])
-
-# Authルーター（ログイン・HTML配信）
-# /login, /logout, /admin などを提供するため prefixなし
+# Authルーター (HTML配信含むため prefixなし)
 app.include_router(auth.router, tags=["Auth"])
 
 # ---------------------------------------------------------
 # WebSocket エンドポイント (設定同期用)
 # ---------------------------------------------------------
-# system.py から移動されたコードです。
-# フロントエンドは "wss://.../ws/settings" に接続しに来ます。
-
 @app.websocket("/ws/settings")
 async def websocket_settings(websocket: WebSocket):
-    """
-    設定画面(admin.html)とのリアルタイム通信用WebSocket
-    設定が変更された際に、接続している全クライアントに通知を送るなどの処理に使用
-    """
-    # SettingsManagerが初期化されているか確認
+    """設定画面(admin.html)とのリアルタイム通信用WebSocket"""
+    
+    # 初期化チェック
     if not core_settings.settings_manager:
-        logger.error("Settings manager is not initialized.")
+        logger.error("❌ Settings manager is STILL not initialized.")
         await websocket.close(code=1000)
         return
 
     try:
-        # 接続確立とマネージャーへの登録
         await core_settings.settings_manager.connect(websocket)
-        
-        # クライアントからのメッセージを待機し続けるループ
+        logger.info("✅ WebSocket client connected.")
         while True:
-            # 基本的にサーバーからプッシュ通知を送る用途だが、
-            # 切断検知のために receive_text を待つ必要がある
+            # 切断検知のためにメッセージ待ち
             await websocket.receive_text()
             
     except WebSocketDisconnect:
-        # 切断時のクリーンアップ
-        core_settings.settings_manager.disconnect(websocket)
+        if core_settings.settings_manager:
+            core_settings.settings_manager.disconnect(websocket)
         logger.info("WebSocket settings client disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
-        core_settings.settings_manager.disconnect(websocket)
+        if core_settings.settings_manager:
+            core_settings.settings_manager.disconnect(websocket)
 
 # ---------------------------------------------------------
 # ヘルスチェック
 # ---------------------------------------------------------
-
 @app.get("/health")
 def health_check():
     """Render用ヘルスチェック"""
