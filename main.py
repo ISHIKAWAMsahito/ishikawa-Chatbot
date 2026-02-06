@@ -1,16 +1,15 @@
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # ★追加: WebSocket関連
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-# ★追加: セッション管理用ミドルウェア
 from starlette.middleware.sessions import SessionMiddleware
 from dotenv import load_dotenv
 
-# core.database から db_client をインポート
+# coreモジュールのインポート
 from core.database import db_client
-from core.constants import PARAMS
+from core import settings as core_settings  # ★追加: 設定マネージャー用
 
 # APIルーターのインポート
 from api import chat, feedback, system, auth, documents, fallbacks
@@ -28,15 +27,14 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    アプリケーションの起動・終了時のライフサイクル管理
-    """
+    """アプリケーションのライフサイクル管理"""
     logger.info("🚀 Starting up University Support AI...")
-
+    
+    # Supabaseクライアントの初期化確認
     if db_client.client:
         logger.info("✅ Supabase client initialized successfully.")
     else:
-        logger.warning("⚠️ Supabase client is NOT initialized. Check your SUPABASE_URL and KEY.")
+        logger.error("⚠️ Supabase client is NOT initialized. Check your SUPABASE_URL and KEY.")
 
     yield
     
@@ -58,32 +56,73 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ★追加: セッションミドルウェアの設定
-# これがないと auth.py の request.session['user'] でエラーになります
-# SECRET_KEYは.envに設定するか、なければランダムな文字列を使用
-secret_key = os.getenv("SECRET_KEY", "your-very-secret-key-change-in-production")
+# セッションミドルウェア（ログイン機能に必須）
+secret_key = os.getenv("SECRET_KEY", "change-this-to-a-secure-random-string-in-production")
 app.add_middleware(SessionMiddleware, secret_key=secret_key)
 
 # 静的ファイルの配信
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
-# APIルーターの登録
+# ---------------------------------------------------------
+# ルーターの登録
+# ---------------------------------------------------------
+
+# API系ルーター
 app.include_router(chat.router, prefix="/api", tags=["Chat"])
 app.include_router(feedback.router, prefix="/api", tags=["Feedback"])
 
-# ★追加: 認証用ルーターの登録
-# auth.py はHTML配信も兼ねているため、prefix="/api" は付けずにルートにマウントします
-# これにより /login, /logout, /admin などが有効になります
+# systemルーター（HTTPエンドポイント用）
+# /api/health や /api/config などを提供します
+app.include_router(system.router, prefix="/api", tags=["System"])
+
+# Authルーター（ログイン・HTML配信）
+# /login, /logout, /admin などを提供するため prefixなし
 app.include_router(auth.router, tags=["Auth"])
 
-# ヘルスチェック用エンドポイント
-# ★修正: auth.router にもルートパス("/")の定義(client.html配信)があるため、
-# ここの "/" は削除するか、認証が不要なAPI専用のヘルスチェックとして別名にします。
-# 今回はRender用のヘルスチェック "/health" が既にあるため、競合する "/" は削除しました。
+# ---------------------------------------------------------
+# WebSocket エンドポイント (設定同期用)
+# ---------------------------------------------------------
+# system.py から移動されたコードです。
+# フロントエンドは "wss://.../ws/settings" に接続しに来ます。
+
+@app.websocket("/ws/settings")
+async def websocket_settings(websocket: WebSocket):
+    """
+    設定画面(admin.html)とのリアルタイム通信用WebSocket
+    設定が変更された際に、接続している全クライアントに通知を送るなどの処理に使用
+    """
+    # SettingsManagerが初期化されているか確認
+    if not core_settings.settings_manager:
+        logger.error("Settings manager is not initialized.")
+        await websocket.close(code=1000)
+        return
+
+    try:
+        # 接続確立とマネージャーへの登録
+        await core_settings.settings_manager.connect(websocket)
+        
+        # クライアントからのメッセージを待機し続けるループ
+        while True:
+            # 基本的にサーバーからプッシュ通知を送る用途だが、
+            # 切断検知のために receive_text を待つ必要がある
+            await websocket.receive_text()
+            
+    except WebSocketDisconnect:
+        # 切断時のクリーンアップ
+        core_settings.settings_manager.disconnect(websocket)
+        logger.info("WebSocket settings client disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        core_settings.settings_manager.disconnect(websocket)
+
+# ---------------------------------------------------------
+# ヘルスチェック
+# ---------------------------------------------------------
 
 @app.get("/health")
 def health_check():
+    """Render用ヘルスチェック"""
     return {"status": "ok"}
 
 if __name__ == "__main__":
