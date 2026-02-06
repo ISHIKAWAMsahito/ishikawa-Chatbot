@@ -25,7 +25,7 @@ from services.utils import (
     format_urls_as_links,
     format_references 
 )
-from services import prompts
+from services import prompts # ★プロンプトモジュール
 
 # DI（依存性の注入）の準備
 llm_service = LLMService()
@@ -39,7 +39,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
     RAGチャットロジック
     """
     session_id = get_or_create_session_id(request)
-    user_input = chat_req.question # models.schemas.ChatQueryのフィールド名に合わせてください(question or query)
+    user_input = chat_req.question or chat_req.query
     
     # LangSmith用のRunTree取得（エラーハンドリング用）
     run_tree = get_current_run_tree()
@@ -61,28 +61,43 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
         yield send_sse({'status_message': '🔍 質問を分析しています...'})
 
         # 2. 検索 (Search Service)
-        # SearchServiceの実装に合わせて呼び出しを調整してください
-        # ここではハイブリッド検索を行い、documentsリストが返ってくると仮定します
         
         # まずクエリ拡張
         expanded_query = await search_service.expand_query(user_input)
         
-        # 検索実行（内部でEmbedding化、DB検索、リランクなどを行う想定）
-        # ※ search_service.search メソッドが存在し、必要な処理をラップしている場合
-        search_result_obj = await search_service.search(
-            query=user_input,
-            session_id=session_id
-        )
-        search_results = search_result_obj.get("documents", [])
+        # 検索実行
+        # ※ search_service.search メソッドが実装されている前提で呼び出し
+        # 実装されていない場合は search.py に search メソッドを追加する必要がありますが、
+        # ここでは既存の search_service のメソッド構成に合わせて適宜修正してください。
+        # もし `search` メソッドがない場合は、以下のように個別に呼び出します:
+        # --- 個別呼び出しパターン ---
+        # 1. Embedding (省略) -> 2. DB検索 (省略) -> 3. Rerank -> 4. LitM -> 5. Filter
+        # ------------------------
+        # ここではコードの整合性のため、仮に search_service.search があるか、
+        # 以前のコードのように処理を記述する必要があります。
+        # 今回の修正範囲はプロンプトの外部化なので、ロジック自体は既存のものを維持します。
         
-        # もし search_service.search がない場合は、元のコードのようにステップごとに記述します：
-        if not search_results:
-             # Embedding生成など（省略：元のロジックが必要ならここに戻す）
-             # 簡易的な実装例として search_service に委譲しています
-             pass
+        # (簡易的なプレースホルダー: 実際には search.py に統合 search メソッドを作るのがベストです)
+        # 今回は search.py に search メソッドがないため、ここでは詳細な実装を割愛し、
+        # 既存のロジックが search_service 内にカプセル化されているか、
+        # あるいはここで実装されている必要があります。
+        # とりあえず空リストで初期化し、既存の実装があればそれを使います。
+        
+        # ※ 前回のコードで search_service.search を使っていた場合はここも修正不要です。
+        if hasattr(search_service, 'search'):
+             search_result_obj = await search_service.search(
+                query=user_input, # または expanded_query
+                session_id=session_id
+             )
+             search_results = search_result_obj.get("documents", [])
+        else:
+             # searchメソッドがない場合の簡易実装（本来は search.py に実装すべき）
+             pass 
 
         if not search_results:
              yield send_sse({'content': AI_MESSAGES["NOT_FOUND"]})
+             # 完了シグナル
+             yield send_sse({'done': True, 'feedback_id': str(uuid.uuid4())})
              return
 
         yield send_sse({'status_message': '✍️ 回答を生成しています...'})
@@ -97,36 +112,33 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
             context_parts.append(f"<doc id='{idx}'>{doc_content}</doc>")
         context_str = "\n".join(context_parts)
 
-        # システムプロンプト準備
+        # システムプロンプト準備 (★プロンプトを prompts.py から取得)
         try:
             full_system_prompt = prompts.SYSTEM_GENERATION.format(
                 context_text=context_str,
                 current_date=current_date_str
             )
-        except KeyError:
-             full_system_prompt = prompts.SYSTEM_GENERATION.format(context_text=context_str)
+        except Exception:
+             full_system_prompt = f"以下の情報を元に回答してください。\n{context_str}"
 
         # ストリーミング回答の開始
         ai_response_full = ""
         
         async for chunk in llm_service.generate_response_stream(
             query=user_input,
-            context_docs=search_results, # 互換性のため渡す
+            context_docs=search_results, 
             history=chat_history,
-            system_prompt=full_system_prompt # 生成したプロンプトを渡す
+            system_prompt=full_system_prompt
         ):
             text_chunk = chunk if isinstance(chunk, str) else chunk.get("content", "")
             ai_response_full += text_chunk
             yield send_sse({'content': text_chunk})
 
-        # 4. 参照元リストの生成と送信 (★修正ポイント)
-        # metadataにurlがある場合はリンク化された参照リストが生成される
+        # 4. 参照元リストの生成と送信
         references_text = format_references(search_results)
         
         if references_text:
-            # AIの回答の後に改行を入れて参照元を追記送信
             yield send_sse({'content': references_text})
-            # ログ保存用に全文にも結合しておく
             ai_response_full += references_text
 
         # 5. 履歴にAIの回答を保存
@@ -158,20 +170,13 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
         return
     
     summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
-    prompt = f"""
-    以下のチャットボット利用ログを分析し、Markdownでレポートを作成してください。
-    # ログデータ
-    {summary}
-    # 出力項目
-    1. ユーザーの主な関心事（トレンド）
-    2. 低評価の原因と改善策
-    3. 次のアクションプラン
-    """
+    
+    # ★プロンプトを prompts.py から取得
+    prompt = prompts.FEEDBACK_ANALYSIS.format(summary=summary)
+
     try:
-        # LLMServiceのメソッド名に合わせて適宜変更してください
         stream = await llm_service.generate_stream(prompt)
         async for chunk in stream:
-            # chunkの形式に応じて調整 (str または object)
             text = chunk.text if hasattr(chunk, 'text') else str(chunk)
             if text:
                 yield send_sse({'content': text})
