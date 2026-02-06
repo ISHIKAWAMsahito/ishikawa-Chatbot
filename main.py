@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+# ★追加: セッション管理用ミドルウェア
+from starlette.middleware.sessions import SessionMiddleware
 from dotenv import load_dotenv
 
 # core.database から db_client をインポート
@@ -56,6 +58,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ★追加: セッションミドルウェアの設定
+# これがないと auth.py の request.session['user'] でエラーになります
+# SECRET_KEYは.envに設定するか、なければランダムな文字列を使用
+secret_key = os.getenv("SECRET_KEY", "your-very-secret-key-change-in-production")
+app.add_middleware(SessionMiddleware, secret_key=secret_key)
+
 # 静的ファイルの配信
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static", html=True), name="static")
@@ -64,13 +72,16 @@ if os.path.exists("static"):
 app.include_router(chat.router, prefix="/api", tags=["Chat"])
 app.include_router(feedback.router, prefix="/api", tags=["Feedback"])
 
-# ヘルスチェック用エンドポイント (ルート)
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "University Support AI is running."}
+# ★追加: 認証用ルーターの登録
+# auth.py はHTML配信も兼ねているため、prefix="/api" は付けずにルートにマウントします
+# これにより /login, /logout, /admin などが有効になります
+app.include_router(auth.router, tags=["Auth"])
 
-# ★★★ ここを追加！ ★★★
-# Renderのヘルスチェックがここを叩きに来るため、これがないと404エラーになります
+# ヘルスチェック用エンドポイント
+# ★修正: auth.router にもルートパス("/")の定義(client.html配信)があるため、
+# ここの "/" は削除するか、認証が不要なAPI専用のヘルスチェックとして別名にします。
+# 今回はRender用のヘルスチェック "/health" が既にあるため、競合する "/" は削除しました。
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
