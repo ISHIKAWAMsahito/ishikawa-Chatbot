@@ -147,3 +147,33 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
         
     finally:
         log_context(session_id, "Response generation finished.")
+
+@traceable(name="Feedback_Analysis_Job", run_type="chain")
+async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
+    """
+    フィードバック分析用ロジック
+    """
+    if not logs:
+        yield send_sse({'content': '分析対象データがありません。'})
+        return
+    
+    summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
+    prompt = f"""
+    以下のチャットボット利用ログを分析し、Markdownでレポートを作成してください。
+    # ログデータ
+    {summary}
+    # 出力項目
+    1. ユーザーの主な関心事（トレンド）
+    2. 低評価の原因と改善策
+    3. 次のアクションプラン
+    """
+    try:
+        # LLMServiceのメソッド名に合わせて適宜変更してください
+        stream = await llm_service.generate_stream(prompt)
+        async for chunk in stream:
+            # chunkの形式に応じて調整 (str または object)
+            text = chunk.text if hasattr(chunk, 'text') else str(chunk)
+            if text:
+                yield send_sse({'content': text})
+    except Exception as e:
+        yield send_sse({'content': f'分析エラー: {e}'})

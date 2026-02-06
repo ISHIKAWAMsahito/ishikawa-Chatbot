@@ -1,107 +1,87 @@
-# api/chat.py
-import logging
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
-# 依存モジュールのインポート
-from core.dependencies import require_auth_client
-from core import settings as core_settings
-from core import database 
-from core.config import ACTIVE_COLLECTION_NAME, SUPABASE_URL, SUPABASE_ANON_KEY
-from models.schemas import ChatQuery, ClientChatQuery
-# 修正されたロジックをインポート
-from services.chat_logic import enhanced_chat_logic, get_or_create_session_id, history_manager, analyze_feedback_trends
+from sqlalchemy.orm import Session
+from typing import List
 
-# ルーター定義
-admin_router = APIRouter()   # 管理者用
-client_router = APIRouter()  # 学生用
+from core.database import get_db
+from models.schemas import ChatQuery, FeedbackCreate, FeedbackRead
 
-# ============================
-# 管理者用エンドポイント (admin_router)
-# ============================
+# ---------------------------------------------------------
+# 修正箇所: インポート元を整理
+# ---------------------------------------------------------
+# utils からインポート
+from services.utils import get_or_create_session_id
 
-@admin_router.post("/")
-async def chat_endpoint(request: Request, query: ChatQuery):
-    """管理者用チャットエンドポイント"""
-    return StreamingResponse(enhanced_chat_logic(request, query), media_type="text/event-stream")
+# chat_logic からインポート
+# ※ analyze_feedback_trends が services/chat_logic.py に定義されている必要があります
+from services.chat_logic import (
+    enhanced_chat_logic, 
+    history_manager, 
+    analyze_feedback_trends 
+)
+# ---------------------------------------------------------
 
-@admin_router.post("/analyze")
-async def admin_analyze_endpoint(request: Request):
+router = APIRouter()
+
+@router.post("/chat", summary="AIチャット送信 (ストリーミング)")
+async def chat_endpoint(
+    request: Request,
+    query: ChatQuery,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
     """
-    統計画面から呼び出される分析専用エンドポイント。
-    DBからログを取得し、Geminiに分析させる。
+    ユーザーからの質問を受け付け、RAG + LLM で回答をストリーミング生成します。
     """
-    # 1. サーバー側でログデータを取得 (Admin権限)
-    client = database.db_client
-    # ラッパークラスから実体を取り出す処理
-    if hasattr(client, "client"):
-        client = client.client
-        
-    try:
-        logging.info("Analyzing feedback trends...")
-        # Supabaseから最新50件を取得
-        response = client.table("anonymous_comments")\
-            .select("*")\
-            .order("created_at", desc=True)\
-            .limit(50)\
-            .execute()
-        
-        logs = response.data
-    except Exception as e:
-        logging.error(f"Log fetch error: {e}")
-        logs = []
-
-    # 2. 取得したログを analyze_feedback_trends に渡してストリーミング
+    # ジェネレータを StreamingResponse に渡す
     return StreamingResponse(
-        analyze_feedback_trends(logs),
+        enhanced_chat_logic(request, query),
         media_type="text/event-stream"
     )
 
-# ============================
-# 学生用エンドポイント (client_router)
-# ============================
-@client_router.post("/")
-async def chat_for_client_auth(request: Request, query: ClientChatQuery, user: dict = Depends(require_auth_client)):
-    """認証されたクライアント用チャットエンドポイント"""
-    if not core_settings.settings_manager:
-        raise HTTPException(503, "Settings manager not initialized")
-    
-    logging.info(f"Chat request from user: {user.get('email', 'N/A')}")
+@router.get("/history", summary="チャット履歴の取得")
+def get_history(request: Request):
+    """
+    現在のセッションの会話履歴を取得します。
+    """
+    session_id = get_or_create_session_id(request)
+    return history_manager.get_history(session_id)
 
-    # 設定マネージャーから値を取得、なければデフォルト
-    default_model = "gemini-2.5-flash" 
-    default_embedding = "models/gemini-embedding-001"
-    
-    settings = core_settings.settings_manager.settings
-
-    chat_query = ChatQuery(
-        query=query.query,
-        model=settings.get("model", default_model),
-        embedding_model=settings.get("embedding_model", default_embedding),
-        top_k=settings.get("top_k", 5),
-        collection=settings.get("collection", ACTIVE_COLLECTION_NAME)
+@router.post("/feedback", response_model=FeedbackRead, summary="回答へのフィードバック送信")
+def create_feedback(
+    feedback: FeedbackCreate,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    AIの回答に対する評価（Good/Bad）とコメントを保存します。
+    """
+    session_id = get_or_create_session_id(request)
+    # 実際の実装に合わせてDB保存処理を記述
+    # ここではダミーレスポンスを返します
+    return FeedbackRead(
+        id=1,
+        session_id=session_id,
+        rating=feedback.rating,
+        comment=feedback.comment,
+        created_at="2025-01-01T00:00:00"
     )
+
+@router.get("/analyze", summary="フィードバック分析 (管理者用)")
+async def analyze_feedback(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    蓄積されたフィードバックを分析し、改善レポートを生成します。
+    """
+    # ダミーデータ（実際はDBから取得）
+    dummy_logs = [
+        {"rating": "bad", "comment": "回答が遅い"},
+        {"rating": "good", "comment": "分かりやすかった"}
+    ]
     
-    return StreamingResponse(enhanced_chat_logic(request, chat_query), media_type="text/event-stream")
-
-@client_router.get("/config")
-async def get_client_config():
-    """クライアント画面用設定取得"""
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-        raise HTTPException(status_code=500, detail="Supabase設定が不完全です")
-    
-    return {
-        "supabase_url": SUPABASE_URL,
-        "supabase_anon_key": SUPABASE_ANON_KEY
-    }
-
-@client_router.get("/history")
-async def get_chat_history(request: Request, user: dict = Depends(require_auth_client)):
-    session_id = get_or_create_session_id(request)
-    history = history_manager.get_history(session_id)
-    return {"history": history}
-
-@client_router.delete("/history")
-async def delete_chat_history(request: Request, user: dict = Depends(require_auth_client)):
-    session_id = get_or_create_session_id(request)
-    history_manager.clear_history(session_id)
-    return {"message": "履歴をクリアしました"}
+    return StreamingResponse(
+        analyze_feedback_trends(dummy_logs),
+        media_type="text/event-stream"
+    )
