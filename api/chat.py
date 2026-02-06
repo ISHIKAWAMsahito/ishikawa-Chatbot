@@ -4,16 +4,14 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from core.database import get_db
+# ★追加: 設定値のインポート
+from core.config import SUPABASE_URL, SUPABASE_ANON_KEY
 from models.schemas import ChatQuery, FeedbackCreate, FeedbackRead
 
 # ---------------------------------------------------------
-# 修正箇所: インポート元を整理
+# インポート元
 # ---------------------------------------------------------
-# utils からインポート
 from services.utils import get_or_create_session_id
-
-# chat_logic からインポート
-# ※ analyze_feedback_trends が services/chat_logic.py に定義されている必要があります
 from services.chat_logic import (
     enhanced_chat_logic, 
     history_manager, 
@@ -22,6 +20,17 @@ from services.chat_logic import (
 # ---------------------------------------------------------
 
 router = APIRouter()
+
+# ★追加: フロントエンド初期化用エンドポイント
+@router.get("/config")
+def get_chat_config():
+    """
+    フロントエンド（client.html等）の初期化に必要な公開設定を返す
+    """
+    return {
+        "supabase_url": SUPABASE_URL,
+        "supabase_anon_key": SUPABASE_ANON_KEY
+    }
 
 @router.post("/chat", summary="AIチャット送信 (ストリーミング)")
 async def chat_endpoint(
@@ -33,7 +42,6 @@ async def chat_endpoint(
     """
     ユーザーからの質問を受け付け、RAG + LLM で回答をストリーミング生成します。
     """
-    # ジェネレータを StreamingResponse に渡す
     return StreamingResponse(
         enhanced_chat_logic(request, query),
         media_type="text/event-stream"
@@ -57,8 +65,7 @@ def create_feedback(
     AIの回答に対する評価（Good/Bad）とコメントを保存します。
     """
     session_id = get_or_create_session_id(request)
-    # 実際の実装に合わせてDB保存処理を記述
-    # ここではダミーレスポンスを返します
+    # ここではダミーレスポンス（実装に応じて修正してください）
     return FeedbackRead(
         id=1,
         session_id=session_id,
@@ -75,7 +82,6 @@ async def analyze_feedback(
     """
     蓄積されたフィードバックを分析し、改善レポートを生成します。
     """
-    # ダミーデータ（実際はDBから取得）
     dummy_logs = [
         {"rating": "bad", "comment": "回答が遅い"},
         {"rating": "good", "comment": "分かりやすかった"}

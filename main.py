@@ -13,8 +13,8 @@ from core import settings as core_settings
 # SettingsManagerクラスをインポート
 from core.settings import SettingsManager 
 
-# APIルーターのインポート
-from api import chat, feedback, system, auth
+# APIルーターのインポート (★修正: documents を追加)
+from api import chat, feedback, system, auth, documents
 
 # .env ファイルの読み込み
 load_dotenv()
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.error("⚠️ Supabase client is NOT initialized. Check your SUPABASE_URL and KEY.")
 
-    # 2. SettingsManager の初期化 (★修正箇所)
+    # 2. SettingsManager の初期化
     try:
         # settings.py の定義に合わせて、引数なしで初期化します
         core_settings.settings_manager = SettingsManager()
@@ -97,6 +97,9 @@ app.include_router(system.router, prefix="/api/admin/system", tags=["System"])
 # Feedback API
 app.include_router(feedback.router, prefix="/api", tags=["Feedback"])
 
+# ★追加: Documents API (エラーログ /api/admin/documents/... に対応)
+app.include_router(documents.router, prefix="/api/admin/documents", tags=["Documents"])
+
 # Authルーター (HTML配信含むため prefixなし)
 app.include_router(auth.router, tags=["Auth"])
 
@@ -114,7 +117,7 @@ async def websocket_settings(websocket: WebSocket):
         return
 
     try:
-        # ★修正: settings.py のメソッド名 'add_websocket' を使用
+        # settings.py のメソッド名 'add_websocket' を使用
         await core_settings.settings_manager.add_websocket(websocket)
         logger.info("✅ WebSocket client connected.")
         
@@ -123,7 +126,7 @@ async def websocket_settings(websocket: WebSocket):
             await websocket.receive_text()
             
     except WebSocketDisconnect:
-        # ★修正: settings.py のメソッド名 'remove_websocket' を使用
+        # settings.py のメソッド名 'remove_websocket' を使用
         if core_settings.settings_manager:
             core_settings.settings_manager.remove_websocket(websocket)
         logger.info("WebSocket settings client disconnected")

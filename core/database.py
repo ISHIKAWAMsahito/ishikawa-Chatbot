@@ -1,7 +1,6 @@
 import logging
 import os
 from supabase import create_client, Client
-# core.config から必要な変数をインポート
 from core.config import SUPABASE_URL, SUPABASE_SERVICE_KEY
 
 logger = logging.getLogger(__name__)
@@ -44,8 +43,10 @@ class DatabaseClient:
             return 0
             
         try:
+            # head=True, count='exact' を指定して高速に件数取得
             response = self.client.table("documents").select("*", count="exact", head=True).execute()
             return response.count if response.count is not None else 0
+            
         except Exception as e:
             logger.error(f"❌ Error counting chunks in collection '{collection_name}': {e}")
             return 0
