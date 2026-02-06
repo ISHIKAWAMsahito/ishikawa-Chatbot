@@ -1,108 +1,69 @@
-import os
 import logging
-from typing import List, Dict, Any, Optional
-
-# Supabase Client
+import os
 from supabase import create_client, Client
+# core.config から必要な変数をインポート
+# main.py 等との整合性を保つため、config経由で取得します
+from core.config import SUPABASE_URL, SUPABASE_SERVICE_KEY
 
-# SQLAlchemy Imports
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+logger = logging.getLogger(__name__)
 
-# 環境変数の読み込み
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-
-# -----------------------------------------------------------------------------
-# 1. SQLAlchemy Setup (RDBMS: 履歴・フィードバック保存用)
-# -----------------------------------------------------------------------------
-# Render等のPostgres URL修正 (postgres:// -> postgresql://)
-# SQLAlchemy 1.4+ では postgresql:// である必要があるため
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-SessionLocal = None
-Base = declarative_base()
-
-if DATABASE_URL:
-    try:
-        engine = create_engine(DATABASE_URL)
-        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    except Exception as e:
-        logging.error(f"SQLAlchemy Engine creation failed: {e}")
-
-# FastAPI Dependency: DBセッション取得用
-def get_db():
-    """
-    FastAPIのDependsで使用するDBセッション生成ジェネレータ
-    """
-    if SessionLocal is None:
-        yield None
-        return
-
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# -----------------------------------------------------------------------------
-# 2. Supabase Setup (Vector Store: 文書検索用)
-# -----------------------------------------------------------------------------
 class DatabaseClient:
     """
-    Supabaseクライアントのラッパー。
-    ハイブリッド検索やFAQ検索などのRPC呼び出しを管理します。
+    Supabase接続を管理するシングルトンクライアント
     """
-    def __init__(self, url: str, key: str):
-        self.client: Optional[Client] = None
-        if url and key:
-            try:
-                self.client = create_client(url, key)
-            except Exception as e:
-                logging.error(f"Supabase client connection failed: {e}")
+    _instance = None
 
-    def search_documents_hybrid(self, collection_name: str, query_text: str, query_embedding: List[float], match_count: int = 20) -> List[Dict[str, Any]]:
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(DatabaseClient, cls).__new__(cls)
+            cls._instance.client = None
+        return cls._instance
+
+    def __init__(self):
+        # 二重初期化防止
+        if self.client is None:
+            self.initialize()
+
+    def initialize(self):
+        """Supabaseクライアントの初期化"""
+        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+            logger.error("❌ SUPABASE_URL or SUPABASE_SERVICE_KEY is missing.")
+            return
+
+        try:
+            self.client: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            logger.info("✅ Supabase client initialized.")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Supabase client: {e}")
+
+    def count_chunks_in_collection(self, collection_name: str) -> int:
         """
-        SupabaseのRPC 'hybrid_search' を呼び出す
-        """
-        if not self.client:
-            return []
+        指定されたコレクション（documentsテーブル）内のチャンク数をカウントする。
         
-        try:
-            params = {
-                "query_text": query_text,
-                "query_embedding": query_embedding,
-                "match_count": match_count,
-                "filter": {} # 必要に応じてフィルタを追加
-            }
-            # RPC呼び出し
-            response = self.client.rpc("hybrid_search", params).execute()
-            return response.data if response.data else []
-        except Exception as e:
-            logging.error(f"Hybrid search failed: {e}")
-            return []
-
-    def search_fallback_qa(self, query_embedding: List[float], match_count: int = 1) -> List[Dict[str, Any]]:
-        """
-        FAQ検索用RPC (例: 'match_documents') を呼び出す
+        Args:
+            collection_name (str): コレクション名（現在は 'documents' テーブル全体をカウント）
+            
+        Returns:
+            int: チャンク総数
         """
         if not self.client:
-            return []
-
+            logger.warning("⚠️ Database client is not initialized.")
+            return 0
+            
         try:
-            params = {
-                "query_embedding": query_embedding,
-                "match_threshold": 0.7, # 閾値は適宜調整
-                "match_count": match_count
-            }
-            # データベース側の関数名に合わせて変更してください
-            response = self.client.rpc("match_documents", params).execute()
-            return response.data if response.data else []
+            # head=True, count='exact' を指定することで、
+            # データの中身を取得せずに件数だけを高速に取得します。
+            # collection_name に基づくフィルタリングが必要な場合は、
+            # .eq('metadata->>collection', collection_name) などを追加しますが、
+            # 現時点の schema.md に従い、単純なテーブルカウントを行います。
+            response = self.client.table("documents").select("*", count="exact", head=True).execute()
+            
+            # response.count が None の場合は 0 を返す
+            return response.count if response.count is not None else 0
+            
         except Exception as e:
-            logging.error(f"FAQ search failed: {e}")
-            return []
+            logger.error(f"❌ Error counting chunks in collection '{collection_name}': {e}")
+            return 0
 
-# グローバルなクライアントインスタンス
-db_client = DatabaseClient(SUPABASE_URL, SUPABASE_KEY)
+# シングルトンインスタンスを作成
+db_client = DatabaseClient()
