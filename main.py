@@ -11,11 +11,10 @@ from dotenv import load_dotenv
 from core.database import db_client
 from core import settings as core_settings
 # SettingsManagerクラスをインポート
-# ※ core/settings.py に class SettingsManager がある前提です
 from core.settings import SettingsManager 
 
 # APIルーターのインポート
-from api import chat, feedback, system, auth, documents, fallbacks
+from api import chat, feedback, system, auth
 
 # .env ファイルの読み込み
 load_dotenv()
@@ -39,13 +38,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.error("⚠️ Supabase client is NOT initialized. Check your SUPABASE_URL and KEY.")
 
-    # 2. SettingsManager の初期化
+    # 2. SettingsManager の初期化 (★修正箇所)
     try:
-        # DBクライアントを渡して初期化
-        core_settings.settings_manager = SettingsManager(db_client)
+        # settings.py の定義に合わせて、引数なしで初期化します
+        core_settings.settings_manager = SettingsManager()
         logger.info("✅ Settings Manager initialized.")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize Settings Manager: {e}")
+        logger.error(f"❌ Failed to initialize Settings Manager: {e}", exc_info=True)
 
     yield
     
@@ -68,18 +67,16 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
-# ★修正ポイント: 環境変数名の不一致を解消
+# 環境変数名の不一致を解消 (Render対応)
 # ---------------------------------------------------------
-# Renderの設定に合わせて "APP_SECRET_KEY" を優先的に読み込みます
+# Renderのスクリーンショットにある "APP_SECRET_KEY" を読み込みます
 secret_key = os.getenv("APP_SECRET_KEY") or os.getenv("SECRET_KEY", "default-insecure-key")
-
-# Render環境かどうか判定 (HTTPS強制用)
 is_production = os.getenv("RENDER") is not None
 
 app.add_middleware(
     SessionMiddleware, 
     secret_key=secret_key,
-    https_only=is_production, # 本番環境(Render)ではHTTPS必須にする
+    https_only=is_production, # 本番環境(Render)ではHTTPS必須
     same_site="lax"           # CSRF対策
 )
 
@@ -88,13 +85,13 @@ if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
 # ---------------------------------------------------------
-# ルーターの登録 (パス修正済み)
+# ルーターの登録
 # ---------------------------------------------------------
 
-# Chat API: フロントエンドのアクセス先 /api/client/chat/... に合わせる
+# Chat API
 app.include_router(chat.router, prefix="/api/client/chat", tags=["Chat"])
 
-# System API: フロントエンドのアクセス先 /api/admin/system/... に合わせる
+# System API
 app.include_router(system.router, prefix="/api/admin/system", tags=["System"])
 
 # Feedback API
@@ -117,20 +114,23 @@ async def websocket_settings(websocket: WebSocket):
         return
 
     try:
-        await core_settings.settings_manager.connect(websocket)
+        # ★修正: settings.py のメソッド名 'add_websocket' を使用
+        await core_settings.settings_manager.add_websocket(websocket)
         logger.info("✅ WebSocket client connected.")
+        
         while True:
             # 切断検知のためにメッセージ待ち
             await websocket.receive_text()
             
     except WebSocketDisconnect:
+        # ★修正: settings.py のメソッド名 'remove_websocket' を使用
         if core_settings.settings_manager:
-            core_settings.settings_manager.disconnect(websocket)
+            core_settings.settings_manager.remove_websocket(websocket)
         logger.info("WebSocket settings client disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         if core_settings.settings_manager:
-            core_settings.settings_manager.disconnect(websocket)
+            core_settings.settings_manager.remove_websocket(websocket)
 
 # ---------------------------------------------------------
 # ヘルスチェック
