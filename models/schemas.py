@@ -1,29 +1,59 @@
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
-from core.config import ACTIVE_COLLECTION_NAME
+from typing import Optional, Any
+from pydantic import BaseModel, Field
 
+# -----------------------------------------------------------------------------
+# Chat / RAG Request Models
+# -----------------------------------------------------------------------------
 class ChatQuery(BaseModel):
-    query: str
-    model: str = "gemini-2.5-flash"
-    embedding_model: str = "models/embedding-001"
-    top_k: int = 5
-    collection: str = ACTIVE_COLLECTION_NAME
+    """
+    チャットリクエスト用スキーマ
+    """
+    # ロジック側で .question を参照しているため、フィールド名を合わせます
+    question: str = Field(..., description="ユーザーからの質問文", alias="query") 
+    
+    # 以下はデフォルト値を設定し、必須ではないようにします
+    collection: str = Field("default", description="検索対象のコレクション名")
+    top_k: int = Field(5, description="検索で取得するドキュメント数")
+    embedding_model: str = Field("models/gemini-embedding-001", description="使用するEmbeddingモデル")
 
-class ClientChatQuery(BaseModel):
-    query: str
+    class Config:
+        populate_by_name = True
+        json_schema_extra = {
+            "example": {
+                "question": "成績証明書の発行方法を教えて",
+                "collection": "university_docs",
+                "top_k": 5
+            }
+        }
 
-class FeedbackRequest(BaseModel):
-    feedback_id: str
+# -----------------------------------------------------------------------------
+# Feedback Models
+# -----------------------------------------------------------------------------
+class FeedbackCreate(BaseModel):
+    """
+    フィードバック作成（受信）用スキーマ
+    api/chat.py で FeedbackCreate としてインポートされているため、このクラス名が必要です。
+    """
+    rating: str = Field(..., description="評価 ('good', 'bad' など)")
+    comment: Optional[str] = Field(None, description="ユーザーからのコメント")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "rating": "good",
+                "comment": "とても分かりやすかったです。"
+            }
+        }
+
+class FeedbackRead(BaseModel):
+    """
+    フィードバック返却（表示）用スキーマ
+    """
+    id: int
+    session_id: str
     rating: str
-    comment: str = ""
+    comment: Optional[str]
+    created_at: Any 
 
-class AIResponseFeedbackRequest(BaseModel):
-    user_question: str
-    ai_response: str
-    rating: str
-
-class Settings(BaseModel):
-    model: Optional[str] = None
-    collection: Optional[str] = None
-    embedding_model: Optional[str] = None
-    top_k: Optional[int] = None
+    class Config:
+        from_attributes = True
