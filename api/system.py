@@ -22,7 +22,7 @@ async def health_check():
     """ヘルスチェック"""
     return {
         "status": "ok",
-        "database": "supabase" if database.db_client else "uninitialized"
+        "database": "Supabase" if database.db_client else "uninitialized"
     }
 
 @router.api_route("/healthz", methods=["GET", "HEAD"])
