@@ -31,3 +31,6 @@ prometheus-fastapi-instrumentator==7.1.0
 
 async-lru
 tenacity
+
+sqlalchemy
+psycopg2-binary
