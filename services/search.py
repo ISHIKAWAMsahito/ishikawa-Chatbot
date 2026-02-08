@@ -109,7 +109,7 @@ class SearchService:
                 retry=retry_if_exception_type(Exception)
             ):
                 with attempt:
-                    model = genai.GenerativeModel("gemini-2.5-flash")
+                    model = genai.GenerativeModel("models/gemini-2.5-flash")
                     response = await model.generate_content_async(
                         prompt,
                         generation_config={"response_mime_type": "application/json"}

@@ -7,7 +7,8 @@ from core.config import GEMINI_API_KEY, ACTIVE_COLLECTION_NAME, SUPABASE_URL, SU
 from core.dependencies import require_auth
 from core import database
 from core import settings as core_settings
-from models.schemas import Settings
+from models.schemas import Settings, CreateCollectionRequest
+from core.ws_auth import create_ws_token
 
 router = APIRouter()
 GENERIC_ERROR_MSG = "処理に失敗しました。"
@@ -61,9 +62,16 @@ async def get_collections(user: dict = Depends(require_auth)):
     }]
 
 @router.post("/collections")
-async def create_collection(request: dict, user: dict = Depends(require_auth)):
-    """コレクションを作成(既存のみ)"""
+async def create_collection(request: CreateCollectionRequest, user: dict = Depends(require_auth)):
+    """コレクションを作成(既存のみ)。リクエストは Pydantic 必須（dict 禁止）。"""
     return {"message": f"コレクション「{ACTIVE_COLLECTION_NAME}」は既に存在しています"}
+
+
+@router.get("/ws-token")
+def get_ws_token(user: dict = Depends(require_auth)):
+    """WebSocket /ws/settings 接続用の短期トークンを発行（管理者認証必須）。60秒有効。"""
+    token = create_ws_token()
+    return {"token": token, "expires_in_seconds": 60}
 
 @router.delete("/collections/{collection_name}")
 async def delete_collection(collection_name: str, user: dict = Depends(require_auth)):

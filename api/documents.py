@@ -10,13 +10,13 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Q
 import google.generativeai as genai
 import httpx
 from bs4 import BeautifulSoup
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-# リクエストモデル
+# リクエストモデル（DoS対策: 全フィールドに max_length）
 class ScrapeRequest(BaseModel):
-    url: str
-    collection_name: str
-    embedding_model: str
+    url: str = Field(..., max_length=2048, description="スクレイピング対象URL")
+    collection_name: str = Field(..., max_length=256)
+    embedding_model: str = Field(..., max_length=128)
 
 from core.dependencies import require_auth
 from core import database
@@ -181,7 +181,7 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         main_html = str(soup.body) if soup.body else str(soup)
 
         # 2. GeminiによるMarkdown整形 (★モデルを gemini-2.5-flash に変更)
-        extract_model = genai.GenerativeModel("gemini-2.5-flash")
+        extract_model = genai.GenerativeModel("models/gemini-2.5-flash")
         extracted_info = "\n".join(output_blocks)
         prompt = f"""
         以下のHTMLコンテンツを解析し、情報を漏らさず整理されたMarkdownテキストに変換してください。

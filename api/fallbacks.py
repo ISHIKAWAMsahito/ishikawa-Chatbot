@@ -1,13 +1,13 @@
 import logging
 import asyncio
 import re
-from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 import google.generativeai as genai
 from core.dependencies import require_auth
 from core import database
 from core import settings
 from core.config import GEMINI_API_KEY
+from models.schemas import FallbackCreate, FallbackUpdate
 
 router = APIRouter()
 
@@ -36,28 +36,24 @@ async def get_all_fallbacks(user: dict = Depends(require_auth)):
         logging.error(f"Q&A一覧取得エラー: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="処理に失敗しました。")
 
-# 修正: /api/fallbacks -> /
+# 修正: /api/fallbacks -> / （リクエストは Pydantic 必須・dict 禁止）
 @router.post("/")
-async def create_fallback(request: Dict[str, Any], user: dict = Depends(require_auth)):
+async def create_fallback(request: FallbackCreate, user: dict = Depends(require_auth)):
     """新しいQ&Aを作成"""
-    if not database.db_client or not settings.settings_manager: 
+    if not database.db_client or not settings.settings_manager:
         raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
-    
+
     try:
-        question_text = request.get("question")
-        answer_text = request.get("answer")
-        category_name = request.get("category_name")
-        
-        if not question_text or not answer_text or not category_name:
-             raise HTTPException(status_code=400, detail="必須項目が不足しています")
+        question_text = request.question.strip()
+        answer_text = request.answer.strip()
+        category_name = request.category_name.strip()
 
         embedding = None
         try:
-            embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
-            clean_question = question_text.strip()
+            embedding_model = settings.settings_manager.settings.get("embedding_model", "models/gemini-embedding-001")
             embedding_response = genai.embed_content(
                 model=embedding_model,
-                content=clean_question
+                content=question_text
             )
             embedding = embedding_response["embedding"]
         except Exception as e:
@@ -69,47 +65,46 @@ async def create_fallback(request: Dict[str, Any], user: dict = Depends(require_
             "category_name": category_name,
             "embedding": embedding
         }
-        
         result = database.db_client.client.table("category_fallbacks").insert(insert_data).execute()
         return {"message": "保存しました", "fallback": result.data[0]}
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"作成エラー: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="処理に失敗しました。")
 
-# 修正: /api/fallbacks/{qa_id} -> /{qa_id}
+# 修正: /api/fallbacks/{qa_id} -> /{qa_id} （リクエストは Pydantic 必須・dict 禁止）
 @router.put("/{qa_id}")
-async def update_fallback(qa_id: int, request: Dict[str, Any], user: dict = Depends(require_auth)):
-    """Q&Aを更新"""
+async def update_fallback(qa_id: int, request: FallbackUpdate, user: dict = Depends(require_auth)):
+    """Q&Aを更新（部分更新可）"""
     if not database.db_client or not settings.settings_manager:
         raise HTTPException(503, "DBまたは設定マネージャーが初期化されていません")
+
+    update_data = request.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="更新するフィールドがありません")
+
     try:
-        update_data = {}
-        
-        if "question" in request:
-            new_question = request["question"]
-            if not new_question or not new_question.strip():
+        if "question" in update_data:
+            new_question = (update_data["question"] or "").strip()
+            if not new_question:
                 raise HTTPException(status_code=400, detail="question cannot be empty")
             update_data["question"] = new_question
-            
-            embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
+            embedding_model = settings.settings_manager.settings.get("embedding_model", "models/gemini-embedding-001")
             try:
-                clean_question = new_question.strip()
                 embedding_response = genai.embed_content(
                     model=embedding_model,
-                    content=clean_question
+                    content=new_question
                 )
                 update_data["embedding"] = embedding_response["embedding"]
             except Exception as e:
                 logging.error(f"ベクトル更新エラー: {e}")
                 update_data["embedding"] = None
 
-        if "answer" in request:
-            update_data["answer"] = request["answer"]
-        if "category_name" in request:
-            update_data["category_name"] = request["category_name"]
-
         result = database.db_client.client.table("category_fallbacks").update(update_data).eq("id", qa_id).execute()
         return {"message": "更新しました", "fallback": result.data[0]}
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"更新エラー: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="処理に失敗しました。")
@@ -140,7 +135,7 @@ async def vectorize_all_missing_fallbacks(user: dict = Depends(require_auth)):
         if not response.data:
             return {"message": "データがありません。"}
 
-        embedding_model = settings.settings_manager.settings.get("embedding_model", "text-embedding-004")
+        embedding_model = settings.settings_manager.settings.get("embedding_model", "models/gemini-embedding-001")
         count = 0
         
         for item in response.data:

@@ -106,8 +106,9 @@ if not SUPABASE_SERVICE_KEY:
 
 
 # ----------------------------------------------------------------
-# 6. その他定数
+# 6. その他定数 (main.py で os.getenv を直接使わないため PORT をここで定義)
 # ----------------------------------------------------------------
+PORT = int(os.getenv("PORT", "8000"))
 ACTIVE_COLLECTION_NAME = "student-knowledge-base"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JST = timezone(timedelta(hours=+9), 'JST')

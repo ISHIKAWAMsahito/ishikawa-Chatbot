@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.config import BASE_DIR, JST
 from core.dependencies import require_auth, require_auth_client
@@ -26,7 +26,7 @@ router = APIRouter()
 class FeedbackRequest(BaseModel):
     feedback_id: str
     rating: str
-    comment: str = ""
+    comment: str = Field("", max_length=2000)
 
 # ==========================================
 # 3. ロジッククラス (元のコード)

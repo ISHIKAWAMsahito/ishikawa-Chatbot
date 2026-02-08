@@ -10,7 +10,7 @@ class SettingsManager:#ここから、「設定管理者という役割（クラ
     """設定管理クラス"""
     def __init__(self):
         self.settings = {
-            "model": "gemini-2.5-flash",
+            "model": "models/gemini-2.5-flash",
             "collection": ACTIVE_COLLECTION_NAME,
             "embedding_model": "models/gemini-embedding-001",  # ✅ 3072次元対応モデルに変更
             "top_k": 5
