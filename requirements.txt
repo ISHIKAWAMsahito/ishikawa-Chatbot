@@ -4,7 +4,10 @@ pydantic==2.11.9
 python-multipart==0.0.20
 uvicorn==0.34.2
 requests==2.32.5
-httpx 
+httpx>=0.27.0        # バージョンを明示推奨
+h11>=0.16.0          # 【追加】CWE-444 (HTTP Request Smuggling) 修正
+anyio>=4.4.0         # 【追加】CWE-362 (Race Condition) 修正
+zipp>=3.19.1         # 【追加】CWE-835 (Infinite loop) 修正
 beautifulsoup4
 
 # --- 認証 & セキュリティ ---
@@ -19,7 +22,8 @@ google-generativeai==0.8.5
 supabase==2.24.0
 
 # --- ドキュメント処理 (軽量版) ---
-PyPDF2==3.0.1
+# PyPDF2==3.0.1      # 【削除】脆弱性あり・開発終了のため削除
+pypdf>=5.0.0         # 【追加】PyPDF2の後継ライブラリ (DoS脆弱性修正済み)
 python-docx==1.2.0
 langchain-text-splitters
 
