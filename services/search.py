@@ -186,25 +186,43 @@ class SearchService:
     # ----------------------------------------------------------------
     # URL生成ヘルパー (★追加)
     # ----------------------------------------------------------------
-    async def _enrich_with_urls(self, documents: List[Dict]) -> List[Dict]:
-        """ドキュメントに署名付きURLを付与する"""
-        for doc in documents:
-            meta = doc.get('metadata', {})
-            source_path = meta.get('source')
+    async def _enrich_with_urls(self, documents: List[SearchResult]) -> List[SearchResult]:  # noqa: F821
+        """
+        検索結果のドキュメントに署名付きURLを付与する。
+        詳細なログを出力し、トラブルシューティングを容易にする。
+        """
+        logger.info(f"Starting URL enrichment for {len(documents)} documents.")
+        
+        for i, doc in enumerate(documents):
+            source_path = doc.metadata.source
             
-            # sourceがあり、かつURLがまだない場合
-            if source_path and not meta.get('url'):
-                try:
-                    # ストレージからURLを生成 (有効期限1時間など)
-                    # source_path が "pdfs/syllabus.pdf" のような形式であることを想定
-                    url = await generate_signed_url(source_path)
-                    if url:
-                        meta['url'] = url
-                        logger.info(f"Generated URL for {source_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to generate URL for {source_path}: {e}")
-            
-            doc['metadata'] = meta
+            # 1. sourceパスの有無を確認
+            if not source_path:
+                logger.warning(f"[Doc {i}] 'source' metadata is missing or empty. Skipping URL generation.")
+                continue
+
+            # 2. 既にURLがある場合はスキップ（二重生成防止）
+            if doc.metadata.url:
+                logger.debug(f"[Doc {i}] URL already exists for {source_path}. Skipping.")
+                continue
+
+            try:
+                # 3. URL生成の試行
+                logger.debug(f"[Doc {i}] Generating signed URL for: {source_path}")
+                
+                # generate_signed_url は services.storage からインポートされている前提
+                signed_url = await generate_signed_url(source_path)
+                
+                if signed_url:
+                    doc.metadata.url = signed_url
+                    logger.info(f"[Doc {i}] ✅ Successfully generated URL for: {source_path}")
+                else:
+                    logger.warning(f"[Doc {i}] ⚠️ URL generation returned empty for: {source_path}")
+                    
+            except Exception as e:
+                logger.error(f"[Doc {i}] ❌ Error generating URL for {source_path}: {e}", exc_info=True)
+                # エラー時はURLなしで続行（検索結果自体は返す）
+
         return documents
 
     # ----------------------------------------------------------------
