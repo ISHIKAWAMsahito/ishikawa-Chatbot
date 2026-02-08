@@ -7,13 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from dotenv import load_dotenv
 
-# coreモジュールのインポート
+# coreモジュールのインポート (AI_CONTEXT: os.getenv は core.config の定数を使用)
 from core.database import db_client
 from core import settings as core_settings
-# SettingsManagerクラスをインポート
-from core.settings import SettingsManager 
+from core.config import SECRET_KEY, APP_SECRET_KEY, IS_PRODUCTION, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, PORT
+from core.settings import SettingsManager
+from core.ws_auth import validate_ws_token
 
-# APIルーターのインポート (★修正: documents を追加)
+# APIルーターのインポート
 from api import chat, feedback, system, auth, documents
 
 # .env ファイルの読み込み
@@ -29,9 +30,24 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """アプリケーションのライフサイクル管理"""
+    """アプリケーションのライフサイクル管理 (Fail Fast: 本番で必須設定欠落時は起動停止)"""
     logger.info("🚀 Starting up University Support AI...")
-    
+
+    # 0. 本番環境では必須環境変数を厳格チェック (Fail Fast)
+    if IS_PRODUCTION:
+        if not APP_SECRET_KEY:
+            logger.error("❌ APP_SECRET_KEY must be set in production (RENDER). Aborting.")
+            raise ValueError("APP_SECRET_KEY must be set in production.")
+        if not GEMINI_API_KEY:
+            logger.error("❌ GEMINI_API_KEY must be set in production. Aborting.")
+            raise ValueError("GEMINI_API_KEY must be set in production.")
+        if not SUPABASE_URL:
+            logger.error("❌ SUPABASE_URL must be set in production. Aborting.")
+            raise ValueError("SUPABASE_URL must be set in production.")
+        if not SUPABASE_SERVICE_KEY:
+            logger.error("❌ SUPABASE_SERVICE_KEY must be set in production. Aborting.")
+            raise ValueError("SUPABASE_SERVICE_KEY must be set in production.")
+
     # 1. Supabaseクライアントの初期化確認
     if db_client.client:
         logger.info("✅ Supabase client initialized successfully.")
@@ -40,14 +56,14 @@ async def lifespan(app: FastAPI):
 
     # 2. SettingsManager の初期化
     try:
-        # settings.py の定義に合わせて、引数なしで初期化します
         core_settings.settings_manager = SettingsManager()
         logger.info("✅ Settings Manager initialized.")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Settings Manager: {e}", exc_info=True)
+        raise
 
     yield
-    
+
     logger.info("👋 Shutting down...")
 
 app = FastAPI(
@@ -67,17 +83,13 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------
-# 環境変数名の不一致を解消 (Render対応)
+# セッション (core.config の定数を使用、本番では APP_SECRET_KEY 必須)
 # ---------------------------------------------------------
-# Renderのスクリーンショットにある "APP_SECRET_KEY" を読み込みます
-secret_key = os.getenv("APP_SECRET_KEY") or os.getenv("SECRET_KEY", "default-insecure-key")
-is_production = os.getenv("RENDER") is not None
-
 app.add_middleware(
-    SessionMiddleware, 
-    secret_key=secret_key,
-    https_only=is_production, # 本番環境(Render)ではHTTPS必須
-    same_site="lax"           # CSRF対策
+    SessionMiddleware,
+    secret_key=SECRET_KEY,
+    https_only=bool(IS_PRODUCTION),
+    same_site="lax",
 )
 
 # 静的ファイルの配信
@@ -108,27 +120,27 @@ app.include_router(documents.router, prefix="/api/admin/documents", tags=["Docum
 app.include_router(auth.router, tags=["Auth"])
 
 # ---------------------------------------------------------
-# WebSocket エンドポイント (設定同期用)
+# WebSocket エンドポイント (設定同期用・管理者認証必須)
 # ---------------------------------------------------------
 @app.websocket("/ws/settings")
 async def websocket_settings(websocket: WebSocket):
-    """設定画面(admin.html)とのリアルタイム通信用WebSocket"""
-    
-    # 初期化チェック
+    """設定画面(admin.html)とのリアルタイム通信用WebSocket。?token=xxx で管理者トークン必須。"""
+    token = websocket.query_params.get("token")
+    if not validate_ws_token(token):
+        logger.warning("WebSocket /ws/settings: 無効または期限切れのトークンで拒否")
+        await websocket.close(code=1008)
+        return
+
     if not core_settings.settings_manager:
         logger.error("❌ Settings manager is STILL not initialized.")
         await websocket.close(code=1000)
         return
 
     try:
-        # settings.py のメソッド名 'add_websocket' を使用
         await core_settings.settings_manager.add_websocket(websocket)
         logger.info("✅ WebSocket client connected.")
-        
         while True:
-            # 切断検知のためにメッセージ待ち
             await websocket.receive_text()
-            
     except WebSocketDisconnect:
         # settings.py のメソッド名 'remove_websocket' を使用
         if core_settings.settings_manager:
@@ -158,5 +170,4 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=True)

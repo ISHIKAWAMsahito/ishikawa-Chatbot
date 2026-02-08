@@ -734,11 +734,31 @@ body.dark-mode .total-chunks-info {
 
         function connectSettingsWebSocket() {
             try {
-                // 通信プロトコルの決定（httpsならwss、httpならws）
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
-                console.log(`📡 WebSocket接続試行中... (${wsUrl})`);
-                settingsSocket = new WebSocket(wsUrl);
+                // 管理者認証: 短期トークンを取得してから WebSocket 接続（認可必須）
+                fetch('/api/admin/system/ws-token', { credentials: 'include' })
+                    .then(r => r.ok ? r.json() : Promise.reject(new Error('ws-token failed')))
+                    .then(data => {
+                        const token = data.token;
+                        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                        const wsUrl = `${protocol}//${window.location.host}/ws/settings?token=${encodeURIComponent(token)}`;
+                        console.log('📡 WebSocket接続試行中... (token取得済み)');
+                        settingsSocket = new WebSocket(wsUrl);
+                        attachWebSocketHandlers();
+                    })
+                    .catch(err => {
+                        console.warn('WebSocket用トークン取得失敗（未ログインまたは権限なし）:', err);
+                        updateSyncStatus(false, '設定同期: 認証が必要です');
+                        setTimeout(connectSettingsWebSocket, 5000);
+                    });
+            } catch (error) {
+                console.error('🚨 WebSocket初期化中に重大なエラーが発生:', error);
+                updateSyncStatus(false, '接続初期化失敗');
+                setTimeout(connectSettingsWebSocket, 5000);
+            }
+        }
+
+        function attachWebSocketHandlers() {
+            if (!settingsSocket) return;
 
                 // --- 1. 接続成功時の処理 ---
                 settingsSocket.onopen = function() {
@@ -781,17 +801,8 @@ body.dark-mode .total-chunks-info {
 
                 // --- 4. エラー発生時の処理 ---
                 settingsSocket.onerror = function(error) {
-                    // onerrorの直後には必ずoncloseが呼ばれるため、
-                    // ここで再接続ロジックを書くと二重に実行されてしまうのでログ出力のみに留める
                     console.error('❌ 設定同期WebSocketエラーが発生しました');
                 };
-
-            } catch (error) {
-                console.error('🚨 WebSocket初期化中に重大なエラーが発生:', error);
-                updateSyncStatus(false, '接続初期化失敗');
-                // 初期化失敗時も5秒後に一度リトライ
-                setTimeout(connectSettingsWebSocket, 5000);
-            }
         }
 
         function updateSyncStatus(connected, message) {

@@ -1,4 +1,5 @@
-from typing import Optional, Any
+from typing import Optional
+from datetime import datetime
 from pydantic import BaseModel, Field
 
 # -----------------------------------------------------------------------------
@@ -38,7 +39,7 @@ class FeedbackCreate(BaseModel):
     api/chat.py で FeedbackCreate としてインポートされているため、このクラス名が必要です。
     """
     rating: str = Field(..., description="評価 ('good', 'bad' など)")
-    comment: Optional[str] = Field(None, description="ユーザーからのコメント")
+    comment: Optional[str] = Field(None, max_length=2000, description="ユーザーからのコメント（DoS対策）")
 
     class Config:
         json_schema_extra = {
@@ -50,16 +51,41 @@ class FeedbackCreate(BaseModel):
 
 class FeedbackRead(BaseModel):
     """
-    フィードバック返却（表示）用スキーマ
+    フィードバック返却（表示）用スキーマ（型安全性: created_at は datetime に具体化）
     """
     id: int
     session_id: str
     rating: str
     comment: Optional[str]
-    created_at: Any 
+    created_at: datetime = Field(..., description="作成日時（型安全性のため Any 禁止）")
 
     class Config:
         from_attributes = True 
+
+# -----------------------------------------------------------------------------
+# Fallbacks (Q&A) — API 入出力は Pydantic 必須（dict 禁止）
+# -----------------------------------------------------------------------------
+class FallbackCreate(BaseModel):
+    """フォールバック Q&A 作成用（DoS対策: max_length 付与）"""
+    question: str = Field(..., min_length=1, max_length=2000)
+    answer: str = Field(..., min_length=1, max_length=10000)
+    category_name: str = Field(..., min_length=1, max_length=256)
+
+
+class FallbackUpdate(BaseModel):
+    """フォールバック Q&A 更新用（部分更新・任意フィールド）"""
+    question: Optional[str] = Field(None, min_length=1, max_length=2000)
+    answer: Optional[str] = Field(None, min_length=1, max_length=10000)
+    category_name: Optional[str] = Field(None, min_length=1, max_length=256)
+
+
+# -----------------------------------------------------------------------------
+# System / Collections
+# -----------------------------------------------------------------------------
+class CreateCollectionRequest(BaseModel):
+    """コレクション作成リクエスト（API 入出力は Pydantic 必須のため dict 禁止）"""
+    name: Optional[str] = Field(None, max_length=256, description="コレクション名（将来用）")
+
 
 # -----------------------------------------------------------------------------
 # System Settings Models
