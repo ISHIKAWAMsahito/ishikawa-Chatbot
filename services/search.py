@@ -15,6 +15,15 @@ from services.llm import LLMService
 from services import prompts
 from core.database import db_client
 from core.config import GEMINI_API_KEY
+# ★追加: Storage操作用 (services/storage.py がある前提)
+# もし generate_signed_url という関数名が異なる場合は修正してください
+try:
+    from services.storage import generate_signed_url
+except ImportError:
+    # ファイルがない場合のダミー関数 (エラー回避用)
+    async def generate_signed_url(path: str) -> str:
+        logger.warning("Storage service not found. URL generation skipped.")
+        return ""
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +184,31 @@ class SearchService:
         return unique_docs
 
     # ----------------------------------------------------------------
-    # 統合検索メソッド (★修正済み)
+    # URL生成ヘルパー (★追加)
+    # ----------------------------------------------------------------
+    async def _enrich_with_urls(self, documents: List[Dict]) -> List[Dict]:
+        """ドキュメントに署名付きURLを付与する"""
+        for doc in documents:
+            meta = doc.get('metadata', {})
+            source_path = meta.get('source')
+            
+            # sourceがあり、かつURLがまだない場合
+            if source_path and not meta.get('url'):
+                try:
+                    # ストレージからURLを生成 (有効期限1時間など)
+                    # source_path が "pdfs/syllabus.pdf" のような形式であることを想定
+                    url = await generate_signed_url(source_path)
+                    if url:
+                        meta['url'] = url
+                        logger.info(f"Generated URL for {source_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to generate URL for {source_path}: {e}")
+            
+            doc['metadata'] = meta
+        return documents
+
+    # ----------------------------------------------------------------
+    # 統合検索メソッド
     # ----------------------------------------------------------------
     @traceable(name="Search_Pipeline", run_type="chain")
     async def search(
@@ -184,7 +217,6 @@ class SearchService:
         session_id: str, 
         collection_name: str, 
         top_k: int = 5,
-        # ★以下の引数を追加してエラーを回避
         embedding_model: str = "models/text-embedding-004",
         hybrid_weight: float = 0.5,
         **kwargs
@@ -195,7 +227,7 @@ class SearchService:
             expanded_query = await self.expand_query(query)
             logger.info(f"Expanded Query: {expanded_query}")
 
-            # 2. Embedding生成 (渡されたモデルがあればそれを使う)
+            # 2. Embedding生成
             query_embedding = await self.get_embedding(expanded_query, model=embedding_model)
             if not query_embedding:
                 logger.error("Failed to generate embedding.")
@@ -239,7 +271,10 @@ class SearchService:
             # 6. Diversity Filter
             final_docs = self.filter_diversity(reordered_docs, threshold=0.7)
 
-            return {"documents": final_docs}
+            # ★追加: 7. URL生成 (署名付きURLを付与)
+            final_docs_with_urls = await self._enrich_with_urls(final_docs)
+
+            return {"documents": final_docs_with_urls}
 
         except Exception as e:
             logger.error(f"Search pipeline error: {e}", exc_info=True)
