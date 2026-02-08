@@ -19,7 +19,7 @@
                 const { createClient } = supabase;
 
                 // 設定を取得
-                const response = await fetch('/api/client/chat/config');
+                const response = await fetch('/api/client/config');
                 if (!response.ok) {
                     console.error(`API Error: ${response.status}`);
                     throw new Error('設定の読み込みに失敗しました。');

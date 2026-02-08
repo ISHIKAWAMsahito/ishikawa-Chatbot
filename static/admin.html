@@ -688,7 +688,7 @@ body.dark-mode .total-chunks-info {
     async function initializeSupabase() {
         try {
             // クライアント用と同じ設定エンドポイントを利用します
-            const response = await fetch('/api/client/chat/config');
+            const response = await fetch('/api/client/config');
             if (!response.ok) return;
             const config = await response.json();
             if (config.supabase_url && config.supabase_anon_key) {
