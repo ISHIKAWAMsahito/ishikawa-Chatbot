@@ -90,3 +90,8 @@ upload_script.py
 pdf_to_jpg.py
 update_vectors_gemini.py
 upload_images.py
+# AI 関連の一時ファイル
+.anthropic/
+.chat_history/
+# Cursor の一時的なインデックスファイルなど
+.cursor/

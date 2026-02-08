@@ -5,7 +5,7 @@ services:
     restart: always
     # .envファイルから環境変数を読み込む
     env_file:
-      - .env
+      - ishikawa-Chatbot.env
     ports:
       - "8000:8000"
     volumes:
