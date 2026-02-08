@@ -439,10 +439,18 @@
 
         function displayDocuments(documents) {
             const tbody = document.getElementById('documentsBody');
-            tbody.innerHTML = '';
+            tbody.innerHTML = ''; // クリアはOK
             
             if (documents.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 20px; color: #6c757d;">該当するドキュメントが見つかりません。</td></tr>';
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = 6;
+                td.style.textAlign = 'center';
+                td.style.padding = '20px';
+                td.style.color = '#6c757d';
+                td.textContent = '該当するドキュメントが見つかりません。';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
                 return;
             }
 
@@ -450,6 +458,7 @@
                 const tr = document.createElement('tr');
                 const created = doc.created_at ? new Date(doc.created_at).toLocaleString('ja-JP') : 'N/A';
                 
+                // カテゴリーフィルタの更新
                 if (doc.metadata?.category && !docCategories.has(doc.metadata.category)) {
                     docCategories.add(doc.metadata.category);
                     const option = document.createElement('option');
@@ -458,19 +467,63 @@
                     document.getElementById('categoryFilter').appendChild(option);
                 }
 
-                tr.innerHTML = `
-                    <td>${doc.id}</td>
-                    <td><span class="metadata">${doc.metadata?.category || 'その他'}</span></td>
-                    <td><span class="metadata">${escapeHtml(doc.metadata?.source || 'N/A')}</span></td>
-                    <td><div class="content-preview">${escapeHtml(doc.content || '')}</div></td>
-                    <td><span class="metadata">${created}</span></td>
-                    <td>
-                        <div class="action-buttons">
-                            <button class="action-btn edit" onclick="editDocument(${doc.id})" aria-label="編集">編集</button>
-                            <button class="action-btn delete" onclick="deleteDocument(${doc.id})" aria-label="削除">削除</button>
-                        </div>
-                    </td>
-                `;
+                // ID
+                const tdId = document.createElement('td');
+                tdId.textContent = doc.id;
+                tr.appendChild(tdId);
+
+                // カテゴリー
+                const tdCat = document.createElement('td');
+                const spanCat = document.createElement('span');
+                spanCat.className = 'metadata';
+                spanCat.textContent = doc.metadata?.category || 'その他';
+                tdCat.appendChild(spanCat);
+                tr.appendChild(tdCat);
+
+                // ソース
+                const tdSource = document.createElement('td');
+                const spanSource = document.createElement('span');
+                spanSource.className = 'metadata';
+                spanSource.textContent = doc.metadata?.source || 'N/A';
+                tdSource.appendChild(spanSource);
+                tr.appendChild(tdSource);
+
+                // コンテンツ
+                const tdContent = document.createElement('td');
+                const divContent = document.createElement('div');
+                divContent.className = 'content-preview';
+                divContent.textContent = doc.content || '';
+                tdContent.appendChild(divContent);
+                tr.appendChild(tdContent);
+
+                // 作成日時
+                const tdDate = document.createElement('td');
+                const spanDate = document.createElement('span');
+                spanDate.className = 'metadata';
+                spanDate.textContent = created;
+                tdDate.appendChild(spanDate);
+                tr.appendChild(tdDate);
+
+                // 操作ボタン
+                const tdAction = document.createElement('td');
+                const divAction = document.createElement('div');
+                divAction.className = 'action-buttons';
+
+                const btnEdit = document.createElement('button');
+                btnEdit.className = 'action-btn edit';
+                btnEdit.textContent = '編集';
+                btnEdit.onclick = () => editDocument(doc.id);
+                divAction.appendChild(btnEdit);
+
+                const btnDelete = document.createElement('button');
+                btnDelete.className = 'action-btn delete';
+                btnDelete.textContent = '削除';
+                btnDelete.onclick = () => deleteDocument(doc.id);
+                divAction.appendChild(btnDelete);
+
+                tdAction.appendChild(divAction);
+                tr.appendChild(tdAction);
+
                 tbody.appendChild(tr);
             });
         }
@@ -614,35 +667,84 @@
         function displayQA(qaList) {
             const tbody = document.getElementById('qaBody');
             tbody.innerHTML = '';
+            
             qaList.forEach(qa => {
                 const tr = document.createElement('tr');
                 const created = qa.created_at ? new Date(qa.created_at).toLocaleString('ja-JP') : 'N/A';
                 
-                let embeddingStatus;
+                // ID
+                const tdId = document.createElement('td');
+                tdId.textContent = qa.id;
+                tr.appendChild(tdId);
+
+                // カテゴリー
+                const tdCat = document.createElement('td');
+                const spanCat = document.createElement('span');
+                spanCat.className = 'metadata';
+                spanCat.textContent = qa.category_name || '未分類';
+                tdCat.appendChild(spanCat);
+                tr.appendChild(tdCat);
+
+                // 質問・回答
+                const tdQA = document.createElement('td');
+                const divQ = document.createElement('div');
+                divQ.className = 'content-preview';
+                divQ.style.fontWeight = '600';
+                divQ.textContent = `Q: ${qa.question || ''}`;
+                tdQA.appendChild(divQ);
+
+                const divA = document.createElement('div');
+                divA.className = 'content-preview';
+                divA.style.opacity = '0.8';
+                divA.style.marginTop = '4px';
+                divA.textContent = `A: ${qa.answer || ''}`;
+                tdQA.appendChild(divA);
+                tr.appendChild(tdQA);
+
+                // ベクトル状態
+                const tdEmbed = document.createElement('td');
+                let embeddingStatusSpan = document.createElement('span');
                 if (qa.embedding && qa.embedding.length > 0) {
-                     embeddingStatus = '<span class="embedding-status ok">OK</span>';
+                     embeddingStatusSpan.className = 'embedding-status ok';
+                     embeddingStatusSpan.textContent = 'OK';
                 } else if (allQA.length > 0 && typeof qa.embedding === 'undefined') {
-                    embeddingStatus = '<span class="metadata">--</span>';
+                    embeddingStatusSpan.className = 'metadata';
+                    embeddingStatusSpan.textContent = '--';
                 } else {
-                     embeddingStatus = '<span class="embedding-status ng">未処理</span>';
+                     embeddingStatusSpan.className = 'embedding-status ng';
+                     embeddingStatusSpan.textContent = '未処理';
                 }
-                
-                tr.innerHTML = `
-                    <td>${qa.id}</td>
-                    <td><span class="metadata">${escapeHtml(qa.category_name || '未分類')}</span></td>
-                    <td>
-                        <div class="content-preview" style="font-weight: 600;">Q: ${escapeHtml(qa.question || '')}</div>
-                        <div class="content-preview" style="opacity: 0.8; margin-top: 4px;">A: ${escapeHtml(qa.answer || '')}</div>
-                    </td>
-                    <td>${embeddingStatus}</td>
-                    <td><span class="metadata">${created}</span></td>
-                    <td>
-                        <div class="action-buttons">
-                            <button class="action-btn edit" onclick="editQA(${qa.id})" aria-label="編集">編集</button>
-                            <button class="action-btn delete" onclick="deleteQA(${qa.id})" aria-label="削除">削除</button>
-                        </div>
-                    </td>
-                `;
+                tdEmbed.appendChild(embeddingStatusSpan);
+                tr.appendChild(tdEmbed);
+
+                // 作成日時
+                const tdDate = document.createElement('td');
+                const spanDate = document.createElement('span');
+                spanDate.className = 'metadata';
+                spanDate.textContent = created;
+                tdDate.appendChild(spanDate);
+                tr.appendChild(tdDate);
+
+                // 操作ボタン
+                const tdAction = document.createElement('td');
+                const divAction = document.createElement('div');
+                divAction.className = 'action-buttons';
+
+                const btnEdit = document.createElement('button');
+                btnEdit.className = 'action-btn edit';
+                btnEdit.textContent = '編集';
+                btnEdit.onclick = () => editQA(qa.id);
+                divAction.appendChild(btnEdit);
+
+                const btnDelete = document.createElement('button');
+                btnDelete.className = 'action-btn delete';
+                btnDelete.textContent = '削除';
+                btnDelete.onclick = () => deleteQA(qa.id);
+                divAction.appendChild(btnDelete);
+
+                tdAction.appendChild(divAction);
+                tr.appendChild(tdAction);
+
                 tbody.appendChild(tr);
             });
         }

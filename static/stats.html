@@ -280,6 +280,7 @@
     }
 
     // 画面描画
+    // 画面描画
     function renderDashboard(data) {
         // KPI計算
         const total = data.length;
@@ -297,26 +298,50 @@
         document.getElementById('goodCountSub').textContent = `Good: ${good} / Bad: ${bad}`;
         document.getElementById('weeklyCount').textContent = weekly + "件";
 
-        // テーブル描画
+        // テーブル描画（Snyk対策: innerHTMLを使わずDOM構築）
         const tbody = document.getElementById('dataTableBody');
         tbody.innerHTML = '';
         
         if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">データがありません</td></tr>';
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = 3;
+            td.style.textAlign = 'center';
+            td.textContent = 'データがありません';
+            tr.appendChild(td);
+            tbody.appendChild(tr);
         } else {
             data.forEach(item => {
                 const tr = document.createElement('tr');
                 const date = new Date(item.created_at).toLocaleString('ja-JP');
-                const ratingIcon = item.rating === 'good' ? '<span style="color:#28a745">👍 Good</span>' : '<span style="color:#dc3545">👎 Bad</span>';
                 
-                // commentカラムの内容を表示（これが会話ログ）
-                const logContent = item.comment || "(ログなし)";
-                
-                tr.innerHTML = `
-                    <td class="col-date">${date}</td>
-                    <td class="col-rating">${ratingIcon}</td>
-                    <td class="col-log">${escapeHtml(logContent)}</td>
-                `;
+                // 日時
+                const tdDate = document.createElement('td');
+                tdDate.className = 'col-date';
+                tdDate.textContent = date;
+                tr.appendChild(tdDate);
+
+                // 評価
+                const tdRating = document.createElement('td');
+                tdRating.className = 'col-rating';
+                const spanRating = document.createElement('span');
+                if (item.rating === 'good') {
+                    spanRating.style.color = '#28a745';
+                    spanRating.textContent = '👍 Good';
+                } else {
+                    spanRating.style.color = '#dc3545';
+                    spanRating.textContent = '👎 Bad';
+                }
+                tdRating.appendChild(spanRating);
+                tr.appendChild(tdRating);
+
+                // ログ/コメント
+                const tdLog = document.createElement('td');
+                tdLog.className = 'col-log';
+                // user input (comment) を textContent でセットすることでXSSを完全無効化
+                tdLog.textContent = item.comment || "(ログなし)";
+                tr.appendChild(tdLog);
+
                 tbody.appendChild(tr);
             });
         }
