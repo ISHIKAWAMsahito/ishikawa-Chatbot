@@ -37,7 +37,7 @@ if not GEMINI_API_KEY:
 
 # ★追加: 検索に使用する埋め込みモデルのデフォルト値
 # search.py から参照されるため必須です。
-EMBEDDING_MODEL_DEFAULT = "models/text-embedding-004"
+EMBEDDING_MODEL_DEFAULT = "models/gemini-embedding-001"
 
 # ----------------------------------------------------------------
 # 3. LangSmith (LangChain) 設定
