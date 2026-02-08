@@ -70,10 +70,10 @@ services:
 
 
 🔒 セキュリティ
+-メールアドレス全体でチェックする認証機能
 - 学生: client.html
 - 管理者: admin.html / DB.html / stats.html
 - 個人情報入力は禁止（氏名・学籍番号など）
 
 📈 今後の改善予定
 - 音声入力・多言語対応
-- LINE連携
