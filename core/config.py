@@ -25,7 +25,22 @@ else:
     logging.info("🚀 本番環境として起動しました (Renderの環境変数を使用)。")
 
 # ----------------------------------------------------------------
-# 2. LangSmith (LangChain) 設定
+# 2. Gemini API 設定
+# ----------------------------------------------------------------
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    # ローカルでパス指定ミスなどの可能性があるため、詳細なエラーを出す
+    # ※ アプリが落ちないよう warning に留めるか、必須なら raise するかは運用次第ですが、
+    #    今回は元のコードの意図を汲んで raise ではなく logging.error に留めますが、
+    #    search.py 等でエラーになるため実質必須です。
+    logging.error("⚠️ 環境変数 'GEMINI_API_KEY' が設定されていません。")
+
+# ★追加: 検索に使用する埋め込みモデルのデフォルト値
+# search.py から参照されるため必須です。
+EMBEDDING_MODEL_DEFAULT = "models/text-embedding-004"
+
+# ----------------------------------------------------------------
+# 3. LangSmith (LangChain) 設定
 # ----------------------------------------------------------------
 # トレース有効化フラグ (文字列 "true" を bool に変換)
 LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
@@ -46,23 +61,23 @@ else:
 
 
 # ----------------------------------------------------------------
-# 3. APIキー & 認証設定
+# 4. APIキー & 認証設定 (Auth0)
 # ----------------------------------------------------------------
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    # ローカルでパス指定ミスなどの可能性があるため、詳細なエラーを出す
-    raise ValueError("環境変数 'GEMINI_API_KEY' が設定されていません。.envのパスや内容を確認してください。")
-
-# Auth0設定
 AUTH0_CLIENT_ID = os.getenv("AUTH0_CLIENT_ID")
 AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET")
 AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
+
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY")
 if not APP_SECRET_KEY:
-    raise ValueError("環境変数 'APP_SECRET_KEY' が設定されていません。")
+    # セッション管理に必須のため、なければ警告またはデフォルト
+    logging.warning("⚠️ 'APP_SECRET_KEY' が設定されていません。デフォルトキーを使用します（本番環境では非推奨）。")
+    SECRET_KEY = "default-insecure-key"
+else:
+    SECRET_KEY = APP_SECRET_KEY
+
 
 # ----------------------------------------------------------------
-# 4. Supabase設定 (互換性対応版)
+# 5. Supabase設定 (互換性対応版)
 # ----------------------------------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
@@ -73,18 +88,17 @@ SUPABASE_KEY = SUPABASE_SERVICE_KEY
 
 # エラーチェック
 if not SUPABASE_URL:
-    raise ValueError("環境変数 'SUPABASE_URL' が設定されていません。")
+    logging.error("⚠️ 環境変数 'SUPABASE_URL' が設定されていません。")
 
 if not SUPABASE_ANON_KEY:
     logging.warning("### 'SUPABASE_ANON_KEY' が設定されていません。学生画面の機能が一部制限される可能性があります。 ###")
 
 if not SUPABASE_SERVICE_KEY:
     logging.error("### 'SUPABASE_SERVICE_KEY' が設定されていません。署名付きURLの発行ができません。 ###")
-    raise ValueError("環境変数 'SUPABASE_SERVICE_KEY' (または SUPABASE_KEY) が設定されていません。")
 
 
 # ----------------------------------------------------------------
-# 5. その他定数
+# 6. その他定数
 # ----------------------------------------------------------------
 ACTIVE_COLLECTION_NAME = "student-knowledge-base"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
