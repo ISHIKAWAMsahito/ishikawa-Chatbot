@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI chatbot system【統計・分析】</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
     
 <style>
     /* --- デザイン設定 (admin.htmlと共通) --- */
@@ -383,41 +384,23 @@
             return;
         }
 
+        // UI更新（ボタン無効化・ロード表示）
         btn.disabled = true;
         btn.innerHTML = '<span>⏳ 分析中...</span>';
         resultDiv.textContent = "Geminiがデータを分析しています...";
 
-        // 分析用プロンプトの作成
-        const logsText = currentData.map(d => {
-            // commentカラムに会話ログが入っていることを明示して渡す
-            return `- 評価:${d.rating} | ログ内容:${d.comment}`;
-        }).join("\n");
-
-        const prompt = `
-あなたはチャットボットの管理者用分析AIです。
-以下の「フィードバック履歴（最新${currentData.length}件）」を分析し、レポートを作成してください。
-各ログの「ログ内容」には、ユーザーの質問とAIの回答が含まれています。
-
-内容は以下の3点を含めてください（Markdown形式）：
-1. **質問トレンド**: 学生はどのようなこと（例：履修登録、施設利用、サークル）について質問していますか？
-2. **評価分析**: Bad評価がついている場合、どのようなやり取りで発生していますか？
-3. **改善提案**: 回答精度を上げるために追加すべき情報や改善点。
-
-【フィードバック履歴】
-${logsText}
-        `;
-
         try {
-        // ★ここを修正！ URLの末尾を /analyze にする
-        const response = await fetch('/api/admin/chat/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}) 
-        });
+            // APIリクエスト
+            const response = await fetch('/api/admin/chat/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // サーバー側でデータを再取得・分析する仕様のため空オブジェクトを送信
+                body: JSON.stringify({}) 
+            });
 
             if (!response.ok) throw new Error("API Error");
 
-            // ストリーム読み込み
+            // ストリーミングレスポンスの読み込み処理
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let fullText = "";
@@ -437,15 +420,19 @@ ${logsText}
                 }
             }
 
-            // XSS対策: marked 出力から script と on* 属性を除去してから表示
-            let html = marked.parse(fullText || '');
-            html = (html || '').replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, '').replace(/\s+on\w+\s*=\s*[^\s>]*/gi, '');
-            resultDiv.innerHTML = html;
+            // ▼▼▼ Snyk対策 (CWE-79) 修正ポイント ▼▼▼
+            // 正規表現(.replace)ではなく、DOMPurify.sanitize()を使用する
+            const rawHtml = marked.parse(fullText || '');
+            const cleanHtml = DOMPurify.sanitize(rawHtml);
+            
+            resultDiv.innerHTML = cleanHtml;
+            // ▲▲▲ 修正ここまで ▲▲▲
 
         } catch (error) {
             console.error(error);
             resultDiv.textContent = "分析中にエラーが発生しました。バックエンドのログを確認してください。";
         } finally {
+            // UI復帰
             btn.disabled = false;
             btn.innerHTML = '<span>✨ 分析を実行する</span>';
         }

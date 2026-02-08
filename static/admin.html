@@ -890,26 +890,17 @@ body.dark-mode .total-chunks-info {
             messageWrapper.className = `message ${type}`;
             const messageContent = document.createElement('div');
             messageContent.className = 'message-content';
-            // XSS対策: 常にエスケープして表示（リンクは [text](url) 形式のみ安全に変換）
-            let out = '';
-            const linkRe = /\[([^\]]*)\]\((https?:\/\/[^\)]+)\)/g;
-            let m, lastIdx = 0;
-            while ((m = linkRe.exec(text)) !== null) {
-                out += escapeHtml(text.slice(lastIdx, m.index)).replace(/\n/g, '<br>');
-                if (isAllowedUrl(m[2])) {
-                    out += '<a href="' + escapeHtml(m[2]) + '" target="_blank" rel="noopener">' + escapeHtml(m[1]) + '</a>';
-                } else {
-                    out += escapeHtml(m[1]);
-                }
-                lastIdx = linkRe.lastIndex;
-            }
-            out += escapeHtml(text.slice(lastIdx)).replace(/\n/g, '<br>');
-            messageContent.innerHTML = out;
+            
+            // Snyk対策 (CWE-79): innerHTMLを使わずDOM操作でテキストとリンクを構築
+            renderSafeText(messageContent, text);
+
             messageWrapper.appendChild(messageContent);
+            
             const messageTime = document.createElement('div');
             messageTime.className = 'message-time';
             messageTime.textContent = new Date().toLocaleTimeString();
             messageWrapper.appendChild(messageTime);
+            
             chatMessages.appendChild(messageWrapper);
             chatMessages.scrollTop = chatMessages.scrollHeight;
             return messageWrapper;
@@ -1106,11 +1097,24 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                 if (botMessageElement.dataset.logId) {
                     const feedbackContainer = document.createElement('div');
                     feedbackContainer.className = 'feedback-container';
-                    feedbackContainer.innerHTML = `
-                        <span>この回答は役に立ちましたか？</span>
-                        <button class="feedback-btn" data-rating="good">👍</button>
-                        <button class="feedback-btn" data-rating="bad">👎</button>
-                    `;
+                    
+                    // Snyk対策: innerHTMLを使わずDOM要素作成
+                    const span = document.createElement('span');
+                    span.textContent = 'この回答は役に立ちましたか？';
+                    feedbackContainer.appendChild(span);
+
+                    const btnGood = document.createElement('button');
+                    btnGood.className = 'feedback-btn';
+                    btnGood.dataset.rating = 'good';
+                    btnGood.textContent = '👍';
+                    feedbackContainer.appendChild(btnGood);
+
+                    const btnBad = document.createElement('button');
+                    btnBad.className = 'feedback-btn';
+                    btnBad.dataset.rating = 'bad';
+                    btnBad.textContent = '👎';
+                    feedbackContainer.appendChild(btnBad);
+                    
                     botMessageElement.appendChild(feedbackContainer);
                 }
                 break;
@@ -1131,12 +1135,32 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                                 botMessageElement.dataset.logId = data.feedback_id;
                             }
                             // --- ★ここから追加: ステータスメッセージの処理 ---
+                            // --- ★修正: ステータスメッセージの処理 ---
                             if (data.status_message) {
-                                // ステータスメッセージで中身を上書き (XSS対策: エスケープ)
-                                botMessageContent.innerHTML = '<span class="status-pulse">' + escapeHtml(data.status_message) + '</span>';
-                                // チャット画面を最下部へスクロール
+                                // Snyk対策: innerHTMLを使わずDOM構築
+                                botMessageContent.innerHTML = ''; // クリア
+                                const span = document.createElement('span');
+                                span.className = 'status-pulse';
+                                span.textContent = data.status_message; // 安全
+                                botMessageContent.appendChild(span);
+                                
                                 if(chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
-                                continue; // コンテンツ処理はスキップして次のデータを待つ
+                                continue; 
+                            }
+
+                            // --- ★修正: コンテンツ（回答本文）の処理 ---
+                            if (data.content) {
+                                if (isFirstChunk) {
+                                    botMessageContent.textContent = ''; // テキストとしてクリア
+                                    isFirstChunk = false;
+                                }
+
+                                fullResponse += data.content;
+                                
+                                // Snyk対策: innerHTMLへの文字列結合をやめ、ヘルパー関数で安全にDOM更新
+                                renderSafeText(botMessageContent, fullResponse);
+                                
+                                if(chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
                             }
                             // --- ここまで ---
 
@@ -1268,6 +1292,35 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                 addMessage(`❌ 削除中に通信エラー: ${error.message}`, 'bot');
             }
         }
+// [追加] 文字列からリンクを安全にDOM化するヘルパー関数 (innerHTML不使用)
+    function renderSafeText(container, text) {
+        container.textContent = ''; // 内容をクリア
+        const linkRe = /\[([^\]]*)\]\((https?:\/\/[^\)]+)\)/g;
+        let lastIdx = 0;
+        let match;
+
+        while ((match = linkRe.exec(text)) !== null) {
+            // マッチする前のテキストを追加
+            if (match.index > lastIdx) {
+                container.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
+            }
+            // リンク要素を作成
+            const a = document.createElement('a');
+            a.textContent = match[1];
+            a.href = match[2]; // 自動的に安全な属性として扱われる
+            a.target = '_blank';
+            a.rel = 'noopener';
+            a.style.color = '#007bff';
+            a.style.textDecoration = 'underline';
+            container.appendChild(a);
+
+            lastIdx = linkRe.lastIndex;
+        }
+        // 残りのテキストを追加
+        if (lastIdx < text.length) {
+            container.appendChild(document.createTextNode(text.slice(lastIdx)));
+        }
+    }
 
         async function refreshCollections() {
             try {
