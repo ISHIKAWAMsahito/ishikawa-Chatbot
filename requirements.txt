@@ -23,7 +23,7 @@ supabase==2.24.0
 
 # --- ドキュメント処理 (軽量版) ---
 # PyPDF2==3.0.1      # 【削除】脆弱性あり・開発終了のため削除
-pypdf>=5.0.0         # 【追加】PyPDF2の後継ライブラリ (DoS脆弱性修正済み)
+pypdf>=6.6.2         # 【追加】PyPDF2の後継ライブラリ (DoS脆弱性修正済み)
 python-docx==1.2.0
 langchain-text-splitters
 
