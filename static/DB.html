@@ -424,7 +424,8 @@
 
             } catch (error) {
                 console.error('Error loading documents:', error);
-                loadingIndicator.innerHTML = 'データの読み込みに失敗しました。';
+                // Snyk対策 (CWE-79): innerHTML -> textContent
+                loadingIndicator.textContent = 'データの読み込みに失敗しました。';
             }
         }
         
@@ -605,7 +606,8 @@
                 table.style.display = 'table';
             } catch (error) {
                 console.error('Error loading Q&A:', error);
-                loadingIndicator.innerHTML = 'Q&Aの読み込みに失敗しました。';
+                // Snyk対策 (CWE-79): innerHTML -> textContent
+                loadingIndicator.textContent = 'Q&Aの読み込みに失敗しました。';
             }
         }
 

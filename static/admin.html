@@ -1521,13 +1521,35 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
 
         function displayImage(imageUrl) {
             const content = document.getElementById('imageModalContent');
+            content.innerHTML = ''; // コンテンツをクリア
+
             // XSS対策: 画像URLは https/http のみ許可
             if (!imageUrl || !isAllowedUrl(imageUrl)) {
-                content.innerHTML = '<div class="image-modal-error">無効な画像URLです。</div>';
+                const errDiv = document.createElement('div');
+                errDiv.className = 'image-modal-error';
+                errDiv.textContent = '無効な画像URLです。';
+                content.appendChild(errDiv);
                 return;
             }
-            const safeUrl = escapeHtml(imageUrl);
-            content.innerHTML = '<img src="' + safeUrl + '" alt="参照元画像" class="image-modal-image" onerror="this.parentElement.innerHTML=\'<div class=&#39;image-modal-error&#39;>画像の読み込みに失敗しました</div>\'">';
+            
+            // Snyk対策 (CWE-79): 文字列結合を避け、DOM要素として画像を生成
+            const img = document.createElement('img');
+            img.src = imageUrl;
+            img.alt = "参照元画像";
+            img.className = "image-modal-image";
+            
+            // エラーハンドリングもDOMプロパティで行う
+            img.onerror = function() {
+                // 親要素(content)の中身をエラーメッセージに差し替え
+                const parent = this.parentElement;
+                parent.innerHTML = '';
+                const errDiv = document.createElement('div');
+                errDiv.className = 'image-modal-error';
+                errDiv.textContent = '画像の読み込みに失敗しました';
+                parent.appendChild(errDiv);
+            };
+
+            content.appendChild(img);
         }
 
         window.closeImageModal = function() {

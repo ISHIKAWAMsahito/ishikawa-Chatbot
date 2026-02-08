@@ -265,8 +265,17 @@
 
         } catch (err) {
             console.error("Fetch error:", err);
-            document.getElementById('dataTableBody').innerHTML = 
-                `<tr><td colspan="3" style="color:red; text-align:center;">エラー: ${err.message}</td></tr>`;
+            // Snyk対策 (CWE-79): innerHTMLへの変数展開を避け、textContentを使用
+            const tbody = document.getElementById('dataTableBody');
+            tbody.innerHTML = ''; // クリア
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = 3;
+            td.style.color = 'red';
+            td.style.textAlign = 'center';
+            td.textContent = `エラー: ${err.message}`;
+            tr.appendChild(td);
+            tbody.appendChild(tr);
         }
     }
 

@@ -169,7 +169,7 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
                     output_blocks.append(f"【電話番号】: {phone_dl.get_text(strip=True)}")
 
         # --- Markdownファイル名生成ロジック ---
-        url_hash = hashlib.md5(request.url.encode()).hexdigest()[:8]
+        url_hash = hashlib.sha256(request.url.encode()).hexdigest()[:8]
         raw_title = soup.title.string.strip() if soup.title else "名称未設定"
         safe_title = re.sub(r'[\\/:*?"<>|]', '', raw_title)
         
@@ -212,7 +212,8 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
 
         for doc in doc_generator:
             # チャンクごとの重複チェック (doc.page_content = 子チャンク のハッシュで判定)
-            chunk_hash = hashlib.md5(doc.page_content.encode()).hexdigest()
+            # Snyk対策 (CWE-916): MD5 -> SHA-256に変更
+            chunk_hash = hashlib.sha256(doc.page_content.encode()).hexdigest()
             if chunk_hash in seen_contents:
                 continue
             seen_contents.add(chunk_hash)
