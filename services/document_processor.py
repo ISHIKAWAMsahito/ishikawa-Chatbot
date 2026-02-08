@@ -2,7 +2,7 @@ import io
 import re
 import logging
 from typing import Iterator, Optional
-import PyPDF2
+import pypdf
 from docx import Document as DocxDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
 from langchain_core.documents import Document as LangChainDocument
@@ -72,7 +72,8 @@ class SimpleDocumentProcessor:
         """PDFからテキスト抽出（PyPDF2使用、メモリ重視）"""
         text = ""
         try:
-            pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+            # pypdfを使用するように修正
+            pdf_reader = pypdf.PdfReader(io.BytesIO(content))
             for page in pdf_reader.pages:
                 page_text = page.extract_text()
                 if page_text:
