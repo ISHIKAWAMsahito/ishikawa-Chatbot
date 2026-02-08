@@ -656,38 +656,12 @@ body.dark-mode .total-chunks-info {
     </div>
 
     <script>
-    document.addEventListener('DOMContentLoaded', () => {
-    // ... 既存のコード ...
-
-    const adminDarkBtn = document.getElementById('adminDarkModeBtn');
-    
-    // 設定読み込み
-    if (localStorage.getItem('adminTheme') === 'dark') {
-        document.body.classList.add('dark-mode');
-        if(adminDarkBtn) adminDarkBtn.textContent = '☀️ モード切替';
-    }
-
-    if(adminDarkBtn) {
-        adminDarkBtn.addEventListener('click', () => {
-            document.body.classList.toggle('dark-mode');
-            if (document.body.classList.contains('dark-mode')) {
-                localStorage.setItem('adminTheme', 'dark');
-                adminDarkBtn.textContent = '☀️ モード切替';
-            } else {
-                localStorage.setItem('adminTheme', 'light');
-                adminDarkBtn.textContent = '🌙 モード切替';
-            }
-        });
-    }
-
-    // ... 既存のコード ...
-});
+    // ▼▼▼ Supabase初期化 ▼▼▼
     const { createClient } = supabase;
     window.supabaseClient = null;
 
     async function initializeSupabase() {
         try {
-            // クライアント用と同じ設定エンドポイントを利用します
             const response = await fetch('/api/client/config');
             if (!response.ok) return;
             const config = await response.json();
@@ -699,16 +673,52 @@ body.dark-mode .total-chunks-info {
             console.error("Supabase初期化失敗:", error);
         }
     }
-    // ページ読み込み時に実行
     initializeSupabase();
+
     document.addEventListener('DOMContentLoaded', () => {
-        // XSS対策: 表示用エスケープ・URL許可リスト
+        // ▼▼▼ ヘルパー関数 (XSS対策・安全な描画) ▼▼▼
+
+        // 文字列からリンクを安全にDOM化する関数 (innerHTML不使用)
+        function renderSafeText(container, text) {
+            container.textContent = ''; // 内容をクリア
+            
+            // Markdown形式のリンク [text](url) を検出する正規表現
+            const linkRe = /\[([^\]]*)\]\((https?:\/\/[^\)]+)\)/g;
+            let lastIdx = 0;
+            let match;
+
+            while ((match = linkRe.exec(text)) !== null) {
+                // マッチする前のテキストを追加
+                if (match.index > lastIdx) {
+                    container.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
+                }
+                
+                // リンク要素を作成 (安全なプロパティ設定)
+                const a = document.createElement('a');
+                a.textContent = match[1];
+                a.href = match[2]; 
+                a.target = '_blank';
+                a.rel = 'noopener';
+                a.style.color = '#007bff';
+                a.style.textDecoration = 'underline';
+                container.appendChild(a);
+
+                lastIdx = linkRe.lastIndex;
+            }
+            
+            // 残りのテキストを追加
+            if (lastIdx < text.length) {
+                container.appendChild(document.createTextNode(text.slice(lastIdx)));
+            }
+        }
+
         function escapeHtml(s) {
             if (typeof s !== 'string') return '';
             const div = document.createElement('div');
             div.textContent = s;
             return div.innerHTML;
         }
+
         function isAllowedUrl(url) {
             try {
                 const u = (url || '').trim();
@@ -716,6 +726,7 @@ body.dark-mode .total-chunks-info {
             } catch (e) { return false; }
         }
 
+        // ▼▼▼ DOM要素の取得 ▼▼▼
         const chatMessages = document.getElementById('chatMessages');
         const chatInput = document.getElementById('chatInput');
         const sendBtn = document.getElementById('sendBtn');
@@ -727,32 +738,53 @@ body.dark-mode .total-chunks-info {
         const embeddingModelSelect = document.getElementById('embeddingModelSelect');
         const scrapeUrlInput = document.getElementById('scrapeUrlInput');
         const scrapeBtn = document.getElementById('scrapeBtn');
+        const adminDarkBtn = document.getElementById('adminDarkModeBtn');
+
         let currentCollection = '';
         let backendConnected = false;
         let settingsSocket = null;
-        let wsRetryCount = 0; // 再接続の試行回数を管理する変数
+        let wsRetryCount = 0;
+        let abortController = null; // 生成停止用
 
+        // ▼▼▼ ダークモード設定 ▼▼▼
+        if (localStorage.getItem('adminTheme') === 'dark') {
+            document.body.classList.add('dark-mode');
+            if(adminDarkBtn) adminDarkBtn.textContent = '☀️ モード切替';
+        }
+
+        if(adminDarkBtn) {
+            adminDarkBtn.addEventListener('click', () => {
+                document.body.classList.toggle('dark-mode');
+                if (document.body.classList.contains('dark-mode')) {
+                    localStorage.setItem('adminTheme', 'dark');
+                    adminDarkBtn.textContent = '☀️ モード切替';
+                } else {
+                    localStorage.setItem('adminTheme', 'light');
+                    adminDarkBtn.textContent = '🌙 モード切替';
+                }
+            });
+        }
+
+        // ▼▼▼ WebSocket接続 (設定同期) ▼▼▼
         function connectSettingsWebSocket() {
             try {
-                // 管理者認証: 短期トークンを取得してから WebSocket 接続（認可必須）
                 fetch('/api/admin/system/ws-token', { credentials: 'include' })
                     .then(r => r.ok ? r.json() : Promise.reject(new Error('ws-token failed')))
                     .then(data => {
                         const token = data.token;
                         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                         const wsUrl = `${protocol}//${window.location.host}/ws/settings?token=${encodeURIComponent(token)}`;
-                        console.log('📡 WebSocket接続試行中... (token取得済み)');
+                        console.log('📡 WebSocket接続試行中...');
                         settingsSocket = new WebSocket(wsUrl);
                         attachWebSocketHandlers();
                     })
                     .catch(err => {
-                        console.warn('WebSocket用トークン取得失敗（未ログインまたは権限なし）:', err);
+                        console.warn('WebSocketトークン取得失敗:', err);
                         updateSyncStatus(false, '設定同期: 認証が必要です');
                         setTimeout(connectSettingsWebSocket, 5000);
                     });
             } catch (error) {
-                console.error('🚨 WebSocket初期化中に重大なエラーが発生:', error);
-                updateSyncStatus(false, '接続初期化失敗');
+                console.error('WebSocket初期化エラー:', error);
                 setTimeout(connectSettingsWebSocket, 5000);
             }
         }
@@ -760,49 +792,39 @@ body.dark-mode .total-chunks-info {
         function attachWebSocketHandlers() {
             if (!settingsSocket) return;
 
-                // --- 1. 接続成功時の処理 ---
-                settingsSocket.onopen = function() {
-                    console.log('✅ 設定同期WebSocket接続完了');
-                    updateSyncStatus(true, '設定同期接続済み');
-                    wsRetryCount = 0; // 接続に成功したらリトライカウントをリセット
-                };
+            settingsSocket.onopen = function() {
+                console.log('✅ 設定同期WebSocket接続完了');
+                updateSyncStatus(true, '設定同期接続済み');
+                wsRetryCount = 0;
+            };
 
-                // --- 2. メッセージ受信時の処理 ---
-                settingsSocket.onmessage = function(event) {
-                    try {
-                        const data = JSON.parse(event.data);
-                        if (data.type === 'settings_update') {
-                            console.log('📥 サーバーから設定更新を受信:', data.data);
-                            applyReceivedSettings(data.data);
-                        }
-                    } catch (e) {
-                        // JSONでないメッセージ（Keep-alive等）は無視
-                        console.debug('WebSocketメッセージ受信:', event.data);
+            settingsSocket.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'settings_update') {
+                        console.log('📥 設定更新受信:', data.data);
+                        applyReceivedSettings(data.data);
                     }
-                };
+                } catch (e) {
+                    console.debug('WebSocketメッセージ:', event.data);
+                }
+            };
 
-                // --- 3. 接続切断時の処理（ここが指数バックオフの肝） ---
-                settingsSocket.onclose = function() {
-                    console.log('⚠️ 設定同期WebSocketが切断されました');
-                    updateSyncStatus(false, '設定同期切断（再接続待機中）');
-                    // 指数バックオフの計算
-                    // 1秒(2^1) → 2秒(2^2) → 4秒(2^3) ... と増やし、最大30秒でキャップ(固定)
-                    wsRetryCount++;
-                    const delay = Math.min(1000 * Math.pow(2, wsRetryCount), 30000);
-                    console.log(`🔄 ${delay/1000}秒後に再接続を試みます... (試行回数: ${wsRetryCount}回)`);
-                    // 指定した秒数後に自分自身を再実行
-                    setTimeout(() => {
-                        // 切断状態で、かつ新しいインスタンスが作られていない場合のみ再接続
-                        if (!settingsSocket || settingsSocket.readyState === WebSocket.CLOSED) {
-                            connectSettingsWebSocket();
-                        }
-                    }, delay);
-                };
+            settingsSocket.onclose = function() {
+                console.log('⚠️ WebSocket切断');
+                updateSyncStatus(false, '設定同期切断（再接続待機中）');
+                wsRetryCount++;
+                const delay = Math.min(1000 * Math.pow(2, wsRetryCount), 30000);
+                setTimeout(() => {
+                    if (!settingsSocket || settingsSocket.readyState === WebSocket.CLOSED) {
+                        connectSettingsWebSocket();
+                    }
+                }, delay);
+            };
 
-                // --- 4. エラー発生時の処理 ---
-                settingsSocket.onerror = function(error) {
-                    console.error('❌ 設定同期WebSocketエラーが発生しました');
-                };
+            settingsSocket.onerror = function(error) {
+                console.error('❌ WebSocketエラー');
+            };
         }
 
         function updateSyncStatus(connected, message) {
@@ -819,7 +841,6 @@ body.dark-mode .total-chunks-info {
         }
 
         function applyReceivedSettings(settings) {
-            console.log('設定を適用中:', settings);
             if (settings.model && modelSelect.value !== settings.model) {
                 if ([...modelSelect.options].some(opt => opt.value === settings.model)) {
                     modelSelect.value = settings.model;
@@ -873,25 +894,24 @@ body.dark-mode .total-chunks-info {
                 top_k: parseInt(topKSelect.value, 10)
             };
             try {
-                const response = await fetch('/api/admin/system/settings', {
+                await fetch('/api/admin/system/settings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(settings)
                 });
-                if (response.ok) console.log('設定をサーバーに送信:', settings);
-                else console.error('設定送信エラー:', await response.text());
             } catch (error) {
                 console.error('設定送信通信エラー:', error);
             }
         }
 
+        // ▼▼▼ チャットUI関連 ▼▼▼
         function addMessage(text, type) {
             const messageWrapper = document.createElement('div');
             messageWrapper.className = `message ${type}`;
             const messageContent = document.createElement('div');
             messageContent.className = 'message-content';
             
-            // Snyk対策 (CWE-79): innerHTMLを使わずDOM操作でテキストとリンクを構築
+            // ★安全なテキスト描画 (innerHTML不使用)
             renderSafeText(messageContent, text);
 
             messageWrapper.appendChild(messageContent);
@@ -906,38 +926,193 @@ body.dark-mode .total-chunks-info {
             return messageWrapper;
         }
 
-        // --- フィードバック送信機能 ---
-        // --- フィードバック送信機能 (Supabase版) ---
-        async function sendFeedback(element, rating) {
-            console.log(`フィードバック送信開始: ${rating}`);
+        async function sendMessage() {
+            const userInput = chatInput.value.trim();
+
+            // 停止ロジック
+            if (abortController) {
+                abortController.abort();
+                abortController = null;
+                sendBtn.classList.remove('generating');
+                sendBtn.innerHTML = '<span>送信</span><span>🔍</span>';
+                
+                const generatingMsgs = document.querySelectorAll('.message.bot');
+                if(generatingMsgs.length > 0) {
+                    const lastMsg = generatingMsgs[generatingMsgs.length - 1];
+                    if(!lastMsg.dataset.finished) {
+                        const contentDiv = lastMsg.querySelector('.message-content');
+                        // DOM操作で追記
+                        const stopSpan = document.createElement('span');
+                        stopSpan.style.color = '#dc3545';
+                        stopSpan.style.fontSize = '0.8rem';
+                        stopSpan.style.fontWeight = 'bold';
+                        stopSpan.textContent = '\n(ユーザーにより停止されました)';
+                        contentDiv.appendChild(stopSpan);
+                        lastMsg.dataset.finished = "true";
+                    }
+                }
+                return;
+            }
+
+            if (!userInput) return;
+            if (!currentCollection) {
+                addMessage('❌ コレクションが選択されていません。', 'bot');
+                return;
+            }
+
+            sendBtn.classList.add('generating');
+            sendBtn.innerHTML = '<span>停止</span><span>⏹</span>';
+
+            abortController = new AbortController();
+            const signal = abortController.signal;
+
+            addMessage(userInput, 'user');
+            chatInput.value = '';
+            chatInput.style.height = 'auto';
+
+            const botMessageElement = addMessage('思考中...', 'bot');
+            const botMessageContent = botMessageElement.querySelector('.message-content');
+            let fullResponse = '';
+
             try {
-                // 1. Supabaseクライアントの確認
-                if (!window.supabaseClient) {
-                    console.error("Supabaseクライアントが初期化されていません");
-                    // エラーが出てもアラートは出さず、コンソールのみにするか、
-                    // または alert("DB接続エラー") などを出してもOKです
-                    return;
+                const response = await fetch(`/api/admin/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: userInput,
+                        model: modelSelect.value,
+                        collection: currentCollection,
+                        embedding_model: embeddingModelSelect.value,
+                        top_k: parseInt(topKSelect.value, 10)
+                    }),
+                    signal: signal
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: `APIエラー: ${response.statusText}` }));
+                    throw new Error(errorData.detail);
                 }
 
-                // 2. 送信するデータの作成
-                const insertData = {
-                    rating: rating,        // 'good' または 'bad'
-                    comment: "管理者画面からの評価", // どこから送ったかわかるように変更推奨
-                    created_at: new Date().toISOString()
-                };
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                let isFirstChunk = true; // 初回フラグ
 
-                // 3. Supabaseに送信 (anonymous_commentsテーブル)
-                const { data, error } = await window.supabaseClient
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        botMessageElement.dataset.finished = "true";
+                        // フィードバックボタンの追加 (DOM操作)
+                        if (botMessageElement.dataset.logId) {
+                            const feedbackContainer = document.createElement('div');
+                            feedbackContainer.className = 'feedback-container';
+                            
+                            const span = document.createElement('span');
+                            span.textContent = 'この回答は役に立ちましたか？';
+                            feedbackContainer.appendChild(span);
+
+                            const btnGood = document.createElement('button');
+                            btnGood.className = 'feedback-btn';
+                            btnGood.dataset.rating = 'good';
+                            btnGood.textContent = '👍';
+                            feedbackContainer.appendChild(btnGood);
+
+                            const btnBad = document.createElement('button');
+                            btnBad.className = 'feedback-btn';
+                            btnBad.dataset.rating = 'bad';
+                            btnBad.textContent = '👎';
+                            feedbackContainer.appendChild(btnBad);
+                            
+                            botMessageElement.appendChild(feedbackContainer);
+                        }
+                        break;
+                    }
+                    
+                    let buffer = decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.trim().startsWith('data: ')) {
+                            const jsonString = line.substring(6).trim();
+                            if (jsonString) {
+                                try {
+                                    const data = JSON.parse(jsonString);
+                                    if (data.feedback_id) {
+                                        botMessageElement.dataset.feedbackId = data.feedback_id;
+                                        botMessageElement.dataset.logId = data.feedback_id;
+                                    }
+
+                                    // ステータスメッセージ (DOM操作)
+                                    if (data.status_message) {
+                                        botMessageContent.textContent = ''; // クリア
+                                        const span = document.createElement('span');
+                                        span.className = 'status-pulse';
+                                        span.textContent = data.status_message;
+                                        botMessageContent.appendChild(span);
+                                        if(chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+                                        continue; 
+                                    }
+
+                                    // 回答本文 (DOM操作 + renderSafeText)
+                                    if (data.content) {
+                                        if (isFirstChunk) {
+                                            botMessageContent.textContent = ''; // クリア
+                                            isFirstChunk = false;
+                                        }
+
+                                        fullResponse += data.content;
+                                        // ★安全な描画関数を使用 (Snyk XSS対策)
+                                        renderSafeText(botMessageContent, fullResponse);
+                                        
+                                        if(chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    }
+
+                                } catch (e) {
+                                    console.error("Stream parse error:", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.log('Fetch aborted by admin');
+                } else {
+                    console.error('メッセージ送信エラー:', error);
+                    botMessageContent.textContent = ''; // クリア
+                    const errorSpan = document.createElement('span');
+                    errorSpan.style.color = '#dc3545';
+                    errorSpan.style.fontWeight = 'bold';
+                    
+                    if (error.message.includes("503") || error.message.includes("overloaded")) {
+                        errorSpan.textContent = '⚠️ Gemini APIが過負荷状態です。しばらく待ってから再試行してください。';
+                    } else {
+                        errorSpan.textContent = `エラーが発生しました: ${error.message}`;
+                    }
+                    botMessageContent.appendChild(errorSpan);
+                }
+            } finally {
+                if (abortController) {
+                    abortController = null;
+                    sendBtn.classList.remove('generating');
+                    sendBtn.innerHTML = '<span>送信</span><span>🔍</span>';
+                }
+            }
+        }
+
+        // ▼▼▼ その他機能 ▼▼▼
+        async function sendFeedback(element, rating) {
+            try {
+                if (!window.supabaseClient) return;
+                const { error } = await window.supabaseClient
                     .from('anonymous_comments')
-                    .insert([insertData]);
+                    .insert([{
+                        rating: rating,
+                        comment: "管理者画面からの評価",
+                        created_at: new Date().toISOString()
+                    }]);
 
-                if (error) {
-                    throw error;
-                }
-
-                console.log("Supabaseへの保存成功:", data);
-
-                // 4. 画面の見た目を更新
+                if (error) throw error;
                 const feedbackContainer = element.parentElement;
                 feedbackContainer.innerHTML = '<span class="feedback-thanks">フィードバックを保存しました</span>';
             } catch(error) {
@@ -945,285 +1120,6 @@ body.dark-mode .total-chunks-info {
                 alert("送信に失敗しました。");
             }
         }
-
-        // --- 接続チェック関連 ---
-        async function checkBackendConnection() {
-            try {
-                const response = await fetch(`/health`);
-                const data = await response.json();
-                backendConnected = response.ok;
-                if (!backendConnected) addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
-                return data.database; 
-            } catch (error) {
-                backendConnected = false;
-                addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
-                return null;
-            }
-        }
-        function updateStatus(elementId, textId, connected, serviceName) {
-            const statusIndicator = document.getElementById(elementId);
-            const statusText = document.getElementById(textId);
-            if(statusIndicator && statusText) {
-                statusIndicator.className = `status-indicator ${connected ? 'status-connected' : 'status-disconnected'}`;
-                statusText.textContent = connected ? `${serviceName} 接続済み` : `${serviceName} 未接続`;
-            }
-        }
-        function checkDbConnection(dbType) {
-            const dbName = dbType || '不明';
-            const dbNameCapitalized = dbName.charAt(0).toUpperCase() + dbName.slice(1);
-            updateStatus('dbStatusIndicator', 'dbStatusText', backendConnected, dbNameCapitalized);
-            const collectionTitle = document.getElementById('collectionTitle');
-            if(collectionTitle){
-                collectionTitle.innerHTML = `🗃️ ${dbNameCapitalized} コレクション`;
-            }
-        }
-
-        async function checkGeminiConnection() {
-            try {
-                const response = await fetch(`/api/admin/system/gemini/status`);
-                const data = await response.json();
-                updateStatus('geminiStatus', 'geminiStatusText', response.ok && data.connected, 'Gemini API');
-                if (response.ok && data.connected && data.models) {
-                    updateGenericList(data.models.map(m => m), modelSelect, 'gemini-2.5-flash');
-                } else if (response.ok && !data.connected) {
-                    addMessage(`❌ Gemini APIに接続できません: ${data.detail}`, 'bot');
-                }
-            } catch (error) {
-                updateStatus('geminiStatus', 'geminiStatusText', false, 'Gemini API');
-            }
-        }
-
-        // --- システム初期化 ---
-        async function initializeSystem() {
-            const backendUrlEl = document.getElementById('backendUrl');
-            if (backendUrlEl) {
-                backendUrlEl.textContent = window.location.origin;
-            }
-            const dbType = await checkBackendConnection();
-            if (backendConnected) {
-                checkDbConnection(dbType);
-                await checkGeminiConnection();
-                await refreshCollections();
-                connectSettingsWebSocket();
-            }
-        }
-
-        // --- チャット機能 ---
-        // 12/14 チャット停止機能追加
-       // ▼▼▼ この変数を sendMessage 関数の「外側」（直前）に追加してください ▼▼▼
-let abortController = null;
-
-async function sendMessage() {
-    const userInput = chatInput.value.trim();
-
-    // ============================================================
-    // 【停止ロジック】すでに生成中（コントローラーがある）場合
-    // ============================================================
-    if (abortController) {
-        abortController.abort(); // 通信を強制切断
-        abortController = null;  // リセット
-        // UIを「送信」ボタンに戻す
-        sendBtn.classList.remove('generating');
-        sendBtn.innerHTML = '<span>送信</span><span>🔍</span>';
-        // メッセージに「(停止しました)」と追記
-        const generatingMsgs = document.querySelectorAll('.message.bot');
-        if(generatingMsgs.length > 0) {
-            const lastMsg = generatingMsgs[generatingMsgs.length - 1];
-            // まだ完了フラグがない場合のみ追記
-            if(!lastMsg.dataset.finished) {
-                const contentDiv = lastMsg.querySelector('.message-content');
-                contentDiv.innerHTML += '<br><span style="color:#dc3545; font-size:0.8rem; font-weight:bold;">(ユーザーにより停止されました)</span>';
-                lastMsg.dataset.finished = "true";
-            }
-        }
-        return; // ここで処理を終了
-    }
-
-    // ============================================================
-    // 【送信ロジック】ここからは通常の送信処理
-    // ============================================================
-    if (!userInput) return;
-    if (!currentCollection) {
-        addMessage('❌ コレクションが選択されていません。', 'bot');
-        return;
-    }
-
-    // UI: ボタンを「停止」モードに変更（赤色にするクラスを追加）
-    sendBtn.classList.add('generating');
-    sendBtn.innerHTML = '<span>停止</span><span>⏹</span>'; // ■のアイコンに変更
-
-    // AbortControllerの初期化
-    abortController = new AbortController();
-    const signal = abortController.signal; // これをfetchに渡す
-
-    addMessage(userInput, 'user');
-    chatInput.value = '';
-    chatInput.style.height = 'auto';
-
-    const botMessageElement = addMessage('思考中...', 'bot');
-    const botMessageContent = botMessageElement.querySelector('.message-content');
-    let fullResponse = '';
-
-    try {
-        const response = await fetch(`/api/admin/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                query: userInput,
-                model: modelSelect.value,            // 管理者設定: モデル
-                collection: currentCollection,       // 管理者設定: コレクション
-                embedding_model: embeddingModelSelect.value, // 管理者設定: 埋め込みモデル
-                top_k: parseInt(topKSelect.value, 10) // 管理者設定: 検索数
-            }),
-            signal: signal // <--- ★重要: これにより中断が可能になります
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ detail: `APIエラー: ${response.statusText}` }));
-            throw new Error(errorData.detail);
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        botMessageContent.innerHTML = '';
-        let buffer = '';
-// 変数初期化
-let isFirstChunk = true; // ★追加: これを while ループの前に置くのが重要
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                // 完了処理
-                botMessageElement.dataset.finished = "true";
-                if (botMessageElement.dataset.logId) {
-                    const feedbackContainer = document.createElement('div');
-                    feedbackContainer.className = 'feedback-container';
-                    
-                    // Snyk対策: innerHTMLを使わずDOM要素作成
-                    const span = document.createElement('span');
-                    span.textContent = 'この回答は役に立ちましたか？';
-                    feedbackContainer.appendChild(span);
-
-                    const btnGood = document.createElement('button');
-                    btnGood.className = 'feedback-btn';
-                    btnGood.dataset.rating = 'good';
-                    btnGood.textContent = '👍';
-                    feedbackContainer.appendChild(btnGood);
-
-                    const btnBad = document.createElement('button');
-                    btnBad.className = 'feedback-btn';
-                    btnBad.dataset.rating = 'bad';
-                    btnBad.textContent = '👎';
-                    feedbackContainer.appendChild(btnBad);
-                    
-                    botMessageElement.appendChild(feedbackContainer);
-                }
-                break;
-            }
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop();
-            for (const line of lines) {
-                if (line.trim().startsWith('data: ')) {
-                    const jsonString = line.substring(6).trim();
-
-                    if (jsonString) {
-                        try {
-                            const data = JSON.parse(jsonString);
-                            // ID保存 (既存)
-                            if (data.feedback_id) {
-                                botMessageElement.dataset.feedbackId = data.feedback_id;
-                                botMessageElement.dataset.logId = data.feedback_id;
-                            }
-                            // --- ★ここから追加: ステータスメッセージの処理 ---
-                            // --- ★修正: ステータスメッセージの処理 ---
-                            if (data.status_message) {
-                                // Snyk対策: innerHTMLを使わずDOM構築
-                                botMessageContent.innerHTML = ''; // クリア
-                                const span = document.createElement('span');
-                                span.className = 'status-pulse';
-                                span.textContent = data.status_message; // 安全
-                                botMessageContent.appendChild(span);
-                                
-                                if(chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
-                                continue; 
-                            }
-
-                            // --- ★修正: コンテンツ（回答本文）の処理 ---
-                            if (data.content) {
-                                if (isFirstChunk) {
-                                    botMessageContent.textContent = ''; // テキストとしてクリア
-                                    isFirstChunk = false;
-                                }
-
-                                fullResponse += data.content;
-                                
-                                // Snyk対策: innerHTMLへの文字列結合をやめ、ヘルパー関数で安全にDOM更新
-                                renderSafeText(botMessageContent, fullResponse);
-                                
-                                if(chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
-                            }
-                            // --- ここまで ---
-
-                            // --- ★ここから変更: コンテンツ（回答本文）の処理 ---
-                            if (data.content) {
-                                // 最初のコンテンツが来たら、それまでの「ステータスメッセージ」を消す
-                                if (isFirstChunk) {
-                                    botMessageContent.innerHTML = '';
-                                    isFirstChunk = false;
-                                }
-
-                                fullResponse += data.content;
-                                // Markdownリンクの変換 (XSS対策: リンクテキスト・URLをエスケープ、URLは https/http のみ)
-                                let safeOut = '';
-                                const linkRe = /\[([^\]]*)\]\((https?:\/\/[^\)]+)\)/g;
-                                let match, lastIdx = 0;
-                                while ((match = linkRe.exec(fullResponse)) !== null) {
-                                    safeOut += escapeHtml(fullResponse.slice(lastIdx, match.index)).replace(/\n/g, '<br>');
-                                    if (isAllowedUrl(match[2])) {
-                                        safeOut += '<a href="' + escapeHtml(match[2]) + '" target="_blank" rel="noopener">' + escapeHtml(match[1]) + '</a>';
-                                    } else {
-                                        safeOut += escapeHtml(match[1]);
-                                    }
-                                    lastIdx = linkRe.lastIndex;
-                                }
-                                safeOut += escapeHtml(fullResponse.slice(lastIdx)).replace(/\n/g, '<br>');
-                                botMessageContent.innerHTML = safeOut;
-                                if(chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
-                            }
-                            // --- ここまで ---
-                        } catch (e) {
-                            console.error("Error parsing stream data:", e);
-                        }
-                    }
-                }
-            }
-        }
-    } catch (error) {
-        // エラーハンドリング
-        if (error.name === 'AbortError') {
-            console.log('Fetch aborted by admin');
-            // 中断時のUI更新は冒頭のifブロックで行われるため、ここでは何もしない
-        } else {
-    console.error('メッセージ送信エラー:', error);
-    // Google側の503エラー(Overloaded)を判定
-    if (error.message.includes("503") || error.message.includes("overloaded")) {
-        botMessageContent.innerHTML = `<span style="color:#dc3545; font-weight:bold;">⚠️ Gemini APIが過負荷状態です。</span><br>Google側のリソース不足のため、リトライ上限を超えました。しばらく待ってから再試行してください。`;
-    } else {
-        botMessageContent.textContent = `エラーが発生しました: ${error.message}`;
-    }
-}
-    } finally {
-        // ============================================================
-        // 【終了処理】正常完了した場合のボタンリセット
-        // ============================================================
-        // まだコントローラーが存在する＝（中断ではなく）最後まで読み切った場合
-        if (abortController) {
-            abortController = null;
-            sendBtn.classList.remove('generating');
-            sendBtn.innerHTML = '<span>送信</span><span>🔍</span>';
-        }
-    }
-}
 
         async function handleFileUpload(event) {
             const files = Array.from(event.target.files);
@@ -1269,13 +1165,13 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                 addMessage(response.ok ? `✅ コレクション「${collectionName}」を作成しました` : `❌ 作成失敗: ${result.detail}`, 'bot');
                 if (response.ok) {
                     document.getElementById('newCollectionName').value = '';
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    await refreshCollections();
+                    setTimeout(refreshCollections, 500);
                 }
             } catch (error) {
                 addMessage(`❌ 作成中に通信エラー: ${error.message}`, 'bot');
             }
         }
+
         async function deleteCollection() {
             const collectionName = collectionSelect.value;
             if (!collectionName) return;
@@ -1285,42 +1181,11 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                 const response = await fetch(`/api/admin/system/collections/${collectionName}`, { method: 'DELETE' });
                 const result = await response.json();
                 addMessage(response.ok ? `✅ ${result.message}` : `❌ 削除失敗: ${result.detail}`, 'bot');
-                if (response.ok) {
-                    await refreshCollections();
-                }
+                if (response.ok) await refreshCollections();
             } catch (error) {
                 addMessage(`❌ 削除中に通信エラー: ${error.message}`, 'bot');
             }
         }
-// [追加] 文字列からリンクを安全にDOM化するヘルパー関数 (innerHTML不使用)
-    function renderSafeText(container, text) {
-        container.textContent = ''; // 内容をクリア
-        const linkRe = /\[([^\]]*)\]\((https?:\/\/[^\)]+)\)/g;
-        let lastIdx = 0;
-        let match;
-
-        while ((match = linkRe.exec(text)) !== null) {
-            // マッチする前のテキストを追加
-            if (match.index > lastIdx) {
-                container.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
-            }
-            // リンク要素を作成
-            const a = document.createElement('a');
-            a.textContent = match[1];
-            a.href = match[2]; // 自動的に安全な属性として扱われる
-            a.target = '_blank';
-            a.rel = 'noopener';
-            a.style.color = '#007bff';
-            a.style.textDecoration = 'underline';
-            container.appendChild(a);
-
-            lastIdx = linkRe.lastIndex;
-        }
-        // 残りのテキストを追加
-        if (lastIdx < text.length) {
-            container.appendChild(document.createTextNode(text.slice(lastIdx)));
-        }
-    }
 
         async function refreshCollections() {
             try {
@@ -1329,8 +1194,8 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                     const collections = await response.json();
                     updateCollectionList(collections);
                 } else {
-                addMessage('❌ コレクション一覧の取得に失敗しました。', 'bot');
-                updateCollectionList([]);
+                    addMessage('❌ コレクション一覧の取得に失敗しました。', 'bot');
+                    updateCollectionList([]);
                 }
             } catch (error) {
                 addMessage(`❌ コレクションの更新に失敗: ${error.message}`, 'bot');
@@ -1343,11 +1208,11 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                 documentList.innerHTML = '<span>コレクションを選択してください</span>';
                 return;
             }
-            documentList.innerHTML = '読み込み中...';
+            documentList.textContent = '読み込み中...';
             try {
                 const response = await fetch(`/api/admin/documents/collections/${currentCollection}/documents`);
                 const data = await response.json();
-                documentList.innerHTML = '';
+                documentList.textContent = '';
                 if (response.ok && data.documents && data.documents.length > 0) {
                     data.documents.forEach(doc => {
                         const item = document.createElement('div');
@@ -1359,7 +1224,6 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                     totalItem.className = 'total-chunks-info'; 
                     totalItem.innerHTML = `<strong>合計: ${data.count} チャンク</strong>`;
                     documentList.appendChild(totalItem);
-
                 } else {
                     documentList.innerHTML = '<span>ドキュメントはありません</span>';
                 }
@@ -1378,20 +1242,17 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                 selectElement.appendChild(option);
             });
             const values = items.map(item => typeof item === 'string' ? item : item.name);
-
-            if (values.includes(currentValue)) {
-                selectElement.value = currentValue;
-            } else if (values.includes(defaultValue)) {
-                selectElement.value = defaultValue;
-            } else if (values.length > 0) {
-                selectElement.value = values[0];
-            }
+            if (values.includes(currentValue)) selectElement.value = currentValue;
+            else if (values.includes(defaultValue)) selectElement.value = defaultValue;
+            else if (values.length > 0) selectElement.value = values[0];
             return selectElement.value || '';
         }
+
         function updateCollectionList(collections) {
             currentCollection = updateGenericList(collections, collectionSelect);
             updateDocumentList();
         }
+
         async function scrapeWebsite() {
             const url = scrapeUrlInput.value.trim();
             if (!url || !currentCollection) {
@@ -1443,20 +1304,69 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
             });
         }
 
+        // ▼▼▼ 接続チェックと初期化 ▼▼▼
+        async function checkBackendConnection() {
+            try {
+                const response = await fetch(`/health`);
+                const data = await response.json();
+                backendConnected = response.ok;
+                if (!backendConnected) addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
+                return data.database; 
+            } catch (error) {
+                backendConnected = false;
+                addMessage('❌ バックエンドサーバーに接続できません。', 'bot');
+                return null;
+            }
+        }
+
+        function updateStatus(elementId, textId, connected, serviceName) {
+            const statusIndicator = document.getElementById(elementId);
+            const statusText = document.getElementById(textId);
+            if(statusIndicator && statusText) {
+                statusIndicator.className = `status-indicator ${connected ? 'status-connected' : 'status-disconnected'}`;
+                statusText.textContent = connected ? `${serviceName} 接続済み` : `${serviceName} 未接続`;
+            }
+        }
+
+        async function checkGeminiConnection() {
+            try {
+                const response = await fetch(`/api/admin/system/gemini/status`);
+                const data = await response.json();
+                updateStatus('geminiStatus', 'geminiStatusText', response.ok && data.connected, 'Gemini API');
+                if (response.ok && data.connected && data.models) {
+                    updateGenericList(data.models.map(m => m), modelSelect, 'gemini-2.5-flash');
+                }
+            } catch (error) {
+                updateStatus('geminiStatus', 'geminiStatusText', false, 'Gemini API');
+            }
+        }
+
+        async function initializeSystem() {
+            const backendUrlEl = document.getElementById('backendUrl');
+            if (backendUrlEl) backendUrlEl.textContent = window.location.origin;
+            
+            const dbType = await checkBackendConnection();
+            if (backendConnected) {
+                const dbName = dbType || '不明';
+                updateStatus('dbStatusIndicator', 'dbStatusText', true, dbName.charAt(0).toUpperCase() + dbName.slice(1));
+                const collectionTitle = document.getElementById('collectionTitle');
+                if(collectionTitle) collectionTitle.textContent = `🗃️ ${dbName.charAt(0).toUpperCase() + dbName.slice(1)} コレクション`;
+                
+                await checkGeminiConnection();
+                await refreshCollections();
+                connectSettingsWebSocket();
+            }
+        }
+
+        // ▼▼▼ グローバル関数登録 (HTMLから呼び出し用) ▼▼▼
         window.createCollection = createCollection;
         window.deleteCollection = deleteCollection;
         window.refreshCollections = refreshCollections;
         window.scrapeWebsite = scrapeWebsite;
-        // --- 追加: レコード管理画面を開く関数 ---
-        window.openDocumentManager = function() {
-    // ファイル名を 'DB.html' に合わせる #12/19 DB.htmlを開くため
-    window.open('DB.html', '_blank');
-};
+        window.openDocumentManager = function() { window.open('DB.html', '_blank'); };
+        window.setScrapeUrl = function(url) { scrapeUrlInput.value = url; }
 
-        window.setScrapeUrl = function(url) {
-            scrapeUrlInput.value = url;
-        }
-
+        // ▼▼▼ イベントリスナー登録 ▼▼▼
         modelSelect.addEventListener('change', updateServerSettings);
         collectionSelect.addEventListener('change', (e) => {
             currentCollection = e.target.value;
@@ -1480,13 +1390,11 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
         chatMessages.addEventListener('click', (e) => {
             if (e.target.classList.contains('feedback-btn')) {
                 const rating = e.target.dataset.rating;
-                if (rating) {
-                    sendFeedback(e.target, rating);
-                }
+                if (rating) sendFeedback(e.target, rating);
             }
         });
 
-        // --- 画像表示機能 ---
+        // ▼▼▼ 画像表示モーダル機能 (XSS対策済み) ▼▼▼
         window.showSourceImage = async function(sourceName) {
             if (!window.supabaseClient) {
                 alert('Supabaseクライアントが初期化されていません');
@@ -1497,11 +1405,9 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
             const content = document.getElementById('imageModalContent');
             
             modal.classList.add('visible');
-            content.innerHTML = '<div class="image-modal-loading">画像を読み込み中...</div>';
+            content.textContent = '画像を読み込み中...'; // innerHTMLを使わずクリア
 
             try {
-                // source名から画像パスを生成
-                // 例: "10_新札幌_諸規程.pdf" -> "converted_images_rules/10_新札幌_諸規程_001.jpg"
                 const baseName = sourceName.replace(/\.(pdf|docx|txt)$/i, '');
                 const imagePaths = [
                     `converted_images_rules/${baseName}_001.jpg`,
@@ -1510,73 +1416,56 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                     `${baseName}.jpg`
                 ];
 
-                // 複数のパスを試して画像を取得
                 let imageUrl = null;
                 for (const path of imagePaths) {
-                    try {
-                        const { data, error } = await window.supabaseClient
-                            .storage
-                            .from('images')
-                            .getPublicUrl(path);
-                        
-                        if (!error && data) {
-                            // 画像が存在するか確認（Promiseでラップ）
-                            const imageLoaded = await new Promise((resolve) => {
-                                const img = new Image();
-                                img.onload = () => resolve(true);
-                                img.onerror = () => resolve(false);
-                                img.src = data.publicUrl;
-                            });
-                            
-                            if (imageLoaded) {
-                                imageUrl = data.publicUrl;
-                                displayImage(imageUrl);
-                                break; // 最初の成功したパスを使用
-                            }
+                    const { data, error } = await window.supabaseClient.storage.from('images').getPublicUrl(path);
+                    if (!error && data) {
+                        const imageLoaded = await new Promise((resolve) => {
+                            const img = new Image();
+                            img.onload = () => resolve(true);
+                            img.onerror = () => resolve(false);
+                            img.src = data.publicUrl;
+                        });
+                        if (imageLoaded) {
+                            imageUrl = data.publicUrl;
+                            displayImage(imageUrl);
+                            return; 
                         }
-                    } catch (err) {
-                        console.log(`パス ${path} を試行中...`, err);
                     }
                 }
 
-                // 画像が見つからない場合
-                if (!imageUrl) {
-                    // 全ての画像をリストアップして表示
-                    const { data: files, error: listError } = await window.supabaseClient
-                        .storage
-                        .from('images')
-                        .list('', {
-                            search: baseName
-                        });
-
-                    if (!listError && files && files.length > 0) {
-                        // 見つかった最初の画像を表示
-                        const firstImage = files[0];
-                        const { data: urlData } = await window.supabaseClient
-                            .storage
-                            .from('images')
-                            .getPublicUrl(firstImage.name);
-                        
-                        if (urlData) {
-                            displayImage(urlData.publicUrl);
-                        } else {
-                            content.innerHTML = '<div class="image-modal-error">画像の取得に失敗しました</div>';
-                        }
-                    } else {
-                        content.innerHTML = '<div class="image-modal-error">画像が見つかりませんでした<br><small>Source: ' + escapeHtml(sourceName) + '</small></div>';
-                    }
+                // 見つからない場合、検索
+                const { data: files } = await window.supabaseClient.storage.from('images').list('', { search: baseName });
+                if (files && files.length > 0) {
+                    const { data: urlData } = await window.supabaseClient.storage.from('images').getPublicUrl(files[0].name);
+                    displayImage(urlData.publicUrl);
+                } else {
+                    // ★安全なエラー表示 (DOM操作)
+                    content.textContent = '';
+                    const errDiv = document.createElement('div');
+                    errDiv.className = 'image-modal-error';
+                    errDiv.textContent = '画像が見つかりませんでした';
+                    const br = document.createElement('br');
+                    const small = document.createElement('small');
+                    small.textContent = 'Source: ' + sourceName;
+                    errDiv.appendChild(br);
+                    errDiv.appendChild(small);
+                    content.appendChild(errDiv);
                 }
             } catch (error) {
                 console.error('画像取得エラー:', error);
-                content.innerHTML = '<div class="image-modal-error">エラーが発生しました。</div>';
+                content.textContent = '';
+                const errDiv = document.createElement('div');
+                errDiv.className = 'image-modal-error';
+                errDiv.textContent = 'エラーが発生しました';
+                content.appendChild(errDiv);
             }
         };
 
         function displayImage(imageUrl) {
             const content = document.getElementById('imageModalContent');
-            content.innerHTML = ''; // コンテンツをクリア
+            content.textContent = '';
 
-            // XSS対策: 画像URLは https/http のみ許可
             if (!imageUrl || !isAllowedUrl(imageUrl)) {
                 const errDiv = document.createElement('div');
                 errDiv.className = 'image-modal-error';
@@ -1585,20 +1474,17 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
                 return;
             }
             
-            // Snyk対策 (CWE-79): 文字列結合を避け、DOM要素として画像を生成
             const img = document.createElement('img');
             img.src = imageUrl;
             img.alt = "参照元画像";
             img.className = "image-modal-image";
             
-            // エラーハンドリングもDOMプロパティで行う
             img.onerror = function() {
-                // 親要素(content)の中身をエラーメッセージに差し替え
                 const parent = this.parentElement;
-                parent.innerHTML = '';
+                parent.textContent = '';
                 const errDiv = document.createElement('div');
                 errDiv.className = 'image-modal-error';
-                errDiv.textContent = '画像の読み込みに失敗しました';
+                errDiv.textContent = '画像を読み込めませんでした';
                 parent.appendChild(errDiv);
             };
 
@@ -1606,25 +1492,13 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
         }
 
         window.closeImageModal = function() {
-            const modal = document.getElementById('imageModal');
-            modal.classList.remove('visible');
+            document.getElementById('imageModal').classList.remove('visible');
         };
 
-        // ESCキーでモーダルを閉じる
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                closeImageModal();
-            }
-        });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.closeImageModal(); });
+        document.getElementById('imageModal').addEventListener('click', function(e) { if (e.target === this) window.closeImageModal(); });
 
-        // モーダル背景クリックで閉じる
-        document.getElementById('imageModal').addEventListener('click', function(e) {
-            if (e.target === this) {
-                closeImageModal();
-            }
-        });
-
-        // 最後に初期化関数を実行
+        // 初期化実行
         initializeSystem();
     });
 </script>
