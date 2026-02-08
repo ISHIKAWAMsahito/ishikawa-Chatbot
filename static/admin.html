@@ -1205,14 +1205,22 @@ body.dark-mode .total-chunks-info {
 
         async function updateDocumentList() {
             if (!currentCollection) {
-                documentList.innerHTML = '<span>コレクションを選択してください</span>';
+                // 【修正】innerHTMLを使わずDOM操作でメッセージを設定
+                documentList.textContent = '';
+                const span = document.createElement('span');
+                span.textContent = 'コレクションを選択してください';
+                documentList.appendChild(span);
                 return;
             }
-            documentList.textContent = '読み込み中...';
+            
+            documentList.textContent = '読み込み中...'; // 【修正】textContentを使用
+            
             try {
                 const response = await fetch(`/api/admin/documents/collections/${currentCollection}/documents`);
                 const data = await response.json();
-                documentList.textContent = '';
+                
+                documentList.textContent = ''; // 【修正】textContentでクリア
+                
                 if (response.ok && data.documents && data.documents.length > 0) {
                     data.documents.forEach(doc => {
                         const item = document.createElement('div');
@@ -1220,15 +1228,34 @@ body.dark-mode .total-chunks-info {
                         item.textContent = doc.id;
                         documentList.appendChild(item);
                     });
+
+                    // ▼▼▼ Snyk指摘箇所の修正 (ここがメインの修正) ▼▼▼
+                    /* 修正前:
+                       totalItem.innerHTML = `<strong>合計: ${data.count} チャンク</strong>`;
+                    */
                     const totalItem = document.createElement('div');
                     totalItem.className = 'total-chunks-info'; 
-                    totalItem.innerHTML = `<strong>合計: ${data.count} チャンク</strong>`;
+                    
+                    const strong = document.createElement('strong');
+                    // textContentならスクリプトが含まれていても実行されず安全
+                    strong.textContent = `合計: ${data.count} チャンク`; 
+                    
+                    totalItem.appendChild(strong);
                     documentList.appendChild(totalItem);
+                    // ▲▲▲ 修正ここまで ▲▲▲
+
                 } else {
-                    documentList.innerHTML = '<span>ドキュメントはありません</span>';
+                    // 【修正】innerHTMLを使わずDOM操作
+                    const span = document.createElement('span');
+                    span.textContent = 'ドキュメントはありません';
+                    documentList.appendChild(span);
                 }
             } catch (error) {
-                documentList.innerHTML = '<span>リストの取得中にエラーが発生しました</span>';
+                // 【修正】innerHTMLを使わずDOM操作
+                documentList.textContent = '';
+                const span = document.createElement('span');
+                span.textContent = 'リストの取得中にエラーが発生しました';
+                documentList.appendChild(span);
             }
         }
 
