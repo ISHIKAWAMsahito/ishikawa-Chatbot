@@ -89,7 +89,7 @@ if os.path.exists("static"):
 # ---------------------------------------------------------
 
 # Chat API (学生用: /api/client/chat/chat となります)
-app.include_router(chat.router, prefix="/api/client/chat", tags=["Chat"])
+app.include_router(chat.router, prefix="/api/client", tags=["Chat"])
 
 # ★追加: Admin Chat API (管理者用: /api/admin/chat となります)
 # admin.html は "/api/admin/chat" にアクセスするため、この登録が必要です
