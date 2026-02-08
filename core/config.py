@@ -7,7 +7,8 @@ import logging
 # ----------------------------------------------------------------
 # 1. 環境変数の読み込み設定
 # ----------------------------------------------------------------
-IS_PRODUCTION = os.getenv('RENDER', False)
+# 本番判定: RENDER が設定されていれば本番 (Fail Fast で APP_SECRET_KEY 必須)
+IS_PRODUCTION = bool(os.getenv("RENDER"))
 
 if not IS_PRODUCTION:
     # ローカル開発環境: 指定されたフルパスから .env を読み込む
@@ -67,13 +68,20 @@ AUTH0_CLIENT_ID = os.getenv("AUTH0_CLIENT_ID")
 AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET")
 AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
 
-APP_SECRET_KEY = os.getenv("APP_SECRET_KEY")
+# セッション秘密鍵 (エイリアス: Render等では APP_SECRET_KEY)
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY") or os.getenv("SECRET_KEY")
 if not APP_SECRET_KEY:
-    # セッション管理に必須のため、なければ警告またはデフォルト
     logging.warning("⚠️ 'APP_SECRET_KEY' が設定されていません。デフォルトキーを使用します（本番環境では非推奨）。")
     SECRET_KEY = "default-insecure-key"
 else:
     SECRET_KEY = APP_SECRET_KEY
+
+# リダイレクトURI用に許可するホスト (Host ヘッダー検証・オープンリダイレクト対策)
+# カンマ区切りで指定。Render デプロイ時は ALLOWED_HOSTS にサービスホスト名（例: myapp.onrender.com）を追加すること
+ALLOWED_HOSTS_STR = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1")
+ALLOWED_HOSTS: list[str] = [h.strip().lower() for h in ALLOWED_HOSTS_STR.split(",") if h.strip()]
+if not ALLOWED_HOSTS:
+    ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 
 
 # ----------------------------------------------------------------
@@ -123,11 +131,9 @@ if all([AUTH0_CLIENT_ID, AUTH0_CLIENT_SECRET, AUTH0_DOMAIN]):
 else:
     logging.warning("Auth0の設定が不完全なため、管理者ページの認証機能は動作しません。")
 
-# デバッグ用ログ
+# デバッグ用ログ (APIキーはマスキングして出力)
 if GEMINI_API_KEY:
-    # 下5桁を抽出するために負のインデックス [-5:] を使用
     masked_key = "..." + GEMINI_API_KEY[-5:]
-    # flush=True を指定することで、Renderのログに即座に出力されるようにします
-    # print(f"DEBUG: Current API Key ends with: {masked_key}", flush=True)
+    logging.info(f"Gemini API Key loaded (masked: {masked_key})")
 else:
-    print("DEBUG: GEMINI_API_KEY is empty!", flush=True)
+    logging.warning("GEMINI_API_KEY is not set.")

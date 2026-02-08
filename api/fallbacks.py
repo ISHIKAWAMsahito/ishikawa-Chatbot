@@ -33,8 +33,8 @@ async def get_all_fallbacks(user: dict = Depends(require_auth)):
         result = database.db_client.client.table("category_fallbacks").select("id, question, answer, category_name, embedding").order("id", desc=True).execute()
         return {"fallbacks": result.data or []}
     except Exception as e:
-        logging.error(f"Q&A一覧取得エラー: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Q&A一覧取得エラー: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="処理に失敗しました。")
 
 # 修正: /api/fallbacks -> /
 @router.post("/")
@@ -73,8 +73,8 @@ async def create_fallback(request: Dict[str, Any], user: dict = Depends(require_
         result = database.db_client.client.table("category_fallbacks").insert(insert_data).execute()
         return {"message": "保存しました", "fallback": result.data[0]}
     except Exception as e:
-        logging.error(f"作成エラー: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"作成エラー: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="処理に失敗しました。")
 
 # 修正: /api/fallbacks/{qa_id} -> /{qa_id}
 @router.put("/{qa_id}")
@@ -111,8 +111,8 @@ async def update_fallback(qa_id: int, request: Dict[str, Any], user: dict = Depe
         result = database.db_client.client.table("category_fallbacks").update(update_data).eq("id", qa_id).execute()
         return {"message": "更新しました", "fallback": result.data[0]}
     except Exception as e:
-        logging.error(f"更新エラー: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"更新エラー: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="処理に失敗しました。")
 
 # 修正: /api/fallbacks/{qa_id} -> /{qa_id}
 @router.delete("/{qa_id}")
@@ -124,7 +124,8 @@ async def delete_fallback(qa_id: int, user: dict = Depends(require_auth)):
         database.db_client.client.table("category_fallbacks").delete().eq("id", qa_id).execute()
         return {"message": "削除しました"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"削除エラー: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="処理に失敗しました。")
 
 # 修正: /api/fallbacks/vectorize-all -> /vectorize-all
 @router.post("/vectorize-all")
@@ -166,5 +167,5 @@ async def vectorize_all_missing_fallbacks(user: dict = Depends(require_auth)):
 
         return {"message": f"修復完了。{count}件のベクトルを再生成しました。"}
     except Exception as e:
-        logging.error(f"処理エラー: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"ベクトル修復処理エラー: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="処理に失敗しました。")

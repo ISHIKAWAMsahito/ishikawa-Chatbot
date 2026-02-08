@@ -3,9 +3,11 @@ import json
 import logging
 from datetime import datetime
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException  # 追加
-from pydantic import BaseModel  # 追加
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
+
 from core.config import BASE_DIR, JST
+from core.dependencies import require_auth, require_auth_client
 
 # ==========================================
 # 1. ルーターの定義 (これが不足していました)
@@ -86,10 +88,9 @@ feedback_manager = FeedbackManager()
 # 4. APIエンドポイントの実装 (ここが重要)
 # ==========================================
 @router.post("/")
-async def submit_feedback(request: FeedbackRequest):
+async def submit_feedback(request: FeedbackRequest, user: dict = Depends(require_auth_client)):
     """
-    フィードバックを受け取るAPIエンドポイント
-    URL: /api/client/feedback/ (main.pyの設定による)
+    フィードバックを受け取るAPIエンドポイント（ログイン済みユーザーのみ）
     """
     try:
         feedback_manager.save_feedback(
@@ -99,12 +100,12 @@ async def submit_feedback(request: FeedbackRequest):
         )
         return {"status": "success", "message": "フィードバックを受け付けました"}
     except Exception as e:
-        logging.error(f"APIエラー: {e}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+        logging.error(f"APIエラー: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="処理に失敗しました。")
 
 @router.get("/stats")
-async def get_stats():
+async def get_stats(user: dict = Depends(require_auth)):
     """
-    統計情報を取得するAPIエンドポイント (管理者用などで使用可能)
+    統計情報を取得するAPIエンドポイント（管理者用）
     """
     return feedback_manager.get_feedback_stats()

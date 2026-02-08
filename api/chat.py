@@ -4,20 +4,16 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from core.database import get_db
-# ★追加: 設定値のインポート
 from core.config import SUPABASE_URL, SUPABASE_ANON_KEY
+from core.dependencies import require_auth
 from models.schemas import ChatQuery, FeedbackCreate, FeedbackRead
 
-# ---------------------------------------------------------
-# インポート元
-# ---------------------------------------------------------
 from services.utils import get_or_create_session_id
 from services.chat_logic import (
-    enhanced_chat_logic, 
-    history_manager, 
-    analyze_feedback_trends 
+    enhanced_chat_logic,
+    history_manager,
+    analyze_feedback_trends,
 )
-# ---------------------------------------------------------
 
 router = APIRouter()
 
@@ -77,7 +73,8 @@ def create_feedback(
 @router.get("/analyze", summary="フィードバック分析 (管理者用)")
 async def analyze_feedback(
     request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_auth),
 ):
     """
     蓄積されたフィードバックを分析し、改善レポートを生成します。
@@ -86,7 +83,7 @@ async def analyze_feedback(
         {"rating": "bad", "comment": "回答が遅い"},
         {"rating": "good", "comment": "分かりやすかった"}
     ]
-    
+
     return StreamingResponse(
         analyze_feedback_trends(dummy_logs),
         media_type="text/event-stream"

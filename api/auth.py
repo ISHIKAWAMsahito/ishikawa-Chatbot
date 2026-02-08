@@ -3,7 +3,15 @@ import logging
 from urllib.parse import quote_plus  # ★追加: URLエンコード用
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import RedirectResponse, FileResponse, Response
-from core.config import oauth, AUTH0_DOMAIN, AUTH0_CLIENT_ID, SUPER_ADMIN_EMAILS, ALLOWED_CLIENT_EMAILS, BASE_DIR
+from core.config import (
+    oauth,
+    AUTH0_DOMAIN,
+    AUTH0_CLIENT_ID,
+    SUPER_ADMIN_EMAILS,
+    ALLOWED_CLIENT_EMAILS,
+    BASE_DIR,
+    ALLOWED_HOSTS,
+)
 
 router = APIRouter()
 # #システムの入り口となる認証と、HTMLファイルの配信を担当しています。
@@ -21,13 +29,17 @@ router = APIRouter()
 # 静的ファイル配信: 認証状態に基づいて、SPA（Single Page Application）のHTMLファイル（client.html, admin.html, DB.html 等）を直接返しています。
 
 # =========================================================
-#  URL生成ヘルパー
+#  URL生成ヘルパー (Host ヘッダー検証: オープンリダイレクト対策)
 # =========================================================
 def get_safe_redirect_uri(request: Request, path: str) -> str:
-    host = request.headers.get("host")
-    scheme = "https" if "onrender.com" in host else request.url.scheme
+    host_header = (request.headers.get("host") or "").strip()
+    host_for_check = host_header.split(":")[0].lower() if host_header else ""
+    if host_for_check not in ALLOWED_HOSTS:
+        logging.warning(f"Rejected Host header for redirect: {host_header!r}. Using request netloc.")
+        host_header = request.url.netloc or "localhost"
+    scheme = "https" if ("onrender.com" in host_header or "render.com" in host_header) else request.url.scheme
     clean_path = path if path.startswith("/") else f"/{path}"
-    return f"{scheme}://{host}{clean_path}"
+    return f"{scheme}://{host_header}{clean_path}"
 
 # ---------------------------------------------------------
 # 認証エンドポイント

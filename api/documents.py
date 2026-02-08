@@ -5,6 +5,7 @@ import json
 import hashlib
 import re
 from typing import Dict, Any, Optional, List
+from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 import google.generativeai as genai
 import httpx
@@ -24,6 +25,44 @@ from core.config import ACTIVE_COLLECTION_NAME
 from services import document_processor
 
 router = APIRouter()
+
+# エラー時は汎用メッセージを返し、詳細はログのみ (情報開示対策)
+GENERIC_ERROR_MSG = "処理に失敗しました。"
+LOG_EXC_INFO = True
+
+def _sanitize_search(s: Optional[str]) -> str:
+    """検索文字列のサニタイズ (ilike のワイルドカード・インジェクション対策)"""
+    if not s or not s.strip():
+        return ""
+    return s.replace(",", "").replace("%", "").replace("_", "").strip()[:500]
+
+def _is_url_allowed_for_scrape(url: str) -> tuple[bool, str]:
+    """スクレイピング許可: スキームは https のみ、プライベート/内部ホストは拒否 (SSRF対策)"""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False, "無効なURLです。"
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("https",):
+        return False, "スキームは https のみ利用可能です。"
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False, "ホストが取得できません。"
+    # ローカル・プライベート・メタデータ系を拒否
+    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return False, "ローカルホストは許可されていません。"
+    if host.startswith("169.254.") or host.startswith("10.") or host.startswith("192.168."):
+        return False, "内部ネットワークへのアクセスは許可されていません。"
+    if host.startswith("172."):
+        try:
+            second_octet = int(host.split(".")[1] or "0")
+            if 16 <= second_octet <= 31:
+                return False, "内部ネットワークへのアクセスは許可されていません。"
+        except (ValueError, IndexError):
+            pass
+    if host == "metadata.google.internal" or ".internal" in host:
+        return False, "内部メタデータへのアクセスは許可されていません。"
+    return True, ""
 
 # ----------------------------------------------------------------
 # 共通設定: 整形ルール (Markdown化を強制)
@@ -99,10 +138,14 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
     if not database.db_client or not document_processor.simple_processor:
         raise HTTPException(503, "システム初期化エラー")
 
+    ok, err_msg = _is_url_allowed_for_scrape(request.url)
+    if not ok:
+        raise HTTPException(400, err_msg)
+
     try:
-        # 1. サイトへのアクセス
+        # 1. サイトへのアクセス (TLS検証有効: MITM対策)
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
-        async with httpx.AsyncClient(verify=False, headers=headers, follow_redirects=True) as client:
+        async with httpx.AsyncClient(verify=True, headers=headers, follow_redirects=True) as client:
             resp = await client.get(request.url, timeout=30.0)
             resp.raise_for_status()
 
@@ -187,54 +230,87 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
 
         return {"message": f"「{raw_title}」の取り込み完了 (.md保存)", "chunks": total_chunks}
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Scrape Error: {e}")
-        raise HTTPException(500, f"スクレイピング失敗: {str(e)}")
+        logging.error(f"Scrape Error: {e}", exc_info=LOG_EXC_INFO)
+        raise HTTPException(500, "スクレイピングに失敗しました。")
 
 # --- 以下、既存のエンドポイント (変更なし) ---
 @router.get("/all")
-async def get_all_documents(page: int = Query(1, ge=1), limit: int = Query(100, ge=1), search: Optional[str] = None, category: Optional[str] = None):
-    if not database.db_client: raise HTTPException(503, "Database not initialized")
+async def get_all_documents(
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1),
+    search: Optional[str] = None,
+    category: Optional[str] = None,
+    user: dict = Depends(require_auth),
+):
+    if not database.db_client:
+        raise HTTPException(503, "Database not initialized")
     try:
         client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
         query = client.table("documents").select("*", count="exact")
-        if search:
-            clean_search = search.replace(",", "").replace("%", "")
+        clean_search = _sanitize_search(search)
+        if clean_search:
             query = query.or_(f"content.ilike.%{clean_search}%,metadata->>source.ilike.%{clean_search}%")
-        if category: query = query.eq("metadata->>category", category)
+        if category:
+            query = query.eq("metadata->>category", category)
         start = (page - 1) * limit
         end = start + limit - 1
         response = query.order("id", desc=True).range(start, end).execute()
         return {"documents": response.data, "total": response.count, "page": page, "limit": limit}
     except Exception as e:
-        logging.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"データ取得エラー: {str(e)}")
+        logging.error(f"Documents list error: {e}", exc_info=LOG_EXC_INFO)
+        raise HTTPException(status_code=500, detail=GENERIC_ERROR_MSG)
 
 @router.get("/collections/{collection_name}/documents")
-async def get_collection_documents(collection_name: str, page: int = Query(1, ge=1), limit: int = Query(100, ge=1), search: Optional[str] = None):
+async def get_collection_documents(
+    collection_name: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1),
+    search: Optional[str] = None,
+    user: dict = Depends(require_auth),
+):
+    if not database.db_client:
+        raise HTTPException(503, "Database not initialized")
     try:
         client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
         query = client.table("documents").select("*", count="exact").eq("metadata->>collection_name", collection_name)
-        if search: query = query.or_(f"content.ilike.%{search}%,metadata->>source.ilike.%{search}%")
+        clean_search = _sanitize_search(search)
+        if clean_search:
+            query = query.or_(f"content.ilike.%{clean_search}%,metadata->>source.ilike.%{clean_search}%")
         start = (page - 1) * limit
         end = start + limit - 1
         response = query.order("id", desc=True).range(start, end).execute()
         return {"documents": response.data, "total": response.count, "page": page, "limit": limit}
     except Exception as e:
-        raise HTTPException(500, detail=str(e))
+        logging.error(f"Collection documents error: {e}", exc_info=LOG_EXC_INFO)
+        raise HTTPException(500, detail=GENERIC_ERROR_MSG)
 
 @router.get("/{document_id}")
-async def get_document_by_id(document_id: int):
-    client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
-    response = client.table("documents").select("*").eq("id", document_id).single().execute()
-    if not response.data: raise HTTPException(404, "Document not found")
-    return response.data
+async def get_document_by_id(document_id: int, user: dict = Depends(require_auth)):
+    if not database.db_client:
+        raise HTTPException(503, "Database not initialized")
+    try:
+        client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
+        response = client.table("documents").select("*").eq("id", document_id).single().execute()
+        if not response.data:
+            raise HTTPException(404, "Document not found")
+        return response.data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Document get error: {e}", exc_info=LOG_EXC_INFO)
+        raise HTTPException(500, detail=GENERIC_ERROR_MSG)
 
 @router.delete("/{document_id}")
 async def delete_document(document_id: int, user: dict = Depends(require_auth)):
-    client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
+    if not database.db_client:
+        raise HTTPException(503, "Database not initialized")
     try:
+        client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
         client.table("documents").delete().eq("id", document_id).execute()
         return {"message": f"Document {document_id} deleted successfully"}
     except Exception as e:
-        raise HTTPException(500, detail=str(e))
+        logging.error(f"Document delete error: {e}", exc_info=LOG_EXC_INFO)
+        raise HTTPException(500, detail=GENERIC_ERROR_MSG)

@@ -6,12 +6,15 @@ from pydantic import BaseModel, Field
 # -----------------------------------------------------------------------------
 class ChatQuery(BaseModel):
     """
-    チャットリクエスト用スキーマ
+    チャットリクエスト用スキーマ（DoS対策: question に長さ制限）
     """
-    # ロジック側で .question を参照しているため、フィールド名を合わせます
-    question: str = Field(..., description="ユーザーからの質問文", alias="query") 
-    
-    # 以下はデフォルト値を設定し、必須ではないようにします
+    question: str = Field(
+        ...,
+        description="ユーザーからの質問文",
+        alias="query",
+        min_length=1,
+        max_length=4000,
+    )
     collection: str = Field("default", description="検索対象のコレクション名")
     top_k: int = Field(5, description="検索で取得するドキュメント数")
     embedding_model: str = Field("models/gemini-embedding-001", description="使用するEmbeddingモデル")

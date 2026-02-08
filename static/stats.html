@@ -403,7 +403,10 @@ ${logsText}
                 }
             }
 
-            resultDiv.innerHTML = marked.parse(fullText);
+            // XSS対策: marked 出力から script と on* 属性を除去してから表示
+            let html = marked.parse(fullText || '');
+            html = (html || '').replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '').replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, '').replace(/\s+on\w+\s*=\s*[^\s>]*/gi, '');
+            resultDiv.innerHTML = html;
 
         } catch (error) {
             console.error(error);
