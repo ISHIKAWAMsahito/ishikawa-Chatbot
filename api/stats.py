@@ -3,13 +3,11 @@ import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import google.generativeai as genai
 
 from core.database import db_client
-# ▼▼▼ 修正箇所: インポート先を core.dependencies に変更 ▼▼▼
-from core.dependencies import require_auth 
-# ▲▲▲ 修正ここまで ▲▲▲
+from core.dependencies import require_auth
 from core.config import GEMINI_API_KEY
 
 # プロンプトのインポート
@@ -29,8 +27,13 @@ MODEL_NAME = "gemini-2.5-flash"
 class FeedbackItem(BaseModel):
     id: int
     created_at: str
-    rating: Optional[str] = None
-    comment: Optional[str] = None
+    # anonymous_commentsにはratingがないため、Noneを許容
+    rating: Optional[str] = None 
+    # DBのカラム名 'content' を Pydanticの 'comment' フィールドにマッピング
+    comment: Optional[str] = Field(None, alias="content") 
+
+    class Config:
+        populate_by_name = True
 
 class AnalyzeRequest(BaseModel):
     target_date: Optional[str] = None
@@ -43,8 +46,8 @@ async def get_stats_data(
     user: dict = Depends(require_auth)
 ):
     try:
-        # テーブル名は環境に合わせて 'feedback' か 'chat_logs' 等に調整してください
-        response = db_client.client.table("feedback") \
+        # テーブル名を 'anonymous_comments' に変更
+        response = db_client.client.table("anonymous_comments") \
             .select("*") \
             .order("created_at", desc=True) \
             .limit(100) \
@@ -68,9 +71,9 @@ async def analyze_feedback(
     直近のログをGeminiに分析させ、ストリーミングで返す
     """
     try:
-        # 1. DBから分析対象データを取得
-        db_res = db_client.client.table("feedback") \
-            .select("created_at, rating, comment") \
+        # 1. DBから分析対象データを取得 (ratingカラムは存在しないため除外)
+        db_res = db_client.client.table("anonymous_comments") \
+            .select("created_at, content") \
             .order("created_at", desc=True) \
             .limit(50) \
             .execute()
