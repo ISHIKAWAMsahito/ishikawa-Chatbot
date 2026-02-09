@@ -32,6 +32,8 @@ class FallbackUpdate(BaseModel):
 class FallbackResponse(FallbackBase):
     id: int
     created_at: str
+    # ▼▼▼ 修正: これがないと画面に「未処理」と出てしまいます ▼▼▼
+    embedding: Optional[List[float]] = None 
 
 # --- Helper Functions ---
 def generate_embedding(text: str) -> List[float]:
@@ -164,22 +166,20 @@ async def delete_fallback(
         logger.error(f"Error deleting fallback: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="削除に失敗しました")
 
-# ▼▼▼ 追加: まとめてベクトル化するエンドポイント ▼▼▼
 @router.post("/vectorize-all")
 async def vectorize_all_fallbacks(user: dict = Depends(require_auth)):
     """
     embeddingが空、またはすべてのQ&Aに対してベクトル化を実行して更新する
     """
     try:
-        # 全件取得 (件数が数千件になる場合はページネーションが必要だが、現状は一括で対応)
+        # 全件取得
         response = db_client.client.table("category_fallbacks").select("*").execute()
         all_records = response.data
         
         updated_count = 0
         
         for record in all_records:
-            # embeddingが無い、または空の場合に実行
-            # (強制的に全件更新したい場合は条件を外してください)
+            # embeddingが無い場合に実行
             if not record.get('embedding') and record.get('question'):
                 try:
                     new_embedding = generate_embedding(record['question'])
