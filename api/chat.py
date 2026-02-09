@@ -19,7 +19,7 @@ from services.chat_logic import (
 router = APIRouter()
 
 # ★追加: フロントエンド初期化用エンドポイント
-@router.get("/config")
+@router.get("/chat/config")
 def get_chat_config():
     """
     フロントエンド（client.html等）の初期化に必要な公開設定を返す

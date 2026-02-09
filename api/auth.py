@@ -25,11 +25,9 @@ def get_safe_redirect_uri(request: Request, path: str) -> str:
     
     if host_for_check not in ALLOWED_HOSTS:
         logging.warning(f"Rejected Host header: {host_header}. Using default.")
-        # ALLOWED_HOSTSの先頭(本番ならRenderドメイン、開発ならlocalhost)を使用
         host_header = ALLOWED_HOSTS[0] if ALLOWED_HOSTS else "localhost"
 
     # 2. Schemeの決定 (Render対応)
-    # X-Forwarded-Proto が https なら https を採用
     forwarded_proto = request.headers.get("x-forwarded-proto")
     if forwarded_proto == "https" or "onrender.com" in host_header:
         scheme = "https"
@@ -47,7 +45,6 @@ async def login_auth0(request: Request):
     if 'auth0' not in oauth._clients:
         raise HTTPException(status_code=500, detail="Auth0 is not configured.")
     
-    # HTTPS化された正しいコールバックURLを生成
     redirect_uri = get_safe_redirect_uri(request, '/auth')
     return await oauth.auth0.authorize_redirect(request, redirect_uri)
 
@@ -57,11 +54,9 @@ async def auth(request: Request):
         raise HTTPException(status_code=500, detail="Auth0 is not configured.")
     
     try:
-        # stateチェックなどを含むトークン取得
         token = await oauth.auth0.authorize_access_token(request)
     except Exception as e:
         logging.error(f"Auth0 access token error: {e}")
-        # エラー時はログイン画面へ戻す
         return RedirectResponse(url='/login')
 
     if userinfo := token.get('userinfo'):
@@ -99,7 +94,7 @@ async def logout(request: Request):
     return RedirectResponse(url=logout_url, status_code=302)
 
 # ---------------------------------------------------------
-# ページ配信 (変更なし)
+# ページ配信
 # ---------------------------------------------------------
 @router.get("/", response_class=FileResponse)
 async def serve_client(request: Request):
@@ -126,6 +121,31 @@ async def serve_db(request: Request):
         return RedirectResponse(url='/', status_code=302)
     path = os.path.join(BASE_DIR, "static", "DB.html")
     return FileResponse(path) if os.path.exists(path) else Response(status_code=404)
+
+# ★修正: パスを /stats.html に統一し、ファイル名を stats.html に修正
+# auth.py
+
+# ★修正: エンドポイント名を stats.html に統一
+# auth.py の該当箇所を以下に置き換え
+
+@router.get("/stats.html", response_class=FileResponse)
+async def serve_stats(request: Request):
+    user = request.session.get('user')
+    if not user:
+        return RedirectResponse(url='/login', status_code=302)
+    
+    # 管理者権限チェック (SUPER_ADMIN_EMAILS は config.py から取得)
+    user_email = user.get('email', '').lower()
+    if user_email not in [e.lower() for e in SUPER_ADMIN_EMAILS]:
+        return RedirectResponse(url='/', status_code=302)
+    
+    # ファイルパスの解決
+    path = os.path.join(BASE_DIR, "static", "stats.html")
+    if not os.path.exists(path):
+        logging.error(f"stats.html not found at: {path}")
+        return Response(status_code=404)
+        
+    return FileResponse(path)
 
 @router.get("/style.css", response_class=FileResponse)
 async def serve_css():

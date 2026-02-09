@@ -21,7 +21,7 @@ from core.settings import SettingsManager
 from core.ws_auth import validate_ws_token
 
 # APIルーター
-from api import chat, feedback, system, auth, documents, fallbacks
+from api import chat, feedback, system, auth, documents, fallbacks,stats
 
 load_dotenv()
 
@@ -123,6 +123,7 @@ app.include_router(chat.router, prefix="/api/admin", tags=["Admin Chat"])
 app.include_router(fallbacks.router, prefix="/api/admin/fallbacks", tags=["Admin Fallbacks"])
 app.include_router(system.router, prefix="/api/admin/system", tags=["System"])
 app.include_router(documents.router, prefix="/api/admin/documents", tags=["Documents"])
+app.include_router(stats.router, prefix="/api/admin/stats", tags=["Admin Stats"])
 app.include_router(feedback.router, prefix="/api", tags=["Feedback"])
 app.include_router(auth.router, tags=["Auth"])
 
