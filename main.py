@@ -79,7 +79,6 @@ app = FastAPI(
 # ミドルウェア設定
 # ---------------------------------------------------------
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_HOSTS if IS_PRODUCTION else ["*"],
@@ -88,15 +87,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# セッション: プロキシ環境(Render)での Cookie 処理を安定化
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
-    https_only=IS_PRODUCTION, # 本番はHTTPS必須
-    same_site="lax",          # リダイレクト時のCookie維持のため lax
+    https_only=IS_PRODUCTION,
+    same_site="lax",
 )
 
-# 静的ファイル
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
@@ -112,16 +109,15 @@ app.include_router(feedback.router, prefix="/api", tags=["Feedback"])
 app.include_router(auth.router, tags=["Auth"])
 
 # ---------------------------------------------------------
-# WebSocket (トークン必須)
+# WebSocket
 # ---------------------------------------------------------
+
+# 管理者用: トークン必須
 @app.websocket("/ws/settings")
 async def websocket_settings(websocket: WebSocket):
     token = websocket.query_params.get("token")
-    
-    # 詳細なログ出力で接続拒否の原因を特定
     if not validate_ws_token(token):
-        masked_token = (token[:5] + "...") if token else "None"
-        logger.warning(f"WebSocket auth failed. Token: {masked_token}")
+        logger.warning(f"WebSocket[Admin] 拒否: 無効なトークン")
         await websocket.close(code=1008)
         return
 
@@ -130,15 +126,44 @@ async def websocket_settings(websocket: WebSocket):
         return
 
     try:
-        await core_settings.settings_manager.add_websocket(websocket)
-        logger.info("✅ WebSocket client connected.")
+        # 管理者として登録 (is_admin=True)
+        await core_settings.settings_manager.add_websocket(websocket, is_admin=True)
+        logger.info("✅ Admin WebSocket connected.")
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         if core_settings.settings_manager:
             core_settings.settings_manager.remove_websocket(websocket)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"Admin WebSocket error: {e}")
+        if core_settings.settings_manager:
+            core_settings.settings_manager.remove_websocket(websocket)
+
+# ★追加: 学生用: 認証なし（読み取り専用）
+@app.websocket("/ws/client/settings")
+async def websocket_client_settings(websocket: WebSocket):
+    """
+    学生画面(client.html)用の読み取り専用WebSocket。
+    認証トークンは不要。管理者が設定を変更した際の通知のみを受け取る。
+    """
+    if not core_settings.settings_manager:
+        await websocket.close(code=1000)
+        return
+
+    try:
+        # 学生として登録 (is_admin=False)
+        await core_settings.settings_manager.add_websocket(websocket, is_admin=False)
+        logger.info("✅ Client WebSocket connected (Read-only).")
+        
+        while True:
+            # クライアントからのメッセージは無視して待機
+            await websocket.receive_text()
+            
+    except WebSocketDisconnect:
+        if core_settings.settings_manager:
+            core_settings.settings_manager.remove_websocket(websocket)
+    except Exception as e:
+        logger.error(f"Client WebSocket error: {e}")
         if core_settings.settings_manager:
             core_settings.settings_manager.remove_websocket(websocket)
 
@@ -151,6 +176,4 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    # ★重要: proxy_headers=True で Render からの X-Forwarded-Proto を信頼し、
-    # アプリが自身を https:// と認識できるようにする (Auth0 エラー対策)
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=True, proxy_headers=True)

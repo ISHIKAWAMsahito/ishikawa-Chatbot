@@ -535,11 +535,14 @@ darkModeBtn.addEventListener('click', () => {
         function connectSettingsWebSocket() {
             try {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}/ws/settings`;
+                
+                // ★修正箇所: 学生用のエンドポイントに接続 (トークン不要)
+                const wsUrl = `${protocol}//${window.location.host}/ws/client/settings`;
+                
                 settingsSocket = new WebSocket(wsUrl);
                 settingsSocket.onopen = () => {
                     console.log('設定同期WebSocket接続完了');
-                    updateSyncIndicator(true, '設定同期接続中');
+                    // 必要ならUI更新
                 };
                 settingsSocket.onmessage = (event) => {
                     try {
