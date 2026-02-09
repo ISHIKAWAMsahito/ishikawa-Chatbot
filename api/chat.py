@@ -18,16 +18,18 @@ from services.chat_logic import (
 
 router = APIRouter()
 
-# ★追加: フロントエンド初期化用エンドポイント
-@router.get("/chat/config")
+# ▼▼▼ 修正箇所: パスを /config に変更 (フロントエンドの期待に合わせる) ▼▼▼
+@router.get("/config")
 def get_chat_config():
     """
     フロントエンド（client.html等）の初期化に必要な公開設定を返す
+    URL: /api/client/config
     """
     return {
         "supabase_url": SUPABASE_URL,
         "supabase_anon_key": SUPABASE_ANON_KEY
     }
+# ▲▲▲ 修正ここまで ▲▲▲
 
 @router.post("/chat", summary="AIチャット送信 (ストリーミング)")
 async def chat_endpoint(
