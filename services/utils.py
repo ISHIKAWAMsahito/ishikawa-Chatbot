@@ -9,14 +9,25 @@ from urllib.parse import urlparse
 from fastapi import Request
 from pydantic import BaseModel, Field
 
+# ▼ 追加: Supabaseクライアントのインポート
+from supabase import create_client, Client
+
 # ロガーの設定
 logger = logging.getLogger(__name__)
 
 # --- 設定: 環境変数から取得 ---
-# ⚠️重要: ここに使用するバケット名を設定してください（例: "slides", "images", "documents"）
-# システム構成書に基づき、画像が格納されているバケット名を指定します
 STORAGE_BUCKET_NAME = os.getenv("SUPABASE_STORAGE_BUCKET", "slides") 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
+# ▼ 重要: 署名付きURLの発行にはService Key（または適切な権限を持つAnon Key）が必要です
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+
+# ▼ クライアントの初期化（キーがない場合のガード付き）
+supabase: Optional[Client] = None
+if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    except Exception as e:
+        logger.error(f"Failed to initialize Supabase client: {e}")
 
 # 定数設定
 MAX_TOTAL_SESSIONS = 1000
@@ -31,7 +42,8 @@ class SessionData(BaseModel):
     history: List[ChatMessage] = Field(default_factory=list)
     last_accessed: float = Field(default_factory=time.time)
 
-# --- Functions ---
+# --- Functions (Session / Logging) ---
+# ... (既存の get_or_create_session_id, send_sse, log_context, ChatHistoryManager は変更なし) ...
 
 def get_or_create_session_id(request: Request) -> str:
     session_id = request.session.get('chat_session_id')
@@ -103,45 +115,66 @@ def format_urls_as_links(text: str) -> str:
         return f"[{url}]({url})"
     return re.sub(url_pattern, replace_link, text)
 
-# --- ✨ 新規追加: 画像URL生成ロジック ---
+# --- ✨ 変更: 署名付きURL生成ロジック ---
+
 def generate_storage_url(source_name: str) -> Optional[str]:
     """
-    ファイル名からSupabase Storageの公開URLを生成する。
+    Supabase Storageの署名付きURL（有効期限1時間）を生成する。
     Args:
         source_name: DBのmetadata['source'] (例: '20251226.jpg')
     Returns:
-        有効なURL文字列 または None
+        有効な署名付きURL または None
     """
-    if not source_name or not SUPABASE_URL:
+    if not source_name or not supabase:
         return None
 
-    # セキュリティ: パストラバーサル対策 (../ を無効化し、ファイル名のみ抽出)
+    # パストラバーサル対策
     safe_filename = os.path.basename(source_name)
     
-    # 拡張子チェック (画像かどうか)
+    # 拡張子チェック
     if not any(safe_filename.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
         return None
 
-    # URL組み立て: {SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{FILENAME}
-    # ※ バケットが Public 設定であることを前提としています
-    # ※ フォルダ構造がある場合はここで調整 (例: f"images/{safe_filename}")
-    return f"{SUPABASE_URL}/storage/v1/object/public/{STORAGE_BUCKET_NAME}/{safe_filename}"
+    # ▼ ここでパスを調整してください
+    # 画像が 'images' フォルダ内にある場合は f"images/{safe_filename}" とします
+    # source_name 自体がパスを含んでいる場合はそのまま使うことも検討してください
+    file_path = safe_filename 
+    # file_path = f"images/{safe_filename}"  # フォルダが必要な場合
+
+    try:
+        # 🔑 3600秒（1時間）有効なURLを作成
+        res = supabase.storage.from_(STORAGE_BUCKET_NAME).create_signed_url(
+            file_path, 
+            3600
+        )
+        # レスポンス形式: {'signedURL': 'https://...', ...} (v2系)
+        # バージョンによって形式が異なる場合があるため調整
+        if isinstance(res, dict) and 'signedURL' in res:
+            return res['signedURL']
+        elif isinstance(res, str): # 古いバージョンやエラー文字列
+             return res
+        else:
+             # オブジェクトで返ってくる場合（最新の supabase-py）
+             return getattr(res, 'signed_url', None) or res.get('signedURL')
+
+    except Exception as e:
+        logger.warning(f"Failed to generate signed URL for {source_name}: {e}")
+        return None
 
 
 def format_references(documents: List[object]) -> str:
     """
     RAG検索結果から参照元リストを生成。
-    URLがない場合は source から自動生成を試みる。
+    URLがない場合は署名付きURLの自動生成を試みる。
     """
     if not documents:
         return ""
 
-    formatted_lines = ["\n\n## 参照元 (クリックで資料を表示)"]
+    formatted_lines = ["\n\n## 参照元 (クリックで資料を表示・1時間有効)"]
     seen_sources = set()
     index = 1
 
     for doc in documents:
-        # メタデータの取得
         if isinstance(doc, dict):
             metadata = doc.get("metadata", {})
         else:
@@ -152,14 +185,11 @@ def format_references(documents: List[object]) -> str:
         source_name = str(metadata.get("source", "資料名不明"))
         display_name = os.path.basename(source_name)
         
-        # --- 🛠 修正: URL取得ロジックの強化 ---
         url = metadata.get("url")
         
-        # URLが空の場合、ファイル名から自動生成を試みる
+        # URLがない、または空の場合は署名付きURLを生成
         if not url and source_name != "資料名不明":
             url = generate_storage_url(source_name)
-            if url:
-                logger.info(f"Generated URL for {source_name}: {url}") # デバッグ用ログ
 
         # URLバリデーション
         if url:
