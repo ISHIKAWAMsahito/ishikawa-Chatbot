@@ -333,9 +333,7 @@ body.dark-mode .dark-mode-toggle {
         <button id="darkModeBtn" class="dark-mode-toggle" title="ダークモード切替">🌙</button>
         <a href="/logout" class="logout-btn">🚪 ログアウト</a>
         <button id="openCommentModalBtn" class="comment-btn">✉️ 回答への意見・要望</button>
-        <div class="settings-indicator" id="settingsIndicator">
-            <div class="sync-dot disconnected" id="syncDot"></div>
-        </div>
+        
         <h1>📚 AI chatbot system</h1>
         <p class="subtitle">学生生活に関する様々な質問にお答えします!</p>
         <div class="theme-selector">
@@ -535,37 +533,43 @@ darkModeBtn.addEventListener('click', () => {
             try {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 
-                // ★修正箇所: 学生用のエンドポイントに接続 (トークン不要)
+                // 学生用のエンドポイントに接続
                 const wsUrl = `${protocol}//${window.location.host}/ws/client/settings`;
                 
                 settingsSocket = new WebSocket(wsUrl);
+                
                 settingsSocket.onopen = () => {
                     console.log('設定同期WebSocket接続完了');
-                    // 必要ならUI更新
                 };
+                
                 settingsSocket.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
                         if (data.type === 'settings_update') {
                             console.log('設定更新を受信:', data.data);
+                            // 緑の通知バナーだけ表示する
                             showSettingsUpdateNotification();
                         }
                     } catch (e) {
                         console.error('WebSocketメッセージ解析エラー:', e);
                     }
                 };
+                
                 settingsSocket.onclose = () => {
                     console.log('設定同期WebSocket切断');
-                    updateSyncIndicator(false, '設定同期切断');
+                    // ★削除: updateSyncIndicator(false, '設定同期切断');
+                    // 自動再接続のみ行う
                     setTimeout(connectSettingsWebSocket, 5000);
                 };
+                
                 settingsSocket.onerror = (error) => {
                     console.error('設定同期WebSocketエラー:', error);
-                    updateSyncIndicator(false, '設定同期エラー');
+                    // ★削除: updateSyncIndicator(false, '設定同期エラー');
+                    settingsSocket.close();
                 };
+                
             } catch (error) {
                 console.error('WebSocket接続エラー:', error);
-                updateSyncIndicator(false, '設定同期接続失敗');
                 setTimeout(connectSettingsWebSocket, 5000);
             }
         }
@@ -878,9 +882,6 @@ let isFirstChunk = true; // ★追加: これを while ループの前に置く�
         } else {
             console.error("❌ Error: chatInput element not found in DOM.");
         }
-
-        // 設定WebSocket開始
-        connectSettingsWebSocket();
 
         // --- 画像表示機能(署名付きURL対応) ---
         window.showSourceImage = function(signedUrl) {
