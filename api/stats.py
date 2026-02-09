@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import List, Optional
+from typing import List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -25,12 +25,12 @@ MODEL_NAME = "gemini-2.5-flash"
 
 # --- Pydantic Models ---
 class FeedbackItem(BaseModel):
-    id: int
+    # 修正: DBがUUIDを返すため str に変更 (intだとエラーになる)
+    id: str 
     created_at: str
-    # anonymous_commentsにはratingがないため、Noneを許容
-    rating: Optional[str] = None 
+    rating: Optional[str] = None
     # DBのカラム名 'content' を Pydanticの 'comment' フィールドにマッピング
-    comment: Optional[str] = Field(None, alias="content") 
+    comment: Optional[str] = Field(None, alias="content")
 
     class Config:
         populate_by_name = True
@@ -46,7 +46,6 @@ async def get_stats_data(
     user: dict = Depends(require_auth)
 ):
     try:
-        # テーブル名を 'anonymous_comments' に変更
         response = db_client.client.table("anonymous_comments") \
             .select("*") \
             .order("created_at", desc=True) \
@@ -71,14 +70,14 @@ async def analyze_feedback(
     直近のログをGeminiに分析させ、ストリーミングで返す
     """
     try:
-        # 1. DBから分析対象データを取得 (ratingカラムは存在しないため除外)
+        # DBから分析対象データを取得 (contentのみ取得)
         db_res = db_client.client.table("anonymous_comments") \
             .select("created_at, content") \
             .order("created_at", desc=True) \
             .limit(50) \
             .execute()
         
-        # 2. 内部関数としてジェネレータを定義
+        # 内部関数としてジェネレータを定義
         async def stream_generator():
             if not db_res.data:
                 yield "data: " + json.dumps({"content": "分析データがありません。"}) + "\n\n"
@@ -95,7 +94,6 @@ async def analyze_feedback(
                     payload = json.dumps({"content": chunk.text})
                     yield f"data: {payload}\n\n"
 
-        # 3. ジェネレータを渡してレスポンスを返す
         return StreamingResponse(
             stream_generator(),
             media_type="text/event-stream"
