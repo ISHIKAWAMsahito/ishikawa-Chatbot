@@ -1,7 +1,8 @@
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -96,6 +97,23 @@ app.add_middleware(
 
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+
+# ---------------------------------------------------------
+# 静的ページのルーティング (stats.html等)
+# ---------------------------------------------------------
+
+@app.get("/stats.html")
+async def get_stats_page():
+    """
+    統計・分析ダッシュボードのHTMLを返す
+    """
+    file_path = "static/stats.html"
+    
+    if not os.path.exists(file_path):
+        # ファイルが存在しない場合は404
+        raise HTTPException(status_code=404, detail="Stats page not found")
+        
+    return FileResponse(file_path)
 
 # ---------------------------------------------------------
 # ルーター登録
