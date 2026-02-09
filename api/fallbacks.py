@@ -16,7 +16,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 EMBEDDING_MODEL = "models/gemini-embedding-001"
 
 # --- Pydantic Models ---
-# フロントエンドは "category" を使用
+# フロントエンド(API)側は "category" という名前で扱います
 class FallbackBase(BaseModel):
     category: str
     question: str
@@ -54,17 +54,20 @@ def generate_embedding(text: str) -> List[float]:
 async def list_fallbacks(user: dict = Depends(require_auth)):
     """登録されているQ&Aリストを取得"""
     try:
-        # DBカラム名: category_name
+        # DBのカラム名 'category_name' を指定して取得
         response = db_client.client.table("category_fallbacks") \
             .select("id, category_name, question, answer, created_at") \
             .order("category_name", desc=False) \
             .order("created_at", desc=True) \
             .execute()
         
-        # DBの 'category_name' を API仕様の 'category' に変換する
+        # DBの 'category_name' を API仕様の 'category' に変換してリスト化
         data = []
         for item in response.data:
-            item['category'] = item.pop('category_name', 'general')
+            # category_name があれば取り出して category に付け替える
+            # (万が一 null の場合は 'general' 等にする)
+            cat_val = item.pop('category_name', 'general')
+            item['category'] = cat_val
             data.append(item)
             
         return data
@@ -81,7 +84,7 @@ async def create_fallback(
     try:
         embedding = generate_embedding(fallback.question)
         
-        # DB保存時は 'category_name' キーを使用
+        # 保存時は DBカラム名 'category_name' をキーにする
         data = {
             "category_name": fallback.category, 
             "question": fallback.question,
@@ -94,7 +97,7 @@ async def create_fallback(
         if not response.data:
             raise HTTPException(status_code=500, detail="保存に失敗しました")
         
-        # レスポンス用に変換
+        # レスポンス用に変換 (DBから返ってきたデータも category_name なので変換が必要)
         result_item = response.data[0]
         result_item['category'] = result_item.pop('category_name', fallback.category)
             
