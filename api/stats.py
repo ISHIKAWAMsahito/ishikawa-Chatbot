@@ -7,7 +7,9 @@ from pydantic import BaseModel
 import google.generativeai as genai
 
 from core.database import db_client
-from core.security import require_auth
+# ▼▼▼ 修正箇所: インポート先を core.dependencies に変更 ▼▼▼
+from core.dependencies import require_auth 
+# ▲▲▲ 修正ここまで ▲▲▲
 from core.config import GEMINI_API_KEY
 
 # プロンプトのインポート
@@ -73,11 +75,9 @@ async def analyze_feedback(
             .limit(50) \
             .execute()
         
-        # 2. 内部関数としてジェネレータを定義 (ここが修正ポイント)
-        #    メイン関数内で yield は使わず、この内部関数内でのみ yield を行う
+        # 2. 内部関数としてジェネレータを定義
         async def stream_generator():
             if not db_res.data:
-                # データがない場合もストリーム形式でメッセージを返す
                 yield "data: " + json.dumps({"content": "分析データがありません。"}) + "\n\n"
                 return
 
@@ -92,7 +92,7 @@ async def analyze_feedback(
                     payload = json.dumps({"content": chunk.text})
                     yield f"data: {payload}\n\n"
 
-        # 3. ジェネレータを渡してレスポンスを返す (yieldではなくreturnする)
+        # 3. ジェネレータを渡してレスポンスを返す
         return StreamingResponse(
             stream_generator(),
             media_type="text/event-stream"
