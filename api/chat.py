@@ -18,12 +18,13 @@ from services.chat_logic import (
 
 router = APIRouter()
 
-# ▼▼▼ 修正箇所: パスを /config に変更 (フロントエンドの期待に合わせる) ▼▼▼
+# ▼▼▼ 修正箇所: 両方のパスでアクセスできるようにする ▼▼▼
 @router.get("/config")
+@router.get("/chat/config")
 def get_chat_config():
     """
-    フロントエンド（client.html等）の初期化に必要な公開設定を返す
-    URL: /api/client/config
+    フロントエンド（client.html, stats.html等）の初期化に必要な公開設定を返す
+    URL: /api/client/config および /api/client/chat/config
     """
     return {
         "supabase_url": SUPABASE_URL,
