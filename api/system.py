@@ -13,7 +13,7 @@ from core.config import (
     ACTIVE_COLLECTION_NAME, 
     SUPABASE_URL, 
     SUPABASE_ANON_KEY,
-    SECRET_KEY
+    SECRET_KEY  # ★重要: ws_auth.py と同じ鍵をインポート
 )
 from core.dependencies import require_auth
 from core import database
@@ -75,7 +75,6 @@ async def gemini_status(user: Any = Depends(require_auth)):
         return GeminiStatusResponse(connected=False, detail="API key not configured")
     
     try:
-        # 生成可能なモデルのみをリストアップ
         models = [
             m.name for m in genai.list_models() 
             if 'generateContent' in m.supported_generation_methods
@@ -88,8 +87,6 @@ async def gemini_status(user: Any = Depends(require_auth)):
 @router.get("/config", response_model=ConfigResponse)
 def get_config(user: Any = Depends(require_auth)):
     """フロントエンドが必要とする設定を返す（管理者用）"""
-    # 必須設定がない場合は空文字を返すなどのハンドリングも可能だが、
-    # Fail Fastにより起動時に保証されている前提とする
     return ConfigResponse(
         supabase_url=SUPABASE_URL or "",
         supabase_anon_key=SUPABASE_ANON_KEY or ""
@@ -100,16 +97,13 @@ async def get_collections(user: Any = Depends(require_auth)):
     """コレクション一覧を取得"""
     count = 0
     if database.db_client:
-        # DB接続がある場合のみカウントを取得
         try:
             count = database.db_client.count_chunks_in_collection(ACTIVE_COLLECTION_NAME)
         except Exception as e:
             logging.error(f"Count collection error: {e}")
             count = 0
             
-    return [
-        CollectionItem(name=ACTIVE_COLLECTION_NAME, count=count)
-    ]
+    return [CollectionItem(name=ACTIVE_COLLECTION_NAME, count=count)]
 
 @router.post("/collections", response_model=MessageResponse)
 async def create_collection(request: CreateCollectionRequest, user: Any = Depends(require_auth)):
@@ -119,8 +113,8 @@ async def create_collection(request: CreateCollectionRequest, user: Any = Depend
 @router.get("/ws-token", response_model=WSTokenResponse)
 def get_ws_token(user: Any = Depends(require_auth)):
     """
-    WebSocket /ws/settings 接続用の短期トークンを発行（管理者認証必須）。
-    検証側 (core/ws_auth.py) と同じ SECRET_KEY で署名する。
+    WebSocket接続用の短期トークンを発行。
+    検証側 (core/ws_auth.py) と同じ SECRET_KEY で署名します。
     """
     try:
         now = datetime.now(timezone.utc)
@@ -132,12 +126,12 @@ def get_ws_token(user: Any = Depends(require_auth)):
             "exp": now + timedelta(seconds=expires_in)
         }
         
-        # 403回避の要: ConfigのSECRET_KEYを使用
+        # アルゴリズム HS256 でエンコード
         token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
         
         return WSTokenResponse(token=token, expires_in_seconds=expires_in)
     except Exception as e:
-        logging.error(f"Token generation failed: {e}", exc_info=True)
+        logger.error(f"Token generation failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="トークン生成に失敗しました")
 
 @router.delete("/collections/{collection_name}", response_model=MessageResponse)
@@ -153,9 +147,9 @@ async def update_settings(settings_payload: Settings, user: Any = Depends(requir
     if not core_settings.settings_manager:
         raise HTTPException(status_code=503, detail="設定マネージャーが初期化されていません")
     try:
+        # dict() ではなく model_dump() を使用 (Pydantic v2)
         await core_settings.settings_manager.update_settings(settings_payload.model_dump(exclude_none=True))
         return MessageResponse(message="設定を更新しました")
     except Exception as e:
-        logging.error(f"設定更新エラー: {e}", exc_info=True)
-        # 指針: 詳細エラーをクライアントに返さない
+        logger.error(f"設定更新エラー: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=GENERIC_ERROR_MSG)
