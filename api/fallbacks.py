@@ -16,7 +16,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 EMBEDDING_MODEL = "models/gemini-embedding-001"
 
 # --- Pydantic Models ---
-# フロントエンドとのやり取りは "category" のままにします
+# フロントエンドは "category" を使用
 class FallbackBase(BaseModel):
     category: str
     question: str
@@ -54,18 +54,17 @@ def generate_embedding(text: str) -> List[float]:
 async def list_fallbacks(user: dict = Depends(require_auth)):
     """登録されているQ&Aリストを取得"""
     try:
-        # DBのカラム名は 'category_nam' なのでそれを指定
+        # DBカラム名: category_name
         response = db_client.client.table("category_fallbacks") \
-            .select("id, category_nam, question, answer, created_at") \
-            .order("category_nam", desc=False) \
+            .select("id, category_name, question, answer, created_at") \
+            .order("category_name", desc=False) \
             .order("created_at", desc=True) \
             .execute()
         
-        # DBの 'category_nam' を API仕様の 'category' に変換する
+        # DBの 'category_name' を API仕様の 'category' に変換する
         data = []
         for item in response.data:
-            # category_nam の値を取り出し、category キーにセット
-            item['category'] = item.pop('category_nam', 'general')
+            item['category'] = item.pop('category_name', 'general')
             data.append(item)
             
         return data
@@ -82,9 +81,9 @@ async def create_fallback(
     try:
         embedding = generate_embedding(fallback.question)
         
-        # DBへの保存時は 'category_nam' をキーにする
+        # DB保存時は 'category_name' キーを使用
         data = {
-            "category_nam": fallback.category, 
+            "category_name": fallback.category, 
             "question": fallback.question,
             "answer": fallback.answer,
             "embedding": embedding
@@ -97,7 +96,7 @@ async def create_fallback(
         
         # レスポンス用に変換
         result_item = response.data[0]
-        result_item['category'] = result_item.pop('category_nam', fallback.category)
+        result_item['category'] = result_item.pop('category_name', fallback.category)
             
         return result_item
     except HTTPException:
@@ -116,9 +115,9 @@ async def update_fallback(
     try:
         update_data = {}
         
-        # 入力された 'category' を DB用の 'category_nam' に変換
+        # 入力 'category' -> DB 'category_name'
         if fallback.category:
-            update_data["category_nam"] = fallback.category
+            update_data["category_name"] = fallback.category
         
         if fallback.answer:
             update_data["answer"] = fallback.answer
@@ -140,9 +139,8 @@ async def update_fallback(
         
         # レスポンス用に変換
         result_item = response.data[0]
-        # category_namがあればcategoryに付け替え、なければ元のまま
-        if 'category_nam' in result_item:
-            result_item['category'] = result_item.pop('category_nam')
+        if 'category_name' in result_item:
+            result_item['category'] = result_item.pop('category_name')
             
         return result_item
     except HTTPException:
