@@ -1,4 +1,5 @@
 import logging
+import json
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -32,14 +33,12 @@ class FallbackUpdate(BaseModel):
 class FallbackResponse(FallbackBase):
     id: int
     created_at: str
-    # ▼▼▼ 修正: これがないと画面に「未処理」と出てしまいます ▼▼▼
     embedding: Optional[List[float]] = None 
 
 # --- Helper Functions ---
 def generate_embedding(text: str) -> List[float]:
     """Geminiでテキストをベクトル化する"""
     try:
-        # 改行を削除してベクトル化の精度を安定させる
         clean_text = text.replace("\n", " ")
         result = genai.embed_content(
             model=EMBEDDING_MODEL,
@@ -51,27 +50,44 @@ def generate_embedding(text: str) -> List[float]:
         logger.error(f"Embedding generation failed: {e}")
         raise HTTPException(status_code=500, detail="エンベディング生成に失敗しました")
 
+def process_db_item(item: dict) -> dict:
+    """
+    DBからの生データをAPIレスポンス用に加工する
+    1. category_name -> category
+    2. embedding (str) -> embedding (list)
+    """
+    # 1. カラム名の変更
+    if 'category_name' in item:
+        item['category'] = item.pop('category_name')
+    # categoryもcategory_nameもない場合はデフォルト値を設定
+    if 'category' not in item:
+        item['category'] = 'general'
+
+    # 2. Embedding文字列のパース ("[-0.1, ...]" -> [-0.1, ...])
+    if item.get('embedding') and isinstance(item['embedding'], str):
+        try:
+            item['embedding'] = json.loads(item['embedding'])
+        except Exception as e:
+            logger.warning(f"Failed to parse embedding for id {item.get('id')}: {e}")
+            item['embedding'] = None
+            
+    return item
+
 # --- Endpoints ---
 
 @router.get("/", response_model=List[FallbackResponse])
 async def list_fallbacks(user: dict = Depends(require_auth)):
     """登録されているQ&Aリストを取得"""
     try:
-        # DBのカラム名 'category_name' を指定して取得
         response = db_client.client.table("category_fallbacks") \
             .select("id, category_name, question, answer, created_at, embedding") \
             .order("category_name", desc=False) \
             .order("created_at", desc=True) \
             .execute()
         
-        # DBの 'category_name' を API仕様の 'category' に変換してリスト化
-        data = []
-        for item in response.data:
-            cat_val = item.pop('category_name', 'general')
-            item['category'] = cat_val
-            data.append(item)
-            
-        return data
+        # データを加工して返す
+        return [process_db_item(item) for item in response.data]
+
     except Exception as e:
         logger.error(f"Error fetching fallbacks: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"データの取得に失敗しました: {str(e)}")
@@ -97,10 +113,8 @@ async def create_fallback(
         if not response.data:
             raise HTTPException(status_code=500, detail="保存に失敗しました")
         
-        result_item = response.data[0]
-        result_item['category'] = result_item.pop('category_name', fallback.category)
-            
-        return result_item
+        return process_db_item(response.data[0])
+
     except HTTPException:
         raise
     except Exception as e:
@@ -138,11 +152,8 @@ async def update_fallback(
         if not response.data:
             raise HTTPException(status_code=404, detail="対象が見つかりません")
         
-        result_item = response.data[0]
-        if 'category_name' in result_item:
-            result_item['category'] = result_item.pop('category_name')
-            
-        return result_item
+        return process_db_item(response.data[0])
+
     except HTTPException:
         raise
     except Exception as e:
@@ -172,7 +183,6 @@ async def vectorize_all_fallbacks(user: dict = Depends(require_auth)):
     embeddingが空、またはすべてのQ&Aに対してベクトル化を実行して更新する
     """
     try:
-        # 全件取得
         response = db_client.client.table("category_fallbacks").select("*").execute()
         all_records = response.data
         
