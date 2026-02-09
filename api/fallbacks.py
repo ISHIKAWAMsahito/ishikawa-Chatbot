@@ -16,7 +16,6 @@ genai.configure(api_key=GEMINI_API_KEY)
 EMBEDDING_MODEL = "models/gemini-embedding-001"
 
 # --- Pydantic Models ---
-# フロントエンド(API)側は "category" という名前で扱います
 class FallbackBase(BaseModel):
     category: str
     question: str
@@ -38,9 +37,11 @@ class FallbackResponse(FallbackBase):
 def generate_embedding(text: str) -> List[float]:
     """Geminiでテキストをベクトル化する"""
     try:
+        # 改行を削除してベクトル化の精度を安定させる
+        clean_text = text.replace("\n", " ")
         result = genai.embed_content(
             model=EMBEDDING_MODEL,
-            content=text,
+            content=clean_text,
             task_type="retrieval_document"
         )
         return result['embedding']
@@ -56,7 +57,7 @@ async def list_fallbacks(user: dict = Depends(require_auth)):
     try:
         # DBのカラム名 'category_name' を指定して取得
         response = db_client.client.table("category_fallbacks") \
-            .select("id, category_name, question, answer, created_at") \
+            .select("id, category_name, question, answer, created_at, embedding") \
             .order("category_name", desc=False) \
             .order("created_at", desc=True) \
             .execute()
@@ -64,8 +65,6 @@ async def list_fallbacks(user: dict = Depends(require_auth)):
         # DBの 'category_name' を API仕様の 'category' に変換してリスト化
         data = []
         for item in response.data:
-            # category_name があれば取り出して category に付け替える
-            # (万が一 null の場合は 'general' 等にする)
             cat_val = item.pop('category_name', 'general')
             item['category'] = cat_val
             data.append(item)
@@ -84,7 +83,6 @@ async def create_fallback(
     try:
         embedding = generate_embedding(fallback.question)
         
-        # 保存時は DBカラム名 'category_name' をキーにする
         data = {
             "category_name": fallback.category, 
             "question": fallback.question,
@@ -97,7 +95,6 @@ async def create_fallback(
         if not response.data:
             raise HTTPException(status_code=500, detail="保存に失敗しました")
         
-        # レスポンス用に変換 (DBから返ってきたデータも category_name なので変換が必要)
         result_item = response.data[0]
         result_item['category'] = result_item.pop('category_name', fallback.category)
             
@@ -118,7 +115,6 @@ async def update_fallback(
     try:
         update_data = {}
         
-        # 入力 'category' -> DB 'category_name'
         if fallback.category:
             update_data["category_name"] = fallback.category
         
@@ -140,7 +136,6 @@ async def update_fallback(
         if not response.data:
             raise HTTPException(status_code=404, detail="対象が見つかりません")
         
-        # レスポンス用に変換
         result_item = response.data[0]
         if 'category_name' in result_item:
             result_item['category'] = result_item.pop('category_name')
@@ -168,3 +163,39 @@ async def delete_fallback(
     except Exception as e:
         logger.error(f"Error deleting fallback: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="削除に失敗しました")
+
+# ▼▼▼ 追加: まとめてベクトル化するエンドポイント ▼▼▼
+@router.post("/vectorize-all")
+async def vectorize_all_fallbacks(user: dict = Depends(require_auth)):
+    """
+    embeddingが空、またはすべてのQ&Aに対してベクトル化を実行して更新する
+    """
+    try:
+        # 全件取得 (件数が数千件になる場合はページネーションが必要だが、現状は一括で対応)
+        response = db_client.client.table("category_fallbacks").select("*").execute()
+        all_records = response.data
+        
+        updated_count = 0
+        
+        for record in all_records:
+            # embeddingが無い、または空の場合に実行
+            # (強制的に全件更新したい場合は条件を外してください)
+            if not record.get('embedding') and record.get('question'):
+                try:
+                    new_embedding = generate_embedding(record['question'])
+                    
+                    db_client.client.table("category_fallbacks") \
+                        .update({"embedding": new_embedding}) \
+                        .eq("id", record['id']) \
+                        .execute()
+                        
+                    updated_count += 1
+                except Exception as emb_err:
+                    logger.error(f"Failed to vectorize ID {record['id']}: {emb_err}")
+                    continue
+
+        return {"message": f"{updated_count}件のベクトル化が完了しました。"}
+
+    except Exception as e:
+        logger.error(f"Error vectorizing all: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"一括処理中にエラーが発生しました: {str(e)}")
