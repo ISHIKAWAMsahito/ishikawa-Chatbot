@@ -16,8 +16,9 @@ genai.configure(api_key=GEMINI_API_KEY)
 EMBEDDING_MODEL = "models/gemini-embedding-001"
 
 # --- Pydantic Models ---
+# フロントエンドとのやり取りは "category" のままにします
 class FallbackBase(BaseModel):
-    category: str  # 追加: カテゴリ
+    category: str
     question: str
     answer: str
 
@@ -45,7 +46,6 @@ def generate_embedding(text: str) -> List[float]:
         return result['embedding']
     except Exception as e:
         logger.error(f"Embedding generation failed: {e}")
-        # 開発中のエラー回避のため、失敗時は空リストではなくエラーを投げる
         raise HTTPException(status_code=500, detail="エンベディング生成に失敗しました")
 
 # --- Endpoints ---
@@ -54,16 +54,24 @@ def generate_embedding(text: str) -> List[float]:
 async def list_fallbacks(user: dict = Depends(require_auth)):
     """登録されているQ&Aリストを取得"""
     try:
-        # categoryも取得
+        # DBのカラム名は 'category_nam' なのでそれを指定
         response = db_client.client.table("category_fallbacks") \
-            .select("id, category, question, answer, created_at") \
-            .order("category", desc=False) \
+            .select("id, category_nam, question, answer, created_at") \
+            .order("category_nam", desc=False) \
             .order("created_at", desc=True) \
             .execute()
-        return response.data
+        
+        # DBの 'category_nam' を API仕様の 'category' に変換する
+        data = []
+        for item in response.data:
+            # category_nam の値を取り出し、category キーにセット
+            item['category'] = item.pop('category_nam', 'general')
+            data.append(item)
+            
+        return data
     except Exception as e:
         logger.error(f"Error fetching fallbacks: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="データの取得に失敗しました")
+        raise HTTPException(status_code=500, detail=f"データの取得に失敗しました: {str(e)}")
 
 @router.post("/", response_model=FallbackResponse)
 async def create_fallback(
@@ -72,11 +80,11 @@ async def create_fallback(
 ):
     """新しいQ&Aを作成"""
     try:
-        # 質問文からEmbeddingを生成
         embedding = generate_embedding(fallback.question)
         
+        # DBへの保存時は 'category_nam' をキーにする
         data = {
-            "category": fallback.category,
+            "category_nam": fallback.category, 
             "question": fallback.question,
             "answer": fallback.answer,
             "embedding": embedding
@@ -86,8 +94,12 @@ async def create_fallback(
         
         if not response.data:
             raise HTTPException(status_code=500, detail="保存に失敗しました")
+        
+        # レスポンス用に変換
+        result_item = response.data[0]
+        result_item['category'] = result_item.pop('category_nam', fallback.category)
             
-        return response.data[0]
+        return result_item
     except HTTPException:
         raise
     except Exception as e:
@@ -103,12 +115,14 @@ async def update_fallback(
     """Q&Aを更新"""
     try:
         update_data = {}
+        
+        # 入力された 'category' を DB用の 'category_nam' に変換
         if fallback.category:
-            update_data["category"] = fallback.category
+            update_data["category_nam"] = fallback.category
+        
         if fallback.answer:
             update_data["answer"] = fallback.answer
         
-        # 質問が変わった場合のみEmbeddingを再生成
         if fallback.question:
             update_data["question"] = fallback.question
             update_data["embedding"] = generate_embedding(fallback.question)
@@ -123,8 +137,14 @@ async def update_fallback(
             
         if not response.data:
             raise HTTPException(status_code=404, detail="対象が見つかりません")
+        
+        # レスポンス用に変換
+        result_item = response.data[0]
+        # category_namがあればcategoryに付け替え、なければ元のまま
+        if 'category_nam' in result_item:
+            result_item['category'] = result_item.pop('category_nam')
             
-        return response.data[0]
+        return result_item
     except HTTPException:
         raise
     except Exception as e:
