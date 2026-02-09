@@ -45,13 +45,11 @@ EMBEDDING_MODEL_DEFAULT = EMBEDDING_MODEL
 LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
 LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
 LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "ishikawa-chatbot-eval")
-LANGCHAIN_ENDPOINT = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
 
 if LANGCHAIN_TRACING_V2:
     if not LANGCHAIN_API_KEY:
         logging.warning("⚠️ LangSmith Tracing is enabled but API Key is missing.")
     else:
-        masked_ls_key = LANGCHAIN_API_KEY[:4] + "..."
         logging.info(f"🔎 LangSmith Tracing: ENABLED (Project: {LANGCHAIN_PROJECT})")
 
 # ----------------------------------------------------------------
@@ -61,22 +59,26 @@ AUTH0_CLIENT_ID = os.getenv("AUTH0_CLIENT_ID")
 AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET")
 AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
 
-# セッション秘密鍵
-APP_SECRET_KEY = os.getenv("APP_SECRET_KEY") or os.getenv("SECRET_KEY")
+# セッション秘密鍵の統合ロジック
+# 環境変数が APP_SECRET_KEY でも SECRET_KEY でもここで吸収する
+raw_secret = os.getenv("APP_SECRET_KEY") or os.getenv("SECRET_KEY")
 
 if IS_PRODUCTION:
-    if not APP_SECRET_KEY or APP_SECRET_KEY == "default-insecure-key":
+    if not raw_secret or raw_secret == "default-insecure-key":
         raise ValueError("CRITICAL: Secure 'APP_SECRET_KEY' is required in production.")
-    SECRET_KEY = APP_SECRET_KEY
+    SECRET_KEY = raw_secret
 else:
-    if not APP_SECRET_KEY:
+    if not raw_secret:
         logging.warning("⚠️ 'APP_SECRET_KEY' 未設定。開発用デフォルトキーを使用します。")
         SECRET_KEY = "default-insecure-key"
     else:
-        SECRET_KEY = APP_SECRET_KEY
+        SECRET_KEY = raw_secret
+
+# 互換性のため APP_SECRET_KEY も定義しておく
+APP_SECRET_KEY = SECRET_KEY
 
 # オープンリダイレクト対策: 許可するホスト
-# Renderのドメインを含める
+# Renderのドメインをデフォルトで許可リストに追加
 DEFAULT_HOSTS = "localhost,127.0.0.1,ishikawa-chatbot.onrender.com"
 ALLOWED_HOSTS_STR = os.getenv("ALLOWED_HOSTS", DEFAULT_HOSTS)
 ALLOWED_HOSTS: list[str] = [h.strip().lower() for h in ALLOWED_HOSTS_STR.split(",") if h.strip()]

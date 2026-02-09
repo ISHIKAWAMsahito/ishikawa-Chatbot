@@ -2,18 +2,18 @@ import logging
 import jwt
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Any
-
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 import google.generativeai as genai
 
 # Config & Dependencies
+# ★重要: SECRET_KEY を config からインポートして使うことで不一致を防ぐ
 from core.config import (
     GEMINI_API_KEY, 
     ACTIVE_COLLECTION_NAME, 
     SUPABASE_URL, 
     SUPABASE_ANON_KEY,
-    SECRET_KEY  # ★重要: ws_auth.py と同じ鍵をインポート
+    SECRET_KEY
 )
 from core.dependencies import require_auth
 from core import database
@@ -75,6 +75,7 @@ async def gemini_status(user: Any = Depends(require_auth)):
         return GeminiStatusResponse(connected=False, detail="API key not configured")
     
     try:
+        # 生成可能なモデルのみをリストアップ
         models = [
             m.name for m in genai.list_models() 
             if 'generateContent' in m.supported_generation_methods
@@ -126,7 +127,7 @@ def get_ws_token(user: Any = Depends(require_auth)):
             "exp": now + timedelta(seconds=expires_in)
         }
         
-        # アルゴリズム HS256 でエンコード
+        # アルゴリズム HS256 でエンコード (config.SECRET_KEY使用)
         token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
         
         return WSTokenResponse(token=token, expires_in_seconds=expires_in)
@@ -152,4 +153,5 @@ async def update_settings(settings_payload: Settings, user: Any = Depends(requir
         return MessageResponse(message="設定を更新しました")
     except Exception as e:
         logger.error(f"設定更新エラー: {e}", exc_info=True)
+        # 指針: 詳細エラーをクライアントに返さない
         raise HTTPException(status_code=500, detail=GENERIC_ERROR_MSG)
