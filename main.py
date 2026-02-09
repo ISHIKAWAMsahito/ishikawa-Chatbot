@@ -6,21 +6,24 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
-# coreモジュールのインポート (AI_CONTEXT: os.getenv は core.config の定数を使用)
+# coreモジュールのインポート
 from core.database import db_client
 from core import settings as core_settings
-from core.config import SECRET_KEY, APP_SECRET_KEY, IS_PRODUCTION, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, PORT
+from core.config import (
+    SECRET_KEY, APP_SECRET_KEY, IS_PRODUCTION, 
+    GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, PORT,
+    ALLOWED_HOSTS
+)
 from core.settings import SettingsManager
 from core.ws_auth import validate_ws_token
 
-# APIルーターのインポート
+# APIルーター
 from api import chat, feedback, system, auth, documents, fallbacks
 
-# .env ファイルの読み込み
 load_dotenv()
 
-# ロギング設定
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -28,38 +31,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------
+# ヘルスチェック用レスポンスモデル (Strict Typing)
+# ---------------------------------------------------------
+class HealthResponse(BaseModel):
+    status: str
+    database: str
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """アプリケーションのライフサイクル管理 (Fail Fast: 本番で必須設定欠落時は起動停止)"""
+    """アプリケーションのライフサイクル管理 (Fail Fast)"""
     logger.info("🚀 Starting up University Support AI...")
 
-    # 0. 本番環境では必須環境変数を厳格チェック (Fail Fast)
+    # 1. 本番環境 (Fail Fast Check)
     if IS_PRODUCTION:
-        if not APP_SECRET_KEY:
-            logger.error("❌ APP_SECRET_KEY must be set in production (RENDER). Aborting.")
-            raise ValueError("APP_SECRET_KEY must be set in production.")
-        if not GEMINI_API_KEY:
-            logger.error("❌ GEMINI_API_KEY must be set in production. Aborting.")
-            raise ValueError("GEMINI_API_KEY must be set in production.")
-        if not SUPABASE_URL:
-            logger.error("❌ SUPABASE_URL must be set in production. Aborting.")
-            raise ValueError("SUPABASE_URL must be set in production.")
-        if not SUPABASE_SERVICE_KEY:
-            logger.error("❌ SUPABASE_SERVICE_KEY must be set in production. Aborting.")
-            raise ValueError("SUPABASE_SERVICE_KEY must be set in production.")
+        missing_vars = []
+        if not APP_SECRET_KEY: missing_vars.append("APP_SECRET_KEY")
+        if not GEMINI_API_KEY: missing_vars.append("GEMINI_API_KEY")
+        if not SUPABASE_URL: missing_vars.append("SUPABASE_URL")
+        if not SUPABASE_SERVICE_KEY: missing_vars.append("SUPABASE_SERVICE_KEY")
+        
+        if missing_vars:
+            error_msg = f"❌ CRITICAL: Missing environment variables in production: {', '.join(missing_vars)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
-    # 1. Supabaseクライアントの初期化確認
+    # 2. Supabase初期化確認
     if db_client.client:
-        logger.info("✅ Supabase client initialized successfully.")
+        logger.info("✅ Supabase client initialized.")
     else:
-        logger.error("⚠️ Supabase client is NOT initialized. Check your SUPABASE_URL and KEY.")
+        logger.error("⚠️ Supabase client is NOT initialized.")
 
-    # 2. SettingsManager の初期化
+    # 3. SettingsManager初期化
     try:
         core_settings.settings_manager = SettingsManager()
         logger.info("✅ Settings Manager initialized.")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Settings Manager: {e}", exc_info=True)
+        # 設定マネージャは必須のため、失敗時は起動しない選択も可
         raise
 
     yield
@@ -68,110 +77,93 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="University Support AI",
-    description="RAG-based AI Chatbot for University Students",
+    description="RAG-based AI Chatbot",
     version="2.0.0",
     lifespan=lifespan
 )
 
-# CORS設定
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_HOSTS + ["*"], # 開発用に*も含めるが、本番は制限推奨
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------
-# セッション (core.config の定数を使用、本番では APP_SECRET_KEY 必須)
-# ---------------------------------------------------------
+# セッション
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
-    https_only=bool(IS_PRODUCTION),
+    https_only=IS_PRODUCTION,
     same_site="lax",
 )
 
-# 静的ファイルの配信
+# 静的ファイル
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
 # ---------------------------------------------------------
-# ルーターの登録
+# ルーター登録
 # ---------------------------------------------------------
 
-# Chat API (学生用: /api/client/chat/chat となります)
+# Chat API
 app.include_router(chat.router, prefix="/api/client", tags=["Chat"])
-
-# ★追加: Admin Chat API (管理者用: /api/admin/chat となります)
-# admin.html は "/api/admin/chat" にアクセスするため、この登録が必要です
 app.include_router(chat.router, prefix="/api/admin", tags=["Admin Chat"])
-# Fallbacks API (管理者用: /api/admin/fallbacks に対応)
+
+# Fallbacks API (管理者用)
+# fallbacks.py 側で @router.get("") としているため、
+# ここでの prefix="/api/admin/fallbacks" がそのままルートパスになります
 app.include_router(
     fallbacks.router, 
     prefix="/api/admin/fallbacks", 
     tags=["Admin Fallbacks"]
 )
+
 # System API
 app.include_router(system.router, prefix="/api/admin/system", tags=["System"])
-
+# Documents API
+app.include_router(documents.router, prefix="/api/admin/documents", tags=["Documents"])
 # Feedback API
 app.include_router(feedback.router, prefix="/api", tags=["Feedback"])
-
-# ★追加: Documents API (エラーログ /api/admin/documents/... に対応)
-app.include_router(documents.router, prefix="/api/admin/documents", tags=["Documents"])
-
-# Authルーター (HTML配信含むため prefixなし)
+# Auth
 app.include_router(auth.router, tags=["Auth"])
 
 # ---------------------------------------------------------
-# WebSocket エンドポイント (設定同期用・管理者認証必須)
+# WebSocket
 # ---------------------------------------------------------
-@app.websocket("/ws/settings")
+app.websocket("/ws/settings")
 async def websocket_settings(websocket: WebSocket):
-    """設定画面(admin.html)とのリアルタイム通信用WebSocket。?token=xxx で管理者トークン必須。"""
     token = websocket.query_params.get("token")
     if not validate_ws_token(token):
-        logger.warning("WebSocket /ws/settings: 無効または期限切れのトークンで拒否")
+        logger.warning("WebSocket /ws/settings: Invalid or expired token.")
         await websocket.close(code=1008)
         return
 
     if not core_settings.settings_manager:
-        logger.error("❌ Settings manager is STILL not initialized.")
         await websocket.close(code=1000)
         return
 
     try:
         await core_settings.settings_manager.add_websocket(websocket)
-        logger.info("✅ WebSocket client connected.")
+        logger.info("✅ WS Client connected.")
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        # settings.py のメソッド名 'remove_websocket' を使用
-        if core_settings.settings_manager:
-            core_settings.settings_manager.remove_websocket(websocket)
-        logger.info("WebSocket settings client disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-        if core_settings.settings_manager:
-            core_settings.settings_manager.remove_websocket(websocket)
-
-# main.py
+        core_settings.settings_manager.remove_websocket(websocket)
+    except Exception:
+        core_settings.settings_manager.remove_websocket(websocket)
 
 # ---------------------------------------------------------
 # ヘルスチェック
 # ---------------------------------------------------------
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health_check():
-    """
-    Render用ヘルスチェックおよび管理画面用ステータス確認
-    'database' キーを返すことで管理画面の「不明」表示を解消します。
-    """
-    return {
-        "status": "ok",
-        # db_client.client が存在すれば "supabase" という文字列を返します
-        "database": "supabase" if db_client.client else "uninitialized"
-    }
+    """Render用ヘルスチェック"""
+    return HealthResponse(
+        status="ok",
+        database="supabase" if db_client.client else "uninitialized"
+    )
 
 if __name__ == "__main__":
     import uvicorn
