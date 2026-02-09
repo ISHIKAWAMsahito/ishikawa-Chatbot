@@ -651,8 +651,14 @@
                 // ★修正: /api/admin/fallbacks に変更
                 const response = await fetch('/api/admin/fallbacks'); 
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
                 const data = await response.json();
-                allQA = data.fallbacks || [];
+                
+                // ▼▼▼ 修正箇所: 配列が直接返ってくるため、そのまま代入します ▼▼▼
+                // 以前: allQA = data.fallbacks || [];
+                allQA = Array.isArray(data) ? data : (data.fallbacks || []);
+                // ▲▲▲ 修正ここまで ▲▲▲
+                
                 displayQA(allQA);
                 updateQAStats();
                 loadingIndicator.style.display = 'none';
