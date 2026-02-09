@@ -15,7 +15,7 @@ from core.settings import SettingsManager
 from core.ws_auth import validate_ws_token
 
 # APIルーターのインポート
-from api import chat, feedback, system, auth, documents
+from api import chat, feedback, system, auth, documents, fallbacks
 
 # .env ファイルの読み込み
 load_dotenv()
@@ -106,7 +106,12 @@ app.include_router(chat.router, prefix="/api/client", tags=["Chat"])
 # ★追加: Admin Chat API (管理者用: /api/admin/chat となります)
 # admin.html は "/api/admin/chat" にアクセスするため、この登録が必要です
 app.include_router(chat.router, prefix="/api/admin", tags=["Admin Chat"])
-
+# Fallbacks API (管理者用: /api/admin/fallbacks に対応)
+app.include_router(
+    fallbacks.router, 
+    prefix="/api/admin/fallbacks", 
+    tags=["Admin Fallbacks"]
+)
 # System API
 app.include_router(system.router, prefix="/api/admin/system", tags=["System"])
 

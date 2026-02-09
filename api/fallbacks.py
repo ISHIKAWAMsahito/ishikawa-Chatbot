@@ -24,7 +24,7 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # 修正: /api/fallbacks -> /
-@router.get("/")
+@router.get("")
 async def get_all_fallbacks(user: dict = Depends(require_auth)):
     """Q&A(フォールバック)をすべて取得"""
     if not database.db_client:
