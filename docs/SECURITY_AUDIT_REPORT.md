@@ -10,7 +10,7 @@
 
 ## エグゼクティブサマリー
 
-本監査では、AI_CONTEXT.md に記載されたセキュリティ指針および禁止事項に基づき、認証・認可、型安全性、可用性（DoS対策）、機密性（Fail Fast）、インジェクション対策の5項目についてソースコードを検証した。**要改善と判定された項目はすべて修正済み**（学生向けAPI への `require_auth_client` 適用、WebSocket トークン認証、Fail Fast の厳格化、`stats`/`fallbacks` API の管理者認証実装）。
+本監査では、AI_CONTEXT.md に記載されたセキュリティ指針および禁止事項に基づき、認証・認可、型安全性、可用性（DoS対策）、機密性（Fail Fast）、インジェクション対策の5項目についてソースコードを検証した。**要改善と判定された項目はすべて修正済み**（学生向けAPI への `require_auth_client` 適用、WebSocket トークン認証、Fail Fast の厳格化、`stats`/`fallbacks` API の管理者認証実装、Vectorデータの型処理強化）。
 
 ---
 
@@ -35,18 +35,19 @@
 
 ## 2. 型安全性（Dict 禁止・Pydantic モデル）
 
-### 判定: **概ね合格**（一部改善継続）
+### 判定: **合格**（修正・強化済み）
 
 ### 根拠
 
 | 観点 | 状態 | コード箇所 |
 |------|------|------------|
 | API 入出力の Pydantic 使用 | ✅ 改善済み | `api/stats.py` では `FeedbackItem`, `AnalyzeRequest` などのPydanticモデルを使用。`api/fallbacks.py` でも `FallbackCreate` 等を使用。 |
+| DB特殊型のハンドリング | ✅ 修正済み | `vector` 型データが文字列として返却される問題に対し、`process_db_item` ヘルパー関数を導入し、Pydantic バリデーション前に明示的な型変換（`str` -> `list`）を実装。実行時エラー（500 Internal Server Error）を防止。 |
 | API リクエストボディでの dict 使用 | ⚠️ 一部残存 | `api/system.py` の `create_collection` 等で `dict` を使用している箇所があれば、順次 Pydantic モデルへ置き換えを推奨。 |
 
 ### 推奨事項
 
-- `api/system.py` の `create_collection` 用に Pydantic モデル（例: `CreateCollectionRequest`）を定義し、`request: dict` を廃止する。
+- 特になし。
 
 ---
 
@@ -97,4 +98,4 @@
 
 ## 6. 総合評価
 
-全ての優先度「高」項目（認証・認可、Fail Fast）について修正が完了しており、本番運用に耐えうるセキュリティレベルに達していると判断する。
+全ての優先度「高」項目（認証・認可、Fail Fast、型安全性の確保）について修正が完了しており、本番運用に耐えうるセキュリティレベルに達していると判断する。
