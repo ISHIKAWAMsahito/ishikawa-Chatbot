@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from core.database import db_client
 from core import settings as core_settings
 from core.config import (
-    SECRET_KEY, APP_SECRET_KEY, IS_PRODUCTION, 
+    SECRET_KEY, IS_PRODUCTION, 
     GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, PORT,
     ALLOWED_HOSTS
 )
@@ -24,6 +24,7 @@ from api import chat, feedback, system, auth, documents, fallbacks
 
 load_dotenv()
 
+# ロギング設定
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -46,7 +47,7 @@ async def lifespan(app: FastAPI):
     # 1. 本番環境 (Fail Fast Check)
     if IS_PRODUCTION:
         missing_vars = []
-        if not APP_SECRET_KEY: missing_vars.append("APP_SECRET_KEY")
+        if not SECRET_KEY or SECRET_KEY == "default-insecure-key": missing_vars.append("APP_SECRET_KEY")
         if not GEMINI_API_KEY: missing_vars.append("GEMINI_API_KEY")
         if not SUPABASE_URL: missing_vars.append("SUPABASE_URL")
         if not SUPABASE_SERVICE_KEY: missing_vars.append("SUPABASE_SERVICE_KEY")
@@ -68,7 +69,6 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Settings Manager initialized.")
     except Exception as e:
         logger.error(f"❌ Failed to initialize Settings Manager: {e}", exc_info=True)
-        # 設定マネージャは必須のため、失敗時は起動しない選択も可
         raise
 
     yield
@@ -82,20 +82,24 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS
+# ---------------------------------------------------------
+# ミドルウェア設定 (順序重要)
+# ---------------------------------------------------------
+
+# CORS: 本番では ALLOWED_HOSTS のみを許可することを推奨
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_HOSTS + ["*"], # 開発用に*も含めるが、本番は制限推奨
+    allow_origins=ALLOWED_HOSTS if IS_PRODUCTION else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# セッション
+# セッション: Render等のプロキシ下での動作を安定させる設定
 app.add_middleware(
     SessionMiddleware,
     secret_key=SECRET_KEY,
-    https_only=IS_PRODUCTION,
+    https_only=IS_PRODUCTION, # 本番はHTTPS必須
     same_site="lax",
 )
 
@@ -112,8 +116,6 @@ app.include_router(chat.router, prefix="/api/client", tags=["Chat"])
 app.include_router(chat.router, prefix="/api/admin", tags=["Admin Chat"])
 
 # Fallbacks API (管理者用)
-# fallbacks.py 側で @router.get("") としているため、
-# ここでの prefix="/api/admin/fallbacks" がそのままルートパスになります
 app.include_router(
     fallbacks.router, 
     prefix="/api/admin/fallbacks", 
@@ -132,27 +134,40 @@ app.include_router(auth.router, tags=["Auth"])
 # ---------------------------------------------------------
 # WebSocket
 # ---------------------------------------------------------
-app.websocket("/ws/settings")
+@app.websocket("/ws/settings")
 async def websocket_settings(websocket: WebSocket):
+    """
+    設定画面用 WebSocket。
+    接続時に ?token=xxx を検証し、失敗したらログを出して 403 (Close 1008) にする。
+    """
     token = websocket.query_params.get("token")
+    
+    # 接続検証
     if not validate_ws_token(token):
-        logger.warning("WebSocket /ws/settings: Invalid or expired token.")
-        await websocket.close(code=1008)
+        # ★デバッグログ: ここが出力されれば「検証ロジック」までは到達している
+        logger.warning(f"WebSocket 拒否: トークンが無効か期限切れです。Token prefix: {token[:10] if token else 'None'}")
+        await websocket.close(code=1008) # Policy Violation
         return
 
     if not core_settings.settings_manager:
+        logger.error("❌ Settings manager failed to load.")
         await websocket.close(code=1000)
         return
 
     try:
+        # 接続許可
         await core_settings.settings_manager.add_websocket(websocket)
-        logger.info("✅ WS Client connected.")
+        logger.info("✅ WebSocket client connected successfully.")
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        core_settings.settings_manager.remove_websocket(websocket)
-    except Exception:
-        core_settings.settings_manager.remove_websocket(websocket)
+        if core_settings.settings_manager:
+            core_settings.settings_manager.remove_websocket(websocket)
+        logger.info("WebSocket client disconnected.")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        if core_settings.settings_manager:
+            core_settings.settings_manager.remove_websocket(websocket)
 
 # ---------------------------------------------------------
 # ヘルスチェック
@@ -167,4 +182,5 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=True)
+    # proxy_headers=True により、Renderのロードバランサーからの正しいIP/Schemeを取得
+    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=True, proxy_headers=True)
