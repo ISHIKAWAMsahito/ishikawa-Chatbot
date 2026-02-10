@@ -57,7 +57,11 @@ replit.nix
 # ▼ 追加: リポジトリを重くするPDFやWordを除外
 *.pdf
 *.docx
-
+schema.md
+SECURITY_AUDIT_REPORT.md
+SECURITY_VULNERABILITY_REPORT.md
+AI_CONTEXT.md
+docs/
 grafana_data/ 
 ProgPython/ 
 諸資格過程/ 
