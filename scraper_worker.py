@@ -11,7 +11,7 @@ from services.document_processor import SimpleDocumentProcessor
 # (RenderのCron Job設定で、Web Serviceと同じ環境変数を設定する必要がある)
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_KEY")
-EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_MODEL = "models/gemini-embedding-001"
 COLLECTION_NAME = "student-knowledge-base" # 固定値
 
 logging.basicConfig(level=logging.INFO)

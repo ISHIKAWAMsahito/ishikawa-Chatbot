@@ -14,7 +14,7 @@ import re
 # --------------------------------------------------------------------------
 # ★ 設定: 環境変数の読み込み
 # --------------------------------------------------------------------------
-ENV_PATH = r"C:\dev\ishikawa-Chatbot.env"
+ENV_PATH = r"C:\dev\ishikawa-Chatbot\ishikawa-Chatbot.env"
 load_dotenv(dotenv_path=ENV_PATH)
 
 # 環境変数の取得
@@ -36,7 +36,7 @@ EMBEDDING_MODEL = "models/gemini-embedding-001"
 
 # OCRモデル: 指摘に基づき gemini-2.5-flash を採用
 # 2.5 Flashは1.5に比べてレイテンシとコストパフォーマンスが向上しています
-VISION_MODEL = "gemini-2.5-flash"
+VISION_MODEL = "models/gemini-2.5-flash"
 
 # ログ設定
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(asctime)s - %(message)s')
@@ -201,7 +201,7 @@ async def process_image_directory(directory_path: str, category: str, collection
 
 async def main():
     # パス設定
-    target_dir = r"C:\dev\チャットボットdb\経済経営学部　心理学部　履修要項"
+    target_dir = r"C:\dev\ishikawa-Chatbot\チャットボットdb-20260117T104533Z-3-001\チャットボットdb\学事暦_jpg"
     target_category = "rules" 
 
     if not os.path.exists(target_dir):

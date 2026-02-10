@@ -1,0 +1,8 @@
+column_name,data_type,is_nullable,column_default
+id,bigint,NO,null
+created_at,timestamp with time zone,NO,now()
+category_name,text,NO,null
+url_to_summarize,text,YES,null
+embedding,USER-DEFINED,YES,null
+question,text,YES,null
+answer,text,YES,null
