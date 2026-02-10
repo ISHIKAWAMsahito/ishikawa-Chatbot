@@ -99,3 +99,22 @@ upload_images.py
 .chat_history/
 # Cursor の一時的なインデックスファイルなど
 .cursor/
+
+# ---------------------------------
+# 追加: ログやステータスから判明した除外対象
+# ---------------------------------
+# ユーティリティ・自動更新スクリプト
+scraper_worker.py
+
+# データ・ログフォルダ
+data/
+"Supabase csv/"
+
+# レポート・画像出力
+report_images/
+
+# OS・エディタ設定
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
