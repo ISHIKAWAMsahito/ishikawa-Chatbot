@@ -5,14 +5,14 @@ Retrieval-Augmented Generation (RAG) を活用した、チャットボットで�
 🚀 主な機能
 - 🤖 AI質問応答：自然言語で大学関連の質問に回答
 - 📚 公式情報ベースの回答：大学サイトや資料を参照
-- 🔐 セキュアなアクセス制御：大学ドメインと開発者限定
+- 🔐 セキュアなアクセス制御：メールアドレス全体でのチェック
 - ⚙️ リアルタイム設定反映：管理者の変更が即時に学生画面へ反映
 
 🏗️ システム構成
-フロントエンド層: client.html / admin.html / DB.html
+フロントエンド層: client.html / admin.html / DB.html / stats.html
 アプリケーション層: FastAPI + Gemini API + Auth0
 データベース層: Supabase (PostgreSQL + pgvector)
-インフラ・監視層: Render + Docker
+インフラ・監視層: Render + Supabase + Uptime Robot
 
 
 
@@ -73,7 +73,7 @@ services:
 -メールアドレス全体でチェックする認証機能
 - 学生: client.html
 - 管理者: admin.html / DB.html / stats.html
-- 個人情報入力は禁止（氏名・学籍番号など）
+- 個人情報入力は禁止の注意書き（氏名・学籍番号など）
 
 📈 今後の改善予定
 - 音声入力・多言語対応
