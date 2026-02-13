@@ -16,7 +16,7 @@ Retrieval-Augmented Generation (RAG) を活用した、学生支援チャット�
 - **アプリケーション層**: FastAPI + Gemini API + Auth0
 - **データベース層**: Supabase (PostgreSQL + pgvector)
 - **インフラ・監視層**: Render + Docker + Uptime Robot + LangSmith
-
+![システム構成図](./docs/system_architecture.png)
 ## 📂 プロジェクト構成
 
 機能ごとにモジュール分割されています。
