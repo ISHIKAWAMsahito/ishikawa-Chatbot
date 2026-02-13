@@ -1,14 +1,13 @@
 # 🎓 学生支援チャットボットシステム
 
 Retrieval-Augmented Generation (RAG) を活用した、学生支援チャットボットです。
-無料のクラウドサービスを組み合わせ、学生でも持続的に運用可能な構成を目指しました。
-
-<<<<<<< HEAD
+クラウドサービスを組み合わせ、学生でも持続的に運用可能な構成を目指しました。
+※学内公式のシステムではありません。研究・試行的に開発しているシステムです。
 ## 🚀 主な機能
 
 - **🤖 AI質問応答**: 自然言語で大学関連の質問に回答
-- **📚 公式情報ベースの回答**: 大学サイトや資料を参照し、ハルシネーションを抑制
-- **🔐 セキュアなアクセス制御**: 大学ドメインと開発者限定の認証
+- **📚 公式情報ベースの回答**: 大学サイトや資料を参照
+- **🔐 セキュアなアクセス制御**:メールアドレス全体でのチェック
 - **⚙️ リアルタイム設定反映**: 管理者の設定変更が即時に学生画面へ反映
 
 ## 🏗️ システム構成
@@ -16,7 +15,7 @@ Retrieval-Augmented Generation (RAG) を活用した、学生支援チャット�
 - **フロントエンド層**: HTML/CSS + JavaScript (WebSocket)
 - **アプリケーション層**: FastAPI + Gemini API + Auth0
 - **データベース層**: Supabase (PostgreSQL + pgvector)
-- **インフラ・監視層**: Render + Docker
+- **インフラ・監視層**: Render + Docker + Uptime Robot + LangSmith
 
 ## 📂 プロジェクト構成
 
@@ -109,6 +108,7 @@ LANGCHAIN_TRACING_V2=true
 LANGCHAIN_ENDPOINT=[https://api.smith.langchain.com](https://api.smith.langchain.com)
 LANGCHAIN_API_KEY=your_langchain_api_key
 LANGCHAIN_PROJECT=your_project_name
+Uptime Robot
 
 ローカル開発 (Docker)
 docker run -it --rm `
@@ -127,24 +127,11 @@ services:
     plan: free
 
 🔒 セキュリティ
-<<<<<<< HEAD
-認証: Auth0を利用したメール全体をチェックした制限
-
-ロール管理:
-
-学生: client.html のみアクセス可
-
-管理者: admin.html, DB.html, stats.html へのアクセス権限
-
-データ保護: 個人情報（氏名・学籍番号等）の入力禁止運用
-=======
--メールアドレス全体でチェックする認証機能
+-認証:Auth0を使用し、メールアドレス全体でチェックする認証機能
 - 学生: client.html
 - 管理者: admin.html / DB.html / stats.html
 - 個人情報入力は禁止の注意書き（氏名・学籍番号など）
->>>>>>> 25092093487a37be377785c06f63bccf9c326c94
 
 📈 今後の改善予定
 音声入力インターフェースの実装
-
 多言語対応
