@@ -17,6 +17,7 @@ from services.llm import LLMService
 from services import prompts
 from core.database import db_client
 from core.config import GEMINI_API_KEY, EMBEDDING_MODEL_DEFAULT
+from core.constants import PARAMS  # 【追加】定数読み込み
 
 # Storageサービスのインポート (エラー回避付き)
 try:
@@ -32,7 +33,7 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # =================================================================
-# 1. データモデルの定義 (ここがないとエラーになります)
+# 1. データモデルの定義
 # =================================================================
 
 class DocumentMetadata(BaseModel):
@@ -42,7 +43,6 @@ class DocumentMetadata(BaseModel):
     page: Optional[int] = None
     rerank_score: float = 0.0
     rerank_reason: str = ""
-    # 予期せぬフィールドが来ても許容する設定
     model_config = {"extra": "ignore"}
 
 class SearchResult(BaseModel):
@@ -50,7 +50,6 @@ class SearchResult(BaseModel):
     content: str
     metadata: DocumentMetadata
     similarity: float = 0.0
-    # 予期せぬフィールドが来ても許容する設定
     model_config = {"extra": "ignore"}
 
 # =================================================================
@@ -72,10 +71,9 @@ class SearchService:
     @alru_cache(maxsize=100)
     @traceable(name="Step1_Query_Expansion", run_type="chain")
     async def expand_query(self, query: str) -> str:
-        """クエリ拡張 (Fail Fastではなく元のクエリを返す防御的設計)"""
+        """クエリ拡張"""
         cot_prompt = prompts.QUERY_EXPANSION.format(query=query)
         try:
-            # 短いタイムアウトで試行
             response = await self.llm.generate_stream(cot_prompt)
             full_text = ""
             async for chunk in response:
@@ -89,7 +87,6 @@ class SearchService:
 
     async def _check_relevance_single(self, query: str, doc: SearchResult, index: int) -> Optional[SearchResult]:
         """単一ドキュメントの並列評価 (Re-ranking)"""
-        # 親コンテンツがあれば優先的に評価対象にする
         eval_content = doc.metadata.parent_content or doc.content
         snippet = eval_content[:500].replace('\n', ' ')
         
@@ -102,7 +99,6 @@ class SearchService:
         """
 
         try:
-            # 軽量モデル(Flash)を使用し、並列リクエストのコストを下げる
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(2), 
                 wait=wait_exponential(min=1, max=3),
@@ -119,11 +115,11 @@ class SearchService:
                     data = json.loads(text)
                     score = float(data.get("score", 0.0))
                     
-                    # 標準仕様: 6.0点以上のものだけを採用
-                    if score >= 6.0:
+                    # 【修正】定数を使用してフィルタリング
+                    threshold = PARAMS.get("RERANK_SCORE_THRESHOLD", 6.0)
+                    if score >= threshold:
                         doc.metadata.rerank_score = score
                         doc.metadata.rerank_reason = data.get("reason", "")
-                        # 親コンテンツがある場合は本文を親のものに差し替えて情報量を増やす
                         if doc.metadata.parent_content:
                             doc.content = doc.metadata.parent_content
                         return doc
@@ -134,19 +130,16 @@ class SearchService:
 
     @traceable(name="Step2_AI_Rerank", run_type="chain")
     async def rerank(self, query: str, documents: List[SearchResult], top_k: int) -> List[SearchResult]:
-        """標準仕様に基づいたAIリランク (上位5件精査)"""
+        """AIリランク"""
         if not documents:
             return []
 
-        # 仕様: 上位5件のみを精査対象とする
         candidates = documents[:5]
         tasks = [self._check_relevance_single(query, doc, i) for i, doc in enumerate(candidates)]
         
-        # 並列実行 (Gather)
         results = await asyncio.gather(*tasks)
         reranked = [doc for doc in results if doc is not None]
         
-        # スコア順にソート
         reranked.sort(key=lambda x: x.metadata.rerank_score, reverse=True)
         
         if not reranked:
@@ -156,26 +149,22 @@ class SearchService:
         return reranked[:top_k]
 
     def reorder_litm(self, documents: List[SearchResult]) -> List[SearchResult]:
-        """標準仕様: LitM配置 (U字型)"""
+        """Lost in the Middle対策"""
         if not documents: return []
         dq = deque(documents)
         reordered = []
-        
-        # 1位を最初、2位を最後、3位を最初...の順で配置
         while dq:
-            reordered.append(dq.popleft()) # 最初へ
+            reordered.append(dq.popleft())
             if dq:
-                reordered.insert(len(reordered)-1, dq.popleft()) # 末尾寄りへ
-        
+                reordered.insert(len(reordered)-1, dq.popleft())
         return reordered
 
     def filter_diversity(self, documents: List[SearchResult], threshold: float = 0.7) -> List[SearchResult]:
-        """標準仕様: 多様性フィルタ (70%重複カット)"""
+        """多様性フィルタ"""
         unique_docs = []
         for doc in documents:
             is_duplicate = False
             for selected in unique_docs:
-                # 文字列の類似度を確認
                 sim = SequenceMatcher(None, doc.content, selected.content).ratio()
                 if sim > threshold:
                     is_duplicate = True
@@ -185,43 +174,19 @@ class SearchService:
         return unique_docs
 
     async def _enrich_with_urls(self, documents: List[SearchResult]) -> List[SearchResult]:
-        """
-        検索結果のドキュメントに署名付きURLを付与する。
-        詳細なログを出力し、トラブルシューティングを容易にする。
-        """
+        """署名付きURL付与"""
         logger.info(f"Starting URL enrichment for {len(documents)} documents.")
-        
         for i, doc in enumerate(documents):
-            # Pydanticモデルなのでドット記法でアクセス
             source_path = doc.metadata.source
-            
-            # 1. sourceパスの有無を確認
-            if not source_path:
-                logger.warning(f"[Doc {i}] 'source' metadata is missing or empty. Skipping URL generation.")
-                continue
-
-            # 2. 既にURLがある場合はスキップ（二重生成防止）
-            if doc.metadata.url:
-                logger.debug(f"[Doc {i}] URL already exists for {source_path}. Skipping.")
-                continue
+            if not source_path: continue
+            if doc.metadata.url: continue
 
             try:
-                # 3. URL生成の試行
-                logger.debug(f"[Doc {i}] Generating signed URL for: {source_path}")
-                
-                # generate_signed_url は services.storage からインポートされている前提
                 signed_url = await generate_signed_url(source_path)
-                
                 if signed_url:
                     doc.metadata.url = signed_url
-                    logger.info(f"[Doc {i}] ✅ Successfully generated URL for: {source_path}")
-                else:
-                    logger.warning(f"[Doc {i}] ⚠️ URL generation returned empty for: {source_path}")
-                    
             except Exception as e:
-                logger.error(f"[Doc {i}] ❌ Error generating URL for {source_path}: {e}", exc_info=True)
-                # エラー時はURLなしで続行（検索結果自体は返す）
-
+                logger.error(f"[Doc {i}] Error generating URL: {e}", exc_info=True)
         return documents
 
     @traceable(name="Search_Pipeline", run_type="chain")
@@ -232,7 +197,7 @@ class SearchService:
         collection_name: str, 
         top_k: int = 5,
         **kwargs
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> Dict[str, Any]: # 【修正】戻り値をDict[str, Any]に変更
         """統合検索パイプライン"""
         try:
             # 1. クエリ拡張
@@ -240,20 +205,20 @@ class SearchService:
 
             # 2. Embedding生成
             query_embedding = await self.get_embedding(expanded_query)
-            if not query_embedding: return {"documents": []}
+            if not query_embedding: return {"documents": [], "is_faq_match": False}
 
             # 3. DB検索
+            # 【修正】定数を使用して検索数を制御
+            match_count = PARAMS.get("RERANK_TOP_K_INPUT", 15)
             response = db_client.client.rpc("match_documents_hybrid", {
                 "p_query_text": expanded_query,
                 "p_query_embedding": query_embedding,
-                "p_match_count": 10,
+                "p_match_count": match_count,
                 "p_collection_name": collection_name
             }).execute()
             
-            # 生データをPydanticモデルに変換 (Strict Typing)
             raw_docs = []
             for d in response.data:
-                # metadataが辞書であることを確認
                 meta_data = d.get('metadata', {})
                 if isinstance(meta_data, str):
                     try:
@@ -270,17 +235,33 @@ class SearchService:
                     )
                 )
 
-            # 4. パイプライン実行 (Rerank -> LitM -> Diversity)
+            # 4. パイプライン実行
             reranked = await self.rerank(query, raw_docs, top_k)
+            
+            # 【追加】FAQ一致判定ロジック
+            is_faq_match = False
+            if reranked:
+                top_doc = reranked[0]
+                # 類似度0.9以上 かつ リランクスコア基準以上
+                sim_threshold = PARAMS.get("QA_SIMILARITY_THRESHOLD", 0.90)
+                score_threshold = PARAMS.get("RERANK_SCORE_THRESHOLD", 6.0)
+                
+                if (top_doc.similarity >= sim_threshold and 
+                    top_doc.metadata.rerank_score >= score_threshold):
+                    is_faq_match = True
+                    logger.info(f"[Search] High confidence FAQ match detected. ID: {top_doc.id}")
+
             reordered = self.reorder_litm(reranked)
             final_docs = self.filter_diversity(reordered)
             
-            # 5. URL付与 (ログ出力付き)
+            # 5. URL付与
             final_docs_with_url = await self._enrich_with_urls(final_docs)
 
-            # 辞書として返す (CamelCase変換はFastAPI側またはモデル設定で対応)
-            return {"documents": [d.model_dump() for d in final_docs_with_url]}
+            return {
+                "documents": [d.model_dump() for d in final_docs_with_url],
+                "is_faq_match": is_faq_match # フラグを追加
+            }
 
         except Exception as e:
             logger.error(f"Search pipeline error: {e}", exc_info=True)
-            return {"documents": []}
+            return {"documents": [], "is_faq_match": False}

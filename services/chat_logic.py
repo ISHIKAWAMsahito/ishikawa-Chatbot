@@ -24,7 +24,7 @@ from services.utils import (
 # プロンプトモジュールのインポート
 from services import prompts
 
-# DI（依存性の注入）の準備
+# DI（依存性の注入）
 llm_service = LLMService()
 search_service = SearchService(llm_service)
 storage_service = StorageService()
@@ -33,7 +33,7 @@ history_manager = ChatHistoryManager(max_length=PARAMS["MAX_HISTORY_LENGTH"])
 @traceable(name="Chat_Pipeline_Parent", run_type="chain")
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGenerator[str, None]:
     """
-    RAGチャットロジック
+    RAGチャットロジック（FAQ優先・プライバシー保護対応版）
     """
     session_id = get_or_create_session_id(request)
     user_input = chat_req.question or chat_req.query
@@ -42,10 +42,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
     top_k = getattr(chat_req, "top_k", 5)
     embedding_model = getattr(chat_req, "embedding_model", "models/gemini-embedding-001")
 
-    # LangSmith用のRunTree取得（エラーハンドリング用）
+    # LangSmith用のRunTree取得
     run_tree = get_current_run_tree()
 
-    # 【修正1】プライバシー保護: 入力内容（クエリ）をログに出さない
+    # 【修正1】プライバシー保護: クエリ内容を隠蔽
     log_context(session_id, "Start processing query (content hidden)")
 
     # 日時取得（JST）
@@ -62,11 +62,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
         yield send_sse({'status_message': '🔍 質問を分析しています...'})
 
         # 2. 検索 (Search Service)
-        
         # まずクエリ拡張
         expanded_query = await search_service.expand_query(user_input)
         
-        # 検索パイプライン実行 (Search -> Rerank -> LitM -> Filter)
+        # 検索パイプライン実行
         search_result_obj = await search_service.search(
             query=expanded_query, 
             session_id=session_id,
@@ -75,8 +74,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
             embedding_model=embedding_model
         )
         search_results = search_result_obj.get("documents", [])
+        # 【追加】FAQ一致フラグを取得
+        is_faq_match = search_result_obj.get("is_faq_match", False)
         
-        # ヒットしなかった場合、元のクエリで再試行 (安全策)
+        # ヒットしなかった場合のフォールバック（元のクエリで再検索）
         if not search_results and expanded_query != user_input:
              search_result_obj = await search_service.search(
                 query=user_input,
@@ -86,10 +87,10 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
                 embedding_model=embedding_model
              )
              search_results = search_result_obj.get("documents", [])
+             is_faq_match = search_result_obj.get("is_faq_match", False)
 
         if not search_results:
-             yield send_sse({'content': AI_MESSAGES.get("NOT_FOUND", "申し訳ありません。関連する情報が見つかりませんでした。")})
-             # 履歴に保存して終了
+             yield send_sse({'content': AI_MESSAGES.get("NOT_FOUND", "申し訳ありません。関連情報が見つかりませんでした。")})
              history_manager.add(session_id, "assistant", "関連情報が見つかりませんでした。")
              yield send_sse({'done': True, 'feedback_id': str(uuid.uuid4())})
              return
@@ -107,19 +108,22 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
         context_str = "\n".join(context_parts)
 
         # システムプロンプト準備
+        # 【追加】FAQ一致時は強い指示を追加
+        system_prompt_base = prompts.SYSTEM_GENERATION
+        if is_faq_match:
+            system_prompt_base += "\n\n**重要: ユーザーの質問に完全に合致するFAQ資料が見つかりました。<doc id='1'>の内容を最優先し、その回答を正確に伝えてください。**"
+
         try:
-            full_system_prompt = prompts.SYSTEM_GENERATION.format(
+            full_system_prompt = system_prompt_base.format(
                 context_text=context_str,
                 current_date=current_date_str
             )
         except Exception:
-             # フォーマットエラー等のフォールバック
              full_system_prompt = f"以下の情報を元に回答してください。\n{context_str}"
 
         # ストリーミング回答の開始
         ai_response_full = ""
         
-        # LLMServiceのメソッド呼び出し (generate_response_streamを想定)
         async for chunk in llm_service.generate_response_stream(
             query=user_input,
             context_docs=search_results, 
@@ -130,14 +134,13 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
             ai_response_full += text_chunk
             yield send_sse({'content': text_chunk})
 
-        # 4. 参照元リストの生成と送信
+        # 4. 参照元リスト
         references_text = format_references(search_results)
-        
         if references_text:
             yield send_sse({'content': references_text})
             ai_response_full += references_text
 
-        # 5. 履歴にAIの回答を保存
+        # 5. 履歴保存
         history_manager.add(session_id, "assistant", ai_response_full)
 
         # 6. 完了シグナル
@@ -145,7 +148,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
         yield send_sse({'done': True, 'feedback_id': feedback_id})
 
     except Exception as e:
-        # 【修正2】エラーハンドリング: スタックトレースを含める (exc_info=True)
+        # 【修正2】エラーハンドリング: スタックトレースを含める
         log_context(session_id, f"Critical Pipeline Error: {e}", "error", exc_info=True)
         if run_tree:
             run_tree.end(error=str(e))
@@ -168,16 +171,11 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
         return
     
     summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
-    
-    # プロンプトモジュールから取得
     prompt = prompts.FEEDBACK_ANALYSIS.format(summary=summary)
 
     try:
-        # LLMServiceのメソッド呼び出し (generate_stream または generate_response_stream を確認して使用)
-        # ここでは汎用的な generate_stream を想定
         stream = await llm_service.generate_stream(prompt)
         async for chunk in stream:
-            # chunkの形式に応じて調整 (str または Object)
             text = chunk.text if hasattr(chunk, 'text') else str(chunk)
             if text:
                 yield send_sse({'content': text})
