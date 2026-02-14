@@ -1,7 +1,7 @@
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, AsyncGenerator
+from typing import List, Dict, Any, AsyncGenerator, Optional
 from fastapi import Request
 
 # LangSmith トレース用
@@ -9,7 +9,6 @@ from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
 
 # 依存モジュールのインポート
-from core import database as core_database
 from core.constants import PARAMS, AI_MESSAGES
 from models.schemas import ChatQuery
 from services.llm import LLMService
@@ -22,7 +21,7 @@ from services.utils import (
     ChatHistoryManager, 
     format_references 
 )
-# ★修正: プロンプトモジュールをインポート
+# プロンプトモジュールのインポート
 from services import prompts
 
 # DI（依存性の注入）の準備
@@ -46,7 +45,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
     # LangSmith用のRunTree取得（エラーハンドリング用）
     run_tree = get_current_run_tree()
 
-    log_context(session_id, f"Start processing query: {user_input}")
+    # 【修正1】プライバシー保護: 入力内容（クエリ）をログに出さない
+    log_context(session_id, "Start processing query (content hidden)")
 
     # 日時取得（JST）
     JST = timezone(timedelta(hours=9), 'JST')
@@ -119,6 +119,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
         # ストリーミング回答の開始
         ai_response_full = ""
         
+        # LLMServiceのメソッド呼び出し (generate_response_streamを想定)
         async for chunk in llm_service.generate_response_stream(
             query=user_input,
             context_docs=search_results, 
@@ -144,7 +145,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
         yield send_sse({'done': True, 'feedback_id': feedback_id})
 
     except Exception as e:
-        log_context(session_id, f"Critical Pipeline Error: {e}", "error")
+        # 【修正2】エラーハンドリング: スタックトレースを含める (exc_info=True)
+        log_context(session_id, f"Critical Pipeline Error: {e}", "error", exc_info=True)
         if run_tree:
             run_tree.end(error=str(e))
             
@@ -155,7 +157,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
     finally:
         log_context(session_id, "Response generation finished.")
 
-# ★この関数が不足していたためエラーになっていました。必ずファイルの末尾に含まれるようにしてください。
+
 @traceable(name="Feedback_Analysis_Job", run_type="chain")
 async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
     """
@@ -171,10 +173,14 @@ async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[
     prompt = prompts.FEEDBACK_ANALYSIS.format(summary=summary)
 
     try:
+        # LLMServiceのメソッド呼び出し (generate_stream または generate_response_stream を確認して使用)
+        # ここでは汎用的な generate_stream を想定
         stream = await llm_service.generate_stream(prompt)
         async for chunk in stream:
+            # chunkの形式に応じて調整 (str または Object)
             text = chunk.text if hasattr(chunk, 'text') else str(chunk)
             if text:
                 yield send_sse({'content': text})
     except Exception as e:
+        logging.error(f"Feedback analysis error: {e}", exc_info=True)
         yield send_sse({'content': f'分析エラー: {e}'})
