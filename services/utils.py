@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import time
-from typing import List, Union, Optional, Any, Dict # Any追加
+from typing import List, Union, Optional, Any, Dict
 from urllib.parse import urlparse
 from fastapi import Request
 from pydantic import BaseModel, Field
@@ -32,10 +32,90 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}", exc_info=True)
     raise ValueError(f"Supabase initialization failed: {e}")
 
+# 定数設定
+MAX_TOTAL_SESSIONS = 1000
+SESSION_TIMEOUT_SEC = 3600 * 24
 
-# ... (定数定義、ChatMessage, SessionData, get_or_create_session_id, send_sse, log_context, ChatHistoryManager は変更なし) ...
-# ... (format_urls_as_links も変更なし) ...
+# --- Pydantic Models ---
+class ChatMessage(BaseModel):
+    role: str
+    content: str
 
+class SessionData(BaseModel):
+    history: List[ChatMessage] = Field(default_factory=list)
+    last_accessed: float = Field(default_factory=time.time)
+
+# --- Functions (Session / Logging) ---
+
+def get_or_create_session_id(request: Request) -> str:
+    session_id = request.session.get('chat_session_id')
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        request.session['chat_session_id'] = session_id
+    return session_id
+
+def send_sse(data: Union[BaseModel, dict]) -> str:
+    if isinstance(data, BaseModel):
+        json_str = data.model_dump_json(by_alias=True)
+    else:
+        json_str = json.dumps(data, ensure_ascii=False)
+    return f"data: {json_str}\n\n"
+
+def log_context(session_id: str, message: str, level: str = "info", exc_info: bool = False):
+    safe_message = message.replace('\n', '\\n').replace('\r', '\\r')
+    msg = f"[Session: {session_id}] {safe_message}"
+    log_func = getattr(logger, level.lower(), logger.info)
+    log_func(msg, exc_info=exc_info)
+
+class ChatHistoryManager:
+    def __init__(self, max_length: int = 20):
+        self._store: dict[str, SessionData] = {}
+        self.max_length = max_length
+
+    def _cleanup(self):
+        current_time = time.time()
+        expired = [sid for sid, data in self._store.items() if current_time - data.last_accessed > SESSION_TIMEOUT_SEC]
+        for sid in expired:
+            del self._store[sid]
+        
+        if len(self._store) > MAX_TOTAL_SESSIONS:
+            sorted_sessions = sorted(self._store.items(), key=lambda x: x[1].last_accessed)
+            excess = len(self._store) - MAX_TOTAL_SESSIONS
+            for i in range(excess):
+                del self._store[sorted_sessions[i][0]]
+
+    def add(self, session_id: str, role: str, content: str):
+        if len(self._store) >= MAX_TOTAL_SESSIONS:
+            self._cleanup()
+        if session_id not in self._store:
+            self._store[session_id] = SessionData()
+        session = self._store[session_id]
+        session.last_accessed = time.time()
+        session.history.append(ChatMessage(role=role, content=content))
+        if len(session.history) > self.max_length:
+            session.history = session.history[-self.max_length:]
+
+    def get_history(self, session_id: str) -> List[dict]:
+        if session_id in self._store:
+            session = self._store[session_id]
+            session.last_accessed = time.time()
+            return [msg.model_dump() for msg in session.history]
+        return []
+
+def format_urls_as_links(text: str) -> str:
+    if not text:
+        return ""
+    url_pattern = r'(?<!\()(https?://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|])'
+    def replace_link(match):
+        url = match.group(0)
+        try:
+            parsed = urlparse(url)
+            if parsed.scheme not in ('http', 'https'):
+                return url
+        except Exception:
+            return url
+        return f"[{url}]({url})"
+    return re.sub(url_pattern, replace_link, text)
 
 # --- 【機能修正】URL生成ロジック ---
 
