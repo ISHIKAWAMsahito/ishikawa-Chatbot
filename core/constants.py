@@ -4,7 +4,7 @@ PARAMS = {
     "QA_SIMILARITY_THRESHOLD": 0.90,
     "RERANK_SCORE_THRESHOLD": 6.0,
     "MAX_HISTORY_LENGTH": 20,
-    "RERANK_TOP_K_INPUT": 15,#1/25 検索上位15件をRerankにかける
+    "RERANK_TOP_K_INPUT": 5,#2月14日 検索上位5件をRerankにかける。ハイブリッド検索があるため、十分な精度が得られると考えられる。
 }
 
 # セーフティ設定
