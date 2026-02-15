@@ -344,7 +344,7 @@
 
                 const tdLog = document.createElement('td');
                 tdLog.className = 'col-log';
-                tdLog.textContent = item.comment || "(ログなし)"; // XSS対策
+                tdLog.textContent = item.comment || item.content || "(ログなし)"; // XSS対策
 
                 tr.appendChild(tdDate);
                 tr.appendChild(tdRating);
