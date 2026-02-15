@@ -99,3 +99,37 @@ class Settings(BaseModel):
     collection: Optional[str] = None
     embedding_model: Optional[str] = None
     top_k: Optional[int] = None
+
+# -----------------------------------------------------------------------------
+# Chat Logs / Analysis Models (New)
+# -----------------------------------------------------------------------------
+class ChatLogCreate(BaseModel):
+    """
+    チャットログ保存用スキーマ
+    チャット完了時にシステム内部で使用します。
+    """
+    session_id: str = Field(..., description="クライアントのセッションID")
+    user_query: str = Field(..., description="学生の質問内容")
+    ai_response: str = Field(..., description="AIの回答内容")
+    metadata: Optional[dict] = Field(default_factory=dict, description="参照元ドキュメント情報など")
+
+class ChatLogRead(BaseModel):
+    """
+    チャットログ読み出し用スキーマ（管理者分析用）
+    """
+    id: str # UUIDは文字列として扱います
+    session_id: str
+    user_query: str
+    ai_response: str
+    created_at: datetime = Field(..., description="作成日時")
+
+    class Config:
+        from_attributes = True # ORMモード (v2では from_attributes)
+
+class AnalysisQuery(BaseModel):
+    """
+    管理者からの分析依頼リクエスト
+    例: "最近の1年生はどんなことに困っていますか？"
+    """
+    query: str = Field(..., min_length=1, max_length=1000, description="分析官への質問")
+    target_period_days: int = Field(30, description="分析対象とする過去の日数")

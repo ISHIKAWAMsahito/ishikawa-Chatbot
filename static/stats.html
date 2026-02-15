@@ -3,14 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI chatbot system【統計・分析】</title>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+    <title>AI chatbot system【統計・相談】</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
     
 <style>
-    /* --- デザイン設定 (admin.htmlと共通) --- */
+    /* --- 基本デザイン (admin.htmlと共通) --- */
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -27,42 +26,47 @@
         box-shadow: 0 32px 64px rgba(0, 0, 0, 0.15);
         overflow: hidden;
         min-height: 80vh;
+        display: flex;
+        flex-direction: column;
     }
     .header {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        padding: 30px;
+        padding: 24px 30px;
         text-align: center;
         position: relative;
+        flex-shrink: 0;
     }
-    .header h1 { margin-bottom: 10px; text-shadow: 2px 2px 8px rgba(0,0,0,0.3); }
+    .header h1 { margin-bottom: 5px; text-shadow: 2px 2px 8px rgba(0,0,0,0.3); font-size: 1.8rem; }
+    .header p { font-size: 0.9rem; opacity: 0.9; }
     
-     .nav-btn { /*管理画面へ戻る、ログアウトボタンの背景を白、文字を黒に変更 */
+    .nav-btn {
         position: absolute;
         top: 25px;
-        padding: 10px 24px;
+        padding: 8px 20px;
         border-radius: 30px;
         text-decoration: none;
         font-weight: bold;
-        font-size: 0.95rem;
-        
-        /* ▼ ここを変更しました（背景白、文字黒） */
+        font-size: 0.85rem;
         background-color: white; 
         color: #333; 
-        /* ▲ 変更ここまで */
-
         transition: all 0.3s ease;
-        border: 1px solid rgba(255,255,255,0.4); /* 枠線が不要ならこの行を削除 */
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1); /* 白背景なので少し影をつけると見やすいです */
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
-    .nav-btn:hover { background-color: white; color: #667eea; }
+    .nav-btn:hover { background-color: #f0f0f0; transform: translateY(-1px); }
     .logout-btn { right: 25px; }
     .admin-link-btn { left: 25px; }
 
     /* ダッシュボードレイアウト */
-    .dashboard-content { padding: 32px; display: grid; grid-template-columns: 1fr 350px; gap: 32px; }
+    .dashboard-content { 
+        padding: 32px; 
+        display: grid; 
+        grid-template-columns: 1fr 400px; /* 右側を少し広げました */
+        gap: 32px; 
+        flex-grow: 1;
+    }
     
-    /* カード */
+    /* カードエリア */
     .stats-cards {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -71,15 +75,15 @@
     }
     .card {
         background: white;
-        padding: 24px;
+        padding: 20px;
         border-radius: 12px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.05);
         border-left: 5px solid #4facfe;
         text-align: center;
     }
-    .card h3 { font-size: 0.9rem; color: #666; margin-bottom: 8px; }
-    .card .value { font-size: 2rem; font-weight: bold; color: #333; }
-    .card .sub { font-size: 0.8rem; color: #888; }
+    .card h3 { font-size: 0.85rem; color: #666; margin-bottom: 8px; }
+    .card .value { font-size: 1.8rem; font-weight: bold; color: #333; }
+    .card .sub { font-size: 0.75rem; color: #888; }
 
     /* テーブルエリア */
     .table-container {
@@ -93,62 +97,111 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 20px;
+        margin-bottom: 15px;
         border-bottom: 2px solid #f0f0f0;
         padding-bottom: 10px;
     }
-    table { width: 100%; border-collapse: collapse; min-width: 600px; }
-    th { text-align: left; padding: 12px; background: #f8f9fa; color: #555; font-weight: 600; border-bottom: 2px solid #eee; }
-    td { padding: 12px; border-bottom: 1px solid #eee; font-size: 0.95rem; vertical-align: top; }
-    .col-date { width: 150px; color: #888; font-size: 0.85rem; }
-    .col-rating { width: 100px; text-align: center; font-size: 1.2rem; }
-    .col-log { color: #444; white-space: pre-wrap; word-break: break-all; }
+    .section-header h2 { font-size: 1.2rem; color: #444; }
+    table { width: 100%; border-collapse: collapse; min-width: 500px; }
+    th { text-align: left; padding: 10px; background: #f8f9fa; color: #555; font-weight: 600; border-bottom: 2px solid #eee; font-size: 0.9rem; }
+    td { padding: 10px; border-bottom: 1px solid #eee; font-size: 0.9rem; vertical-align: top; }
+    .col-date { width: 140px; color: #888; font-size: 0.8rem; }
+    .col-rating { width: 100px; text-align: center; }
     
-    /* 右サイドパネル（グラフ・AI分析） */
-    .sidebar { display: flex; flex-direction: column; gap: 24px; }
+    /* 右サイドパネル */
+    .sidebar { display: flex; flex-direction: column; gap: 24px; height: 100%; }
     .panel-box {
         background: white;
         padding: 20px;
         border-radius: 12px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.05);
     }
+
+    /* --- チャットボット風 UI (Consultation) --- */
+    .chat-panel {
+        display: flex;
+        flex-direction: column;
+        flex-grow: 1; /* 残りの高さを埋める */
+        min-height: 400px;
+        border: 2px solid #e0e7ff;
+    }
+    .chat-header {
+        border-bottom: 1px solid #eee;
+        padding-bottom: 10px;
+        margin-bottom: 10px;
+    }
+    .chat-header h3 { font-size: 1.1rem; color: #4facfe; display: flex; align-items: center; gap: 8px; }
     
-    /* AI分析ボタン */
-    .analyze-btn {
-        width: 100%;
-        padding: 12px;
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    .chat-history {
+        flex-grow: 1;
+        overflow-y: auto;
+        padding: 10px;
+        background: #f9faff;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        max-height: 500px;
+    }
+    
+    /* メッセージバブル */
+    .message {
+        max-width: 90%;
+        padding: 10px 14px;
+        border-radius: 12px;
+        font-size: 0.9rem;
+        line-height: 1.5;
+        position: relative;
+    }
+    .message.user {
+        align-self: flex-end;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-bottom-right-radius: 2px;
+    }
+    .message.ai {
+        align-self: flex-start;
+        background: white;
+        color: #333;
+        border: 1px solid #e0e0e0;
+        border-bottom-left-radius: 2px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .message.ai strong { color: #d63384; } /* 重要箇所を強調 */
+    .message.ai ul { padding-left: 20px; margin: 5px 0; }
+
+    /* 入力エリア */
+    .input-area {
+        display: flex;
+        gap: 10px;
+    }
+    .input-area textarea {
+        flex-grow: 1;
+        resize: none;
+        height: 50px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        font-family: inherit;
+    }
+    .input-area button {
+        width: 60px;
+        background: #4facfe;
         color: white;
         border: none;
         border-radius: 8px;
-        font-weight: bold;
         cursor: pointer;
-        transition: transform 0.2s;
-        display: flex;
-        justify-content: center;
-        gap: 8px;
-        align-items: center;
-        margin-bottom: 15px;
+        transition: background 0.2s;
     }
-    .analyze-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(79, 172, 254, 0.4); }
-    .analyze-btn:disabled { opacity: 0.6; cursor: wait; }
-    
-    .ai-result {
-        background: #f0f8ff;
-        padding: 15px;
-        border-radius: 8px;
-        font-size: 0.9rem;
-        line-height: 1.6;
-        min-height: 100px;
-        border: 1px dashed #4facfe;
-    }
-    .ai-result h3 { font-size: 1rem; margin-top: 10px; margin-bottom: 5px; color: #333; }
-    .ai-result ul { padding-left: 20px; margin-bottom: 10px; }
+    .input-area button:hover { background: #00f2fe; }
+    .input-area button:disabled { background: #ccc; cursor: not-allowed; }
 
     /* レスポンシブ */
     @media (max-width: 1000px) {
         .dashboard-content { grid-template-columns: 1fr; }
         .stats-cards { grid-template-columns: 1fr; }
+        .chat-panel { height: 500px; }
     }
 </style>
 </head>
@@ -157,8 +210,8 @@
         <div class="header">
             <a href="/admin.html" class="nav-btn admin-link-btn">⬅ 管理画面へ戻る</a>
             <a href="/logout" class="nav-btn logout-btn">🚪 ログアウト</a>
-            <h1>📊 統計・分析ダッシュボード</h1>
-            <p>ユーザーからのフィードバックと傾向分析</p>
+            <h1>📊 統計・改善アドバイザー</h1>
+            <p>学生の声の分析と、AIパートナーとの改善相談</p>
         </div>
 
         <div class="dashboard-content">
@@ -184,7 +237,7 @@
                 <div class="table-container">
                     <div class="section-header">
                         <h2>📋 最新のフィードバック履歴</h2>
-                        <button class="small-btn primary" onclick="fetchData()" style="padding:6px 12px; cursor:pointer;">🔄 更新</button>
+                        <button class="small-btn" onclick="fetchData()" style="padding:6px 12px; cursor:pointer; background:#f0f0f0; border:1px solid #ccc; border-radius:4px;">🔄 更新</button>
                     </div>
                     <table>
                         <thead>
@@ -207,16 +260,22 @@
                     <canvas id="ratingChart"></canvas>
                 </div>
 
-                <div class="panel-box">
-                    <h3>🧠 AI傾向分析</h3>
-                    <p style="font-size:0.85rem; color:#666; margin-bottom:10px;">
-                        会話ログの内容をAIが読み取り、質問の傾向や改善点を分析します。
-                    </p>
-                    <button class="analyze-btn" id="analyzeBtn" onclick="runAiAnalysis()">
-                        <span>✨ 分析を実行する</span>
-                    </button>
-                    <div id="aiAnalysisResult" class="ai-result">
-                        ここに分析結果が表示されます...
+                <div class="panel-box chat-panel">
+                    <div class="chat-header">
+                        <h3>🤖 AI業務改善パートナー</h3>
+                        <p style="font-size:0.8rem; color:#888;">蓄積されたログを基に、改善案を相談できます。</p>
+                    </div>
+                    
+                    <div id="chatHistory" class="chat-history">
+                        <div class="message ai">
+                            こんにちは。学生対応ログの分析担当です。<br>
+                            「最近の1年生の悩みは？」や「履修登録のFAQに不足はない？」など、お気軽にご相談ください。
+                        </div>
+                    </div>
+                    
+                    <div class="input-area">
+                        <textarea id="queryInput" placeholder="質問を入力してください..." onkeydown="handleEnter(event)"></textarea>
+                        <button id="sendBtn" onclick="sendConsultation()">送信</button>
                     </div>
                 </div>
             </div>
@@ -224,72 +283,36 @@
     </div>
 
     <script>
-    const { createClient } = supabase;
-    let supabaseClient = null;
     let chartInstance = null;
-    let currentData = [];
 
-    // Supabase初期化
-    async function initializeSupabase() {
-        try {
-            const response = await fetch('/api/client/chat/config');
-            if (!response.ok) return;
-            const config = await response.json();
-            if (config.supabase_url && config.supabase_anon_key) {
-                supabaseClient = createClient(config.supabase_url, config.supabase_anon_key);
-                console.log('Supabase initialized');
-                fetchData();
-            }
-        } catch (error) {
-            console.error("Supabase init error:", error);
-        }
-    }
-
-    // データ取得関数
+    // --- 1. 統計データの取得と表示 (既存機能) ---
     async function fetchData() {
-        // Supabaseクライアントは使わず、自サーバーのAPIを叩く
         try {
             const response = await fetch('/api/admin/stats/data');
             
             if (!response.ok) {
-                // 認証エラー（ログアウト状態）などの場合
                 if (response.status === 401 || response.status === 403) {
-                    window.location.href = '/login'; // ログイン画面へ飛ばす
+                    window.location.href = '/login';
                     return;
                 }
                 throw new Error("データの取得に失敗しました");
             }
 
             const data = await response.json();
-            currentData = data;
             renderDashboard(data);
 
         } catch (err) {
             console.error("Fetch error:", err);
-            // Snyk対策 (CWE-79): innerHTMLへの変数展開を避け、textContentを使用
-            const tbody = document.getElementById('dataTableBody');
-            tbody.innerHTML = ''; // クリア
-            const tr = document.createElement('tr');
-            const td = document.createElement('td');
-            td.colSpan = 3;
-            td.style.color = 'red';
-            td.style.textAlign = 'center';
-            td.textContent = `エラー: ${err.message}`;
-            tr.appendChild(td);
-            tbody.appendChild(tr);
+            document.getElementById('dataTableBody').innerHTML = `<tr><td colspan="3" style="color:red; text-align:center;">エラー: ${err.message}</td></tr>`;
         }
     }
 
-    // 画面描画
-    // 画面描画
     function renderDashboard(data) {
-        // KPI計算
         const total = data.length;
         const good = data.filter(i => i.rating === 'good').length;
         const bad = data.filter(i => i.rating === 'bad').length;
         const rate = total > 0 ? Math.round((good / total) * 100) : 0;
 
-        // 今週のデータ
         const oneWeekAgo = new Date();
         oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
         const weekly = data.filter(i => new Date(i.created_at) > oneWeekAgo).length;
@@ -299,55 +322,36 @@
         document.getElementById('goodCountSub').textContent = `Good: ${good} / Bad: ${bad}`;
         document.getElementById('weeklyCount').textContent = weekly + "件";
 
-        // テーブル描画（Snyk対策: innerHTMLを使わずDOM構築）
         const tbody = document.getElementById('dataTableBody');
         tbody.innerHTML = '';
         
         if (data.length === 0) {
-            const tr = document.createElement('tr');
-            const td = document.createElement('td');
-            td.colSpan = 3;
-            td.style.textAlign = 'center';
-            td.textContent = 'データがありません';
-            tr.appendChild(td);
-            tbody.appendChild(tr);
+            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">データがありません</td></tr>';
         } else {
             data.forEach(item => {
                 const tr = document.createElement('tr');
                 const date = new Date(item.created_at).toLocaleString('ja-JP');
                 
-                // 日時
                 const tdDate = document.createElement('td');
                 tdDate.className = 'col-date';
                 tdDate.textContent = date;
-                tr.appendChild(tdDate);
 
-                // 評価
                 const tdRating = document.createElement('td');
                 tdRating.className = 'col-rating';
-                const spanRating = document.createElement('span');
-                if (item.rating === 'good') {
-                    spanRating.style.color = '#28a745';
-                    spanRating.textContent = '👍 Good';
-                } else {
-                    spanRating.style.color = '#dc3545';
-                    spanRating.textContent = '👎 Bad';
-                }
-                tdRating.appendChild(spanRating);
-                tr.appendChild(tdRating);
+                tdRating.innerHTML = item.rating === 'good' 
+                    ? '<span style="color:#28a745">👍 Good</span>' 
+                    : '<span style="color:#dc3545">👎 Bad</span>';
 
-                // ログ/コメント
                 const tdLog = document.createElement('td');
                 tdLog.className = 'col-log';
-                // user input (comment) を textContent でセットすることでXSSを完全無効化
-                tdLog.textContent = item.comment || "(ログなし)";
-                tr.appendChild(tdLog);
+                tdLog.textContent = item.comment || "(ログなし)"; // XSS対策
 
+                tr.appendChild(tdDate);
+                tr.appendChild(tdRating);
+                tr.appendChild(tdLog);
                 tbody.appendChild(tr);
             });
         }
-
-        // グラフ描画
         renderChart(good, bad);
     }
 
@@ -367,92 +371,103 @@
             },
             options: {
                 responsive: true,
-                plugins: {
-                    legend: { position: 'bottom' }
-                }
+                plugins: { legend: { position: 'bottom' } }
             }
         });
     }
 
-    // AI分析の実行
-    async function runAiAnalysis() {
-        const btn = document.getElementById('analyzeBtn');
-        const resultDiv = document.getElementById('aiAnalysisResult');
-        
-        if (currentData.length === 0) {
-            resultDiv.textContent = "分析するデータがありません。";
-            return;
+    // --- 2. AI相談チャット機能 (新規実装) ---
+    
+    // Enterキー送信対応
+    function handleEnter(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendConsultation();
         }
+    }
 
-        // UI更新（ボタン無効化・ロード表示）
+    async function sendConsultation() {
+        const input = document.getElementById('queryInput');
+        const btn = document.getElementById('sendBtn');
+        const history = document.getElementById('chatHistory');
+        const query = input.value.trim();
+
+        if (!query) return;
+
+        // 1. ユーザーメッセージ表示
+        appendMessage('user', query);
+        input.value = '';
         btn.disabled = true;
-        btn.innerHTML = '<span>⏳ 分析中...</span>';
-        resultDiv.textContent = "Geminiがデータを分析しています...";
 
+        // 2. AIの空バブルを作成（ローディング表示）
+        const aiBubbleId = 'ai-' + Date.now();
+        appendMessage('ai', '<span id="' + aiBubbleId + '">考え中...</span>');
+        
         try {
-            // APIリクエスト
-            const response = await fetch('/api/admin/chat/analyze', {
+            // API呼び出し (Step 4で作成したエンドポイント)
+            // api/stats.py が /api/admin/stats にマウントされていると仮定
+            const response = await fetch('/api/admin/stats/chat_analysis', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                // サーバー側でデータを再取得・分析する仕様のため空オブジェクトを送信
-                body: JSON.stringify({}) 
+                body: JSON.stringify({ 
+                    query: query,
+                    target_period_days: 30 // 過去30日分を分析対象とする
+                })
             });
 
-            if (!response.ok) throw new Error("API Error");
+            if (!response.ok) throw new Error("API Error: " + response.statusText);
 
-            // ストリーミングレスポンスの読み込み処理
+            // ストリーミング処理
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
-            let fullText = "";
+            let aiResponseText = "";
+            const bubbleContent = document.getElementById(aiBubbleId);
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
+                
                 const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n');
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const json = JSON.parse(line.substring(6));
-                            if (json.content) fullText += json.content;
-                        } catch(e){}
-                    }
-                }
+                // APIの実装により "data: " プレフィックスがある場合とない場合に対応
+                // 今回の実装では raw text が返ってくる想定だが、念のため整形
+                aiResponseText += chunk;
+                
+                // マークダウン変換して表示更新
+                bubbleContent.innerHTML = DOMPurify.sanitize(marked.parse(aiResponseText));
+                
+                // スクロール追従
+                history.scrollTop = history.scrollHeight;
             }
-
-            // ▼▼▼ Snyk対策 (CWE-79) 修正ポイント ▼▼▼
-            // 正規表現(.replace)ではなく、DOMPurify.sanitize()を使用する
-            const rawHtml = marked.parse(fullText || '');
-            const cleanHtml = DOMPurify.sanitize(rawHtml);
-            
-            resultDiv.innerHTML = cleanHtml;
-            // ▲▲▲ 修正ここまで ▲▲▲
 
         } catch (error) {
             console.error(error);
-            resultDiv.textContent = "分析中にエラーが発生しました。バックエンドのログを確認してください。";
+            const bubbleContent = document.getElementById(aiBubbleId);
+            if(bubbleContent) bubbleContent.innerText = "エラーが発生しました: " + error.message;
         } finally {
-            // UI復帰
             btn.disabled = false;
-            btn.innerHTML = '<span>✨ 分析を実行する</span>';
+            input.focus();
         }
     }
 
-    function escapeHtml(str) {
-        if(!str) return '';
-        return str.replace(/[&<>"']/g, function(m) {
-            return {
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#039;'
-            }[m];
-        });
+    function appendMessage(role, htmlContent) {
+        const history = document.getElementById('chatHistory');
+        const div = document.createElement('div');
+        div.className = `message ${role}`;
+        
+        if (role === 'user') {
+            // ユーザー入力はテキストとして扱う（XSS対策）
+            div.textContent = htmlContent;
+        } else {
+            // AI回答はHTML（Markdown変換後）として扱う
+            div.innerHTML = htmlContent;
+        }
+        
+        history.appendChild(div);
+        history.scrollTop = history.scrollHeight;
     }
 
-    // 実行
-    initializeSupabase();
+    // 初期化
+    fetchData();
     </script>
 </body>
 </html>

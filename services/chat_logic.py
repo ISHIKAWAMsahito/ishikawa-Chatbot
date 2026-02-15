@@ -1,5 +1,6 @@
 import logging
 import uuid
+import asyncio # ★追加
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, AsyncGenerator, Optional
 from fastapi import Request
@@ -10,10 +11,11 @@ from langsmith.run_helpers import get_current_run_tree
 
 # 依存モジュールのインポート
 from core.constants import PARAMS, AI_MESSAGES
-from models.schemas import ChatQuery
+from models.schemas import ChatQuery, ChatLogCreate # ★ChatLogCreateを追加
 from services.llm import LLMService
 from services.search import SearchService
 from services.storage import StorageService
+from services.chat_log import ChatLogService # ★追加
 from services.utils import (
     get_or_create_session_id, 
     send_sse, 
@@ -33,7 +35,7 @@ history_manager = ChatHistoryManager(max_length=PARAMS["MAX_HISTORY_LENGTH"])
 @traceable(name="Chat_Pipeline_Parent", run_type="chain")
 async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGenerator[str, None]:
     """
-    RAGチャットロジック（FAQ優先・プライバシー保護対応版）
+    RAGチャットロジック（FAQ優先・プライバシー保護対応版・ログ保存機能付き）
     """
     session_id = get_or_create_session_id(request)
     user_input = chat_req.question or chat_req.query
@@ -45,7 +47,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
     # LangSmith用のRunTree取得
     run_tree = get_current_run_tree()
 
-    # 【修正1】プライバシー保護: クエリ内容を隠蔽
+    # プライバシー保護: クエリ内容を隠蔽
     log_context(session_id, "Start processing query (content hidden)")
 
     # 日時取得（JST）
@@ -54,6 +56,8 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
     current_date_str = now.strftime("%Y年%m月%d日")
 
     search_results = []
+    is_faq_match = False
+    ai_response_full = "" # 保存用に回答を蓄積する変数
     
     try:
         # 1. 履歴の追加
@@ -74,7 +78,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
             embedding_model=embedding_model
         )
         search_results = search_result_obj.get("documents", [])
-        # 【追加】FAQ一致フラグを取得
+        # FAQ一致フラグを取得
         is_faq_match = search_result_obj.get("is_faq_match", False)
         
         # ヒットしなかった場合のフォールバック（元のクエリで再検索）
@@ -90,8 +94,25 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
              is_faq_match = search_result_obj.get("is_faq_match", False)
 
         if not search_results:
-             yield send_sse({'content': AI_MESSAGES.get("NOT_FOUND", "申し訳ありません。関連情報が見つかりませんでした。")})
-             history_manager.add(session_id, "assistant", "関連情報が見つかりませんでした。")
+             not_found_msg = AI_MESSAGES.get("NOT_FOUND", "申し訳ありません。関連情報が見つかりませんでした。")
+             yield send_sse({'content': not_found_msg})
+             
+             # 履歴保存 & ログ保存 (見つからなかった場合も記録)
+             history_manager.add(session_id, "assistant", not_found_msg)
+             
+             # ★ログ保存タスクの投入 (Not Found時)
+             log_entry = ChatLogCreate(
+                session_id=session_id,
+                user_query=user_input,
+                ai_response=not_found_msg,
+                metadata={
+                    "collection": collection_name,
+                    "result": "not_found",
+                    "top_k": top_k
+                }
+             )
+             asyncio.create_task(ChatLogService.save_log_async(log_entry))
+
              yield send_sse({'done': True, 'feedback_id': str(uuid.uuid4())})
              return
 
@@ -108,7 +129,7 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
         context_str = "\n".join(context_parts)
 
         # システムプロンプト準備
-        # 【追加】FAQ一致時は強い指示を追加
+        # FAQ一致時は強い指示を追加
         system_prompt_base = prompts.SYSTEM_GENERATION
         if is_faq_match:
             system_prompt_base += "\n\n**重要: ユーザーの質問に完全に合致するFAQ資料が見つかりました。<doc id='1'>の内容を最優先し、その回答を正確に伝えてください。**"
@@ -122,8 +143,6 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
              full_system_prompt = f"以下の情報を元に回答してください。\n{context_str}"
 
         # ストリーミング回答の開始
-        ai_response_full = ""
-        
         async for chunk in llm_service.generate_response_stream(
             query=user_input,
             context_docs=search_results, 
@@ -138,17 +157,38 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
         references_text = format_references(search_results)
         if references_text:
             yield send_sse({'content': references_text})
-            ai_response_full += references_text
+            # 参照元もログに含めるか検討: ここでは純粋なAI回答のみ保存するか、含めるかは要件次第
+            # 今回は履歴整合性を重視し、参照元テキストもAI回答の一部として扱います
+            ai_response_full += "\n" + references_text
 
-        # 5. 履歴保存
+        # 5. 履歴保存 (メモリ内)
         history_manager.add(session_id, "assistant", ai_response_full)
 
-        # 6. 完了シグナル
+        # -------------------------------------------------------
+        # 【追加】 6. 会話ログの永続化 (DB保存)
+        # -------------------------------------------------------
+        log_entry = ChatLogCreate(
+            session_id=session_id,
+            user_query=user_input,
+            ai_response=ai_response_full,
+            metadata={
+                "collection": collection_name,
+                "top_k": top_k,
+                "is_faq_match": is_faq_match,
+                "result": "success",
+                "doc_count": len(search_results)
+            }
+        )
+        # ストリーミングを阻害しないよう、非同期タスクとして投入
+        asyncio.create_task(ChatLogService.save_log_async(log_entry))
+        # -------------------------------------------------------
+
+        # 7. 完了シグナル
         feedback_id = str(uuid.uuid4())
         yield send_sse({'done': True, 'feedback_id': feedback_id})
 
     except Exception as e:
-        # 【修正2】エラーハンドリング: スタックトレースを含める
+        # エラーハンドリング: スタックトレースを含める
         log_context(session_id, f"Critical Pipeline Error: {e}", "error", exc_info=True)
         if run_tree:
             run_tree.end(error=str(e))
@@ -156,6 +196,18 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
         error_str = str(e)
         msg = AI_MESSAGES.get("SYSTEM_ERROR", "システムエラーが発生しました。")
         yield send_sse({'content': f"\n\n{msg} (Error: {error_str})"})
+        
+        # エラーログも保存（オプション）
+        try:
+            error_log = ChatLogCreate(
+                session_id=session_id,
+                user_query=user_input,
+                ai_response=f"SYSTEM ERROR: {error_str}",
+                metadata={"result": "error"}
+            )
+            asyncio.create_task(ChatLogService.save_log_async(error_log))
+        except:
+            pass # エラー保存のエラーは無視
         
     finally:
         log_context(session_id, "Response generation finished.")
