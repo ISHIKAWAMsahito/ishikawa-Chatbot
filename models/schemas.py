@@ -103,6 +103,20 @@ class Settings(BaseModel):
 # -----------------------------------------------------------------------------
 # Chat Logs / Analysis Models (New)
 # -----------------------------------------------------------------------------
+class FeedbackItem(BaseModel):
+    """
+    管理者画面の統計データ一覧で表示するためのフィードバック項目スキーマ
+    """
+    # DBがUUIDを返すため str に変更 (intだとエラーになる可能性があります)
+    id: str 
+    created_at: datetime = Field(..., description="作成日時") # strではなくdatetimeとして扱います
+    rating: Optional[str] = None
+    # DBのカラム名 'content' を Pydanticの 'comment' フィールドにマッピング
+    comment: Optional[str] = Field(None, alias="content")
+
+    class Config:
+        populate_by_name = True
+        from_attributes = True
 class ChatLogCreate(BaseModel):
     """
     チャットログ保存用スキーマ
