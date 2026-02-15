@@ -1,137 +1,104 @@
-# 🎓 学生支援チャットボットシステム
+🎓 学生支援チャットボットシステム
+Retrieval-Augmented Generation (RAG) を活用した、学生支援チャットボットプラットフォームです。
+単なる問い合わせの自動化に留まらず、現場主導で学生支援体制を改善し続けるための基盤として設計されています。
 
-Retrieval-Augmented Generation (RAG) を活用した、学生支援チャットボットです。
-クラウドサービスを組み合わせ、学生でも持続的に運用可能な構成を目指しました。
-※学内公式のシステムではありません。研究・試行的に開発しているシステムです。
-## 🚀 主な機能
+※本システムは研究・試行的に開発しているものであり、学内公式ではありません。
 
-- **🤖 AI質問応答**: 自然言語で大学関連の質問に回答
-- **📚 公式情報ベースの回答**: 大学サイトや資料を参照
-- **🔐 セキュアなアクセス制御**:メールアドレス全体でのチェック
-- **⚙️ リアルタイム設定反映**: 管理者の設定変更が即時に学生画面へ反映
+🚀 主な機能
+🤖 AI質問応答 (RAG): 
+　大学サイトやマニュアル等の公式資料に基づき、自然言語で学生の質問に回答します。
 
-## 🏗️ システム構成
 
-- **フロントエンド層**: HTML/CSS + JavaScript (WebSocket)
-- **アプリケーション層**: FastAPI + Gemini API + Auth0
-- **データベース層**: Supabase (PostgreSQL + pgvector)
-- **インフラ・監視層**: Render + Docker + Uptime Robot + LangSmith
-![システム構成図](./docs/system_architecture.png)
-## 📂 プロジェクト構成
+🧠 AI業務改善アドバイザー : 
+　学生とAIの過去の対話ログを分析し、職員に対して「学生の悩み」の抽出や「窓口対応の改善案」を提案します 。
++4
 
-機能ごとにモジュール分割されています。
 
-```text
+📊 統計・分析ダッシュボード:
+　フィードバックの統計グラフと、AIとの改善相談チャットを統合した管理者用インターフェースを提供します 。
+
+🔐 セキュアなアクセス制御: 
+　Auth0連携により、特定のユーザーのみにアクセスを制限します。
+
+⚙️ 現場主導のナレッジ管理:
+　技術者に頼らず、職員自身がRAG対象ドキュメントを更新・修正できる設計にしています。
+
+🏗️ システム構成
+
+フロントエンド層: 
+　HTML / Vanilla JS / Chart.js / WebSocket (リアルタイム設定反映) 
+
+
+アプリケーション層: 
+　FastAPI (Python) / Gemini API / Auth0 (OAuth2.0) 
+
+データベース層:
+　Supabase (PostgreSQL + pgvector)
+
+インフラ・監視層: 
+　Render / Docker / LangSmith (トレース・評価)
+
+📂 プロジェクト構成
 .
 ├── main.py                  # アプリケーション本体、Lifespan管理、ルーター登録
 ├── static/                  # 静的ファイル (フロントエンド)
 │   ├── client.html          # 学生用チャット画面
 │   ├── admin.html           # 管理者用ダッシュボード
 │   ├── DB.html              # ナレッジベース(DB)管理画面
-│   ├── stats.html           # フィードバック統計・分析画面
+│   ├── stats.html           # 統計・AI改善相談画面 (Update) [cite: 42]
 │   └── style.css            # 共通スタイルシート
 │
-├── api/                     # APIエンドポイント (ルーター)
-│   ├── auth.py              # Auth0認証、HTML配信
-│   ├── chat.py              # チャット履歴取得・クライアント用エンドポイント
-│   ├── documents.py         # ナレッジ登録・検索・管理
-│   ├── feedback.py          # ユーザーフィードバック受信
-│   ├── system.py            # ヘルスチェック、設定管理
-│   └── stats.py             # 管理者用統計データ提供
+├── api/                     # APIエンドポイント (ルーター) 
+│   ├── auth.py              # Auth0認証処理
+│   ├── chat.py              # チャット・履歴・フィードバック API
+│   ├── documents.py         # ナレッジ(RAG用)登録・検索 API
+│   ├── system.py            # 設定管理・ヘルスチェック API
+│   └── stats.py             # 統計・対話ログ分析 API (Update)
 │
-├── services/                # ビジネスロジック
-│   ├── chat_logic.py        # チャットフロー制御、履歴管理
-│   ├── search.py            # 検索ロジック (クエリ拡張・リランク)
-│   ├── llm.py               # Gemini API通信・リトライ処理
-│   ├── document_processor.py # テキスト抽出・チャンキング
-│   ├── storage.py           # Supabase Storage連携
-│   └── feedback.py          # フィードバック集計ロジック
+├── services/                # ビジネスロジック 
+│   ├── chat_logic.py        # RAGパイプライン制御・ログ保存トリガー (Update)
+│   ├── chat_log.py          # 対話ログのDB保存・永続化処理 (New)
+│   ├── search.py            # クエリ拡張・リランク・ハイブリッド検索
+│   ├── llm.py               # Gemini API連携・リトライ処理
+│   ├── prompts.py           # プロンプト一元管理 (Update)
+│   └── document_processor.py # テキスト抽出・チャンキング
 │
-├── core/                    # 中核設定・コンポーネント
+├── core/                    # 中核設定
+│   ├── database.py          # Supabase(PostgreSQL)接続管理
 │   ├── config.py            # 環境変数・定数定義
-│   ├── database.py          # DB接続 (Supabase) 管理
-│   ├── dependencies.py      # 認証依存関係 (require_auth)
-│   ├── ws_auth.py           # WebSocket認証
-│   └── settings.py          # 動的設定管理 (SettingsManager)
+│   └── dependencies.py      # 認証・認可依存関係 (require_auth)
 │
 └── models/                  # データモデル
-    └── schemas.py           # Pydanticモデル (リクエスト/レスポンス定義)
+    └── schemas.py           # Pydanticモデル定義 (Update)
 
-⚙️ 技術スタック
-フロントエンド: HTML5 + Vanilla JS (WebSocket対応)
-
-バックエンド: Python (FastAPI)
-
-AI/LLM: Google Gemini API (gemini-2.5-flash, gemini-embedding-001)
-
-検索/RAG: ハイブリッド検索, クエリ拡張, Rerank
-
-DB: Supabase (PostgreSQL + pgvector)
-
-認証: Auth0 (OAuth2.0)
-
-インフラ: Render (Web Service), Docker
-
-## 🛠️ セットアップ
-
-### 1. 環境変数の設定
-プロジェクトルートに `.env` ファイルを作成し、以下の変数を設定してください：
-
-```properties
+🛠️ セットアップ
+1. 環境変数の設定
+.env ファイルに以下の設定が必要です。
 # --- 基本設定 & セキュリティ ---
-APP_SECRET_KEY=your_random_secret_key
-JWT_SECRET_KEY=your_jwt_secret_key
-
-# --- 管理者 & アクセス制御 ---
-ADMIN_USERNAME=admin_user
-ADMIN_PASSWORD_HASH=hashed_password_string
-SUPER_ADMIN_EMAILS=admin@example.com,dev@example.com
-ALLOWED_CLIENT_EMAILS=student@univ.ac.jp  # 許可するメールドメイン等
-CLIENT_EMAILS=test_student@univ.ac.jp     # テスト用など特定の許可メアド
-
-# --- 認証 (Auth0) ---
-AUTH0_DOMAIN=your_domain.auth0.com
-AUTH0_CLIENT_ID=your_client_id
-AUTH0_CLIENT_SECRET=your_client_secret
-
+APP_SECRET_KEY=...
+# --- 管理者設定 ---
+SUPER_ADMIN_EMAILS=admin@example.com
 # --- AI & LLM (Gemini) ---
-GEMINI_API_KEY=your_gemini_api_key
-
+GEMINI_API_KEY=...
 # --- データベース (Supabase) ---
-USE_SUPABASE=true
-SUPABASE_URL=[https://xxx.supabase.co](https://xxx.supabase.co)
-SUPABASE_SERVICE_KEY=your_service_key     # role: service_role (サーバーサイド用)
-SUPABASE_ANON_KEY=your_anon_key           # role: anon (クライアントサイド用)
-
-# --- 監視 & トレース (LangSmith) ---
+SUPABASE_URL=...
+SUPABASE_SERVICE_KEY=...
+# --- 監視 (LangSmith) ---
 LANGCHAIN_TRACING_V2=true
-LANGCHAIN_ENDPOINT=[https://api.smith.langchain.com](https://api.smith.langchain.com)
-LANGCHAIN_API_KEY=your_langchain_api_key
-LANGCHAIN_PROJECT=your_project_name
-Uptime Robot
+LANGCHAIN_API_KEY=...
 
-ローカル開発 (Docker)
-docker run -it --rm `
-  -p 8000:8000 `
-  -e PORT=8000 `
-  -e ENVIRONMENT=local `
-  --env-file "C:\dev\ishikawa-Chatbot\ishikawa-Chatbot.env" `
-  my-fastapi-app
+2. ローカル開発 (Docker)
+docker build -t chatbot-app .
+docker run -p 8000:8000 --env-file .env chatbot-app
 
-デプロイ (Render)
-リポジトリ内の render.yaml を使用してデプロイ可能です。
-services:
-  - type: web
-    name: fastapi-chatbot
-    runtime: python
-    plan: free
+🔒 セキュリティと運用ビジョン
 
-🔒 セキュリティ
--認証:Auth0を使用し、メールアドレス全体でチェックする認証機能
-- 学生: client.html
-- 管理者: admin.html / DB.html / stats.html
-- 個人情報入力は禁止の注意書き（氏名・学籍番号など）
+自律的な改善サイクル:
+　日常的な運用の中で現場職員が「回答の不十分さ」に気づいた際、即座に知識ベースを修正できる体制を支援します。
 
-📈 今後の改善予定
-音声入力インターフェースの実装
-多言語対応
+
+対話ログの資産化:
+　学生とのやり取りを蓄積し、システム自身が改善案を提示する「相談パートナー」へと進化させることで、教職員の支援態勢アップデートを加速させます 。
+
+📈 今後の展望
+音声入力インターフェース
