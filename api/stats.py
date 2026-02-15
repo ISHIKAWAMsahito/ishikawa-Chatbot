@@ -90,16 +90,7 @@ async def chat_with_logs(
             log_context += f"Q: {log['user_query']}\n"
             log_context += f"A: {log['ai_response'][:100]}...\n\n" # 回答は長すぎるので要約
 
-        # 3. 分析用プロンプトの作成
-        system_prompt = """
-        あなたは大学の学生支援改善アドバイザーです。
-        提供された「学生とAIの対話ログ」を分析し、職員からの質問に答えてください。
-        
-        【役割】
-        - ログから学生の潜在的なニーズや不満を読み取る。
-        - 窓口対応やFAQの改善案を具体的に提案する。
-        - 根拠となるログ番号（No.x）を引用して回答の信頼性を高める。
-        """
+        system_prompt = prompts.LOG_ANALYSIS_ADVISOR
 
         user_prompt = f"""
         【職員からの相談】
