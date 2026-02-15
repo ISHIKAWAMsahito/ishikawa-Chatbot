@@ -36,7 +36,7 @@ FastAPI (Python) / Gemini API / Auth0 (OAuth2.0)
 Supabase (PostgreSQL + pgvector)
 - **インフラ・監視層**: 
 Render / Docker / LangSmith (トレース・評価)
-
+![システム構成図](./docs/system_architecture.png)
 ---
 
 ## 📂 プロジェクト構成
