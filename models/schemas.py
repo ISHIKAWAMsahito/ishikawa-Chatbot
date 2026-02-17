@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -12,7 +12,7 @@ class ChatQuery(BaseModel):
     question: str = Field(
         ...,
         description="ユーザーからの質問文",
-        alias="query",
+        alias="query", # queryでも受け付ける
         min_length=1,
         max_length=4000,
     )
@@ -117,6 +117,7 @@ class FeedbackItem(BaseModel):
     class Config:
         populate_by_name = True
         from_attributes = True
+
 class ChatLogCreate(BaseModel):
     """
     チャットログ保存用スキーマ
@@ -147,3 +148,29 @@ class AnalysisQuery(BaseModel):
     """
     query: str = Field(..., min_length=1, max_length=1000, description="分析官への質問")
     target_period_days: int = Field(30, description="分析対象とする過去の日数")
+
+# -----------------------------------------------------------------------------
+# Search Result Models (For search.py) - ★追加
+# -----------------------------------------------------------------------------
+class DocumentMetadata(BaseModel):
+    """
+    検索結果のメタデータ構造定義
+    """
+    source: str = "不明な資料"
+    page: Optional[int] = None
+    chunk: Optional[int] = None
+    file_path: Optional[str] = None
+    url: Optional[str] = None
+    category: Optional[str] = None
+    # リランク時の理由やスコア保持用
+    rerank_reason: Optional[str] = None 
+
+class SearchResult(BaseModel):
+    """
+    検索結果の共通構造定義
+    """
+    id: str
+    content: str
+    metadata: DocumentMetadata
+    similarity: float = 0.0
+    score: float = 0.0  # リランク後のスコア（デフォルト0.0）
