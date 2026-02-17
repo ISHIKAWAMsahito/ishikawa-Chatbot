@@ -19,14 +19,37 @@ from core.database import db_client
 from core.config import GEMINI_API_KEY, EMBEDDING_MODEL_DEFAULT
 from core.constants import PARAMS
 
-# Storageサービスのインポート (エラー回避付き)
+logger = logging.getLogger(__name__)
+
+# -----------------------------------------------------------------
+# URL生成ロジック (サービスの有無に関わらず動作するよう強化)
+# -----------------------------------------------------------------
 try:
+    # まず正規のストレージサービスからのインポートを試みる
     from services.storage import generate_signed_url
 except ImportError:
+    # モジュールがない場合は、DBクライアントを使ってここで直接生成する (フォールバック)
+    logger.warning("services.storage not found. Using fallback URL generation.")
+    
     async def generate_signed_url(path: str) -> str:
-        return ""
-
-logger = logging.getLogger(__name__)
+        try:
+            if not path: return ""
+            # 環境変数からバケット名を取得 (デフォルト: slides)
+            bucket_name = os.getenv("SUPABASE_STORAGE_BUCKET", "slides")
+            
+            # DBクライアント経由で署名付きURLを発行 (有効期限: 3600秒)
+            # db_client.client は supabase.Client を指すと仮定
+            res = db_client.client.storage.from_(bucket_name).create_signed_url(path, 3600)
+            
+            # レスポンスが辞書か文字列かで分岐（ライブラリのバージョン差異対策）
+            if isinstance(res, dict):
+                return res.get("signedURL", "")
+            elif isinstance(res, str):
+                return res
+            return ""
+        except Exception as e:
+            logger.error(f"Fallback URL generation failed for '{path}': {e}")
+            return ""
 
 # Gemini API設定
 if GEMINI_API_KEY:
@@ -52,7 +75,6 @@ class SearchResult(BaseModel):
     similarity: float = 0.0
     model_config = {"extra": "ignore"}
 
-# ★追加: バッチリランク解析用モデル
 class RerankItem(BaseModel):
     id: int = Field(..., description="ドキュメントのインデックス番号")
     score: float = Field(..., description="関連性スコア (0.0-10.0)")
@@ -70,7 +92,6 @@ class SearchService:
         self.llm = llm_service
 
     async def get_embedding(self, text: str, model: str = EMBEDDING_MODEL_DEFAULT) -> List[float]:
-        """テキストをベクトル化する"""
         try:
             return await self.llm.get_embedding(text, model)
         except Exception as e:
@@ -80,7 +101,6 @@ class SearchService:
     @alru_cache(maxsize=100)
     @traceable(name="Step1_Query_Expansion", run_type="chain")
     async def expand_query(self, query: str) -> str:
-        """クエリ拡張"""
         cot_prompt = prompts.QUERY_EXPANSION.format(query=query)
         try:
             response = await self.llm.generate_stream(cot_prompt)
@@ -96,23 +116,14 @@ class SearchService:
 
     @traceable(name="Step2_AI_Rerank_Batch", run_type="chain")
     async def rerank(self, query: str, documents: List[SearchResult], top_k: int) -> List[SearchResult]:
-        """
-        AIリランク（バッチ処理版）
-        上位候補をまとめてLLMに渡し、一括でスコアリングを行うことでAPI回数を1回に削減。
-        """
         if not documents:
             return []
 
-        # 1. リランク対象の選定
-        # 全件やるとトークン過多になるため、PARAMSで指定された上位件数(デフォルト5)のみリランク
         rerank_input_count = PARAMS.get("RERANK_TOP_K_INPUT", 5)
         candidates = documents[:rerank_input_count]
 
-        # 2. プロンプト用のコンテキスト作成
-        # トークン節約のため、各ドキュメントは先頭800文字程度に制限
         candidates_text = ""
         for i, doc in enumerate(candidates):
-            # 親コンテンツがある場合はそちらを優先して評価に使う
             eval_content = doc.metadata.parent_content or doc.content
             content_preview = eval_content[:800].replace('\n', ' ')
             candidates_text += f"ID: {i}\nContent: {content_preview}\n\n"
@@ -124,54 +135,36 @@ class SearchService:
         )
 
         try:
-            # 3. LLMによる一括判定 (JSONモード)
-            # llm.generate_json は response_schema に対応している前提
             response = await self.llm.generate_json(prompt, BatchRerankResult)
             
-            # レスポンスのテキスト取得
             if hasattr(response, 'text'):
                 text = response.text
             else:
                 text = str(response)
             
-            # JSONクリーニング
             text = text.replace("```json", "").replace("```", "").strip()
-            # 万が一JSON以外の文字が混じっている場合の簡易ガードは本来必要だが、
-            # GeminiのJSONモードは信頼性が高いためここでは直接パース
             data = json.loads(text)
-            
-            # Pydanticで検証
             result_obj = BatchRerankResult(**data)
             
-            # 4. スコアのマッピングとフィルタリング
             reranked_docs = []
             threshold = PARAMS.get("RERANK_SCORE_THRESHOLD", 6.0)
 
             for item in result_obj.ranked_items:
-                # IDが範囲内かチェック
                 if 0 <= item.id < len(candidates):
                     doc = candidates[item.id]
-                    
-                    # スコア基準チェック
                     if item.score >= threshold:
                         doc.metadata.rerank_score = item.score
                         doc.metadata.rerank_reason = item.reason
                         
-                        # リランク合格時、回答生成用に「親チャンク」へ内容を差し替え
-                        # (検索は小さいチャンクで行い、回答は大きいコンテキストで行うため)
                         if doc.metadata.parent_content:
                             doc.content = doc.metadata.parent_content
                         
                         reranked_docs.append(doc)
 
-            # 5. スコア順にソート
             reranked_docs.sort(key=lambda x: x.metadata.rerank_score, reverse=True)
             
-            # 誰も基準を超えなかった場合、検索結果ゼロにするのではなく、
-            # 類似度検索の上位をそのまま返す（フォールバック）
             if not reranked_docs:
                 logger.info("Rerank filtered all docs. Fallback to similarity order.")
-                # ただしこの場合は parent_content への置換が行われないため手動で行う
                 fallback_docs = documents[:top_k]
                 for d in fallback_docs:
                     if d.metadata.parent_content:
@@ -182,11 +175,9 @@ class SearchService:
 
         except Exception as e:
             logger.error(f"Batch rerank failed: {e}", exc_info=True)
-            # エラー時はFail Safeとして、元のベクトル検索結果をそのまま返す
             return documents[:top_k]
 
     def reorder_litm(self, documents: List[SearchResult]) -> List[SearchResult]:
-        """Lost in the Middle対策"""
         if not documents: return []
         dq = deque(documents)
         reordered = []
@@ -197,7 +188,6 @@ class SearchService:
         return reordered
 
     def filter_diversity(self, documents: List[SearchResult], threshold: float = 0.7) -> List[SearchResult]:
-        """多様性フィルタ"""
         unique_docs = []
         for doc in documents:
             is_duplicate = False
@@ -211,19 +201,31 @@ class SearchService:
         return unique_docs
 
     async def _enrich_with_urls(self, documents: List[SearchResult]) -> List[SearchResult]:
-        """署名付きURL付与"""
+        """署名付きURL付与（強化版）"""
         logger.info(f"Starting URL enrichment for {len(documents)} documents.")
+        
         for i, doc in enumerate(documents):
             source_path = doc.metadata.source
-            if not source_path: continue
+            
+            # --- 修正: FAQやソース不明なものはスキップ ---
+            if not source_path or source_path == "不明な資料":
+                continue
+            # FAQデータはファイル実体がないのでスキップ
+            if source_path == "FAQ" or source_path.startswith("FAQ"):
+                continue
+                
             if doc.metadata.url: continue
 
             try:
+                # URL生成実行
                 signed_url = await generate_signed_url(source_path)
                 if signed_url:
                     doc.metadata.url = signed_url
+                else:
+                    logger.debug(f"[Doc {i}] URL generation returned empty for source: {source_path}")
             except Exception as e:
-                logger.error(f"[Doc {i}] Error generating URL: {e}", exc_info=True)
+                logger.warning(f"[Doc {i}] Error generating URL for '{source_path}': {e}")
+                
         return documents
 
     @traceable(name="Search_Pipeline", run_type="chain")
@@ -237,81 +239,78 @@ class SearchService:
     ) -> Dict[str, Any]:
         """統合検索パイプライン (Unified Search: Documents + FAQ)"""
         try:
-            # 1. クエリ拡張 (変更なし)
+            # 1. クエリ拡張
             expanded_query = await self.expand_query(query)
 
-            # 2. Embedding生成 (変更なし)
+            # 2. Embedding生成
             query_embedding = await self.get_embedding(expanded_query)
             if not query_embedding: return {"documents": [], "is_faq_match": False}
 
-            # 3. DB検索 (★ここを修正)
-            # 以前の match_documents_hybrid から match_unified_search に変更
-            
+            # 3. DB検索 (Unified Search)
             # リランク前の取得候補数
             match_count = PARAMS.get("RERANK_TOP_K_INPUT", 15)
             # 足切りライン（低すぎるスコアのものはDB側で除外）
             similarity_threshold = 0.3 
             
-            # ★ SQLで定義した関数を呼び出す
+            # SQL関数呼び出し
+            # NOTE: 前手順でSQL関数の戻り値型を text に変更済みであること
             response = db_client.client.rpc("match_unified_search", {
                 "p_query_embedding": query_embedding,
                 "p_match_threshold": similarity_threshold,
                 "p_match_count": match_count
             }).execute()
             
-            # --- データの受け取り処理 (既存コードとほぼ同じでOK) ---
+            # データの受け取り処理
             raw_docs = []
-            for d in response.data:
-                meta_data = d.get('metadata', {})
-                
-                # 文字列で返ってきた場合のパース処理（既存維持）
-                if isinstance(meta_data, str):
-                    try:
-                        meta_data = json.loads(meta_data)
-                    except:
+            if response and hasattr(response, 'data'):
+                for d in response.data:
+                    meta_data = d.get('metadata', {})
+                    
+                    # メタデータのパース処理強化（DBから文字列で来た場合に対応）
+                    if isinstance(meta_data, str):
+                        try:
+                            meta_data = json.loads(meta_data)
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to parse metadata JSON: {meta_data[:50]}...")
+                            meta_data = {}
+                    
+                    if not isinstance(meta_data, dict):
                         meta_data = {}
-                
-                # SQLで 'source_type' を返していますが、
-                # metadata内の 'source' (FAQの場合は自動でセット済) が優先されます
-                
-                raw_docs.append(
-                    SearchResult(
-                        id=d.get('id'),
-                        content=d.get('content'), # FAQの場合はここが回答文になっています
-                        metadata=DocumentMetadata(**meta_data),
-                        similarity=d.get('similarity', 0.0)
-                    )
-                )
 
-            # 4. パイプライン実行（バッチリランク呼び出し）(変更なし)
+                    raw_docs.append(
+                        SearchResult(
+                            id=d.get('id'), # IDは文字列(uuid/text)または数値(int)に対応
+                            content=d.get('content'),
+                            metadata=DocumentMetadata(**meta_data),
+                            similarity=d.get('similarity', 0.0)
+                        )
+                    )
+
+            # 4. パイプライン実行（バッチリランク呼び出し）
             reranked = await self.rerank(query, raw_docs, top_k)
             
-            # FAQ一致判定ロジック (★少し改良)
+            # FAQ一致判定ロジック
             is_faq_match = False
             if reranked:
                 top_doc = reranked[0]
                 
-                # 設定値の取得
                 sim_threshold = PARAMS.get("QA_SIMILARITY_THRESHOLD", 0.90)
                 score_threshold = PARAMS.get("RERANK_SCORE_THRESHOLD", 6.0)
                 
-                # 条件A: 類似度とリランクスコアが高い（既存ロジック）
+                # FAQテーブル由来 または 高スコア判定
+                is_faq_source = (top_doc.metadata.source == "FAQ")
                 high_score = (top_doc.similarity >= sim_threshold and 
                               top_doc.metadata.rerank_score >= score_threshold)
-                              
-                # 条件B: データソースがFAQであり、かつリランクスコアが合格点
-                # (FAQデータは人間が作った正解なので、信頼度を少し甘く見ても良い場合の判定)
-                is_faq_source = top_doc.metadata.source == "FAQ"
-                faq_hit = is_faq_source and (top_doc.metadata.rerank_score >= score_threshold)
-
-                if high_score or faq_hit:
+                
+                # FAQ由来なら閾値超えで即マッチとみなす
+                if (is_faq_source and top_doc.metadata.rerank_score >= score_threshold) or high_score:
                     is_faq_match = True
-                    logger.info(f"[Search] FAQ/High-Confidence match detected. ID: {top_doc.id}, Source: {top_doc.metadata.source}")
+                    logger.info(f"[Search] FAQ/High-Confidence match. ID: {top_doc.id}, Source: {top_doc.metadata.source}")
 
             reordered = self.reorder_litm(reranked)
             final_docs = self.filter_diversity(reordered)
             
-            # 5. URL付与 (変更なし)
+            # 5. URL付与 (修正版呼び出し)
             final_docs_with_url = await self._enrich_with_urls(final_docs)
 
             return {
