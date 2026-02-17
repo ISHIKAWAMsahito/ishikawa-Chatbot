@@ -12,7 +12,6 @@ from async_lru import alru_cache
 from langsmith import traceable
 from pydantic import BaseModel, Field
 
-# 内部モジュールのインポート
 from services.llm import LLMService
 from services import prompts
 from core.database import db_client
@@ -21,27 +20,20 @@ from core.constants import PARAMS
 
 logger = logging.getLogger(__name__)
 
-# -----------------------------------------------------------------
-# URL生成ロジック (サービスの有無に関わらず動作するよう強化)
-# -----------------------------------------------------------------
+# --- URL生成ロジック (フォールバック) ---
 try:
-    # まず正規のストレージサービスからのインポートを試みる
     from services.storage import generate_signed_url
 except ImportError:
-    # モジュールがない場合は、DBクライアントを使ってここで直接生成する (フォールバック)
     logger.warning("services.storage not found. Using fallback URL generation.")
     
     async def generate_signed_url(path: str) -> str:
         try:
             if not path: return ""
-            # 環境変数からバケット名を取得 (デフォルト: slides)
-            bucket_name = os.getenv("SUPABASE_STORAGE_BUCKET", "slides")
+            # 【修正】デフォルトバケット名を 'images' に変更
+            bucket_name = os.getenv("SUPABASE_STORAGE_BUCKET", "images")
             
-            # DBクライアント経由で署名付きURLを発行 (有効期限: 3600秒)
-            # db_client.client は supabase.Client を指すと仮定
             res = db_client.client.storage.from_(bucket_name).create_signed_url(path, 3600)
             
-            # レスポンスが辞書か文字列かで分岐（ライブラリのバージョン差異対策）
             if isinstance(res, dict):
                 return res.get("signedURL", "")
             elif isinstance(res, str):
@@ -51,7 +43,6 @@ except ImportError:
             logger.error(f"Fallback URL generation failed for '{path}': {e}")
             return ""
 
-# Gemini API設定
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
@@ -61,6 +52,8 @@ if GEMINI_API_KEY:
 
 class DocumentMetadata(BaseModel):
     source: str = "不明な資料"
+    # 【追加】DBにあるimage_pathを受け取るためのフィールド
+    image_path: Optional[str] = None 
     url: Optional[str] = None
     parent_content: Optional[str] = None
     page: Optional[int] = None
@@ -205,26 +198,25 @@ class SearchService:
         logger.info(f"Starting URL enrichment for {len(documents)} documents.")
         
         for i, doc in enumerate(documents):
-            source_path = doc.metadata.source
+            # source_pathではなく、Storage上の実体パス(image_path)を優先使用
+            storage_path = doc.metadata.image_path or doc.metadata.source
             
-            # --- 修正: FAQやソース不明なものはスキップ ---
-            if not source_path or source_path == "不明な資料":
+            if not storage_path or storage_path == "不明な資料":
                 continue
-            # FAQデータはファイル実体がないのでスキップ
-            if source_path == "FAQ" or source_path.startswith("FAQ"):
+            if storage_path == "FAQ" or storage_path.startswith("FAQ"):
                 continue
                 
             if doc.metadata.url: continue
 
             try:
                 # URL生成実行
-                signed_url = await generate_signed_url(source_path)
+                signed_url = await generate_signed_url(storage_path)
                 if signed_url:
                     doc.metadata.url = signed_url
                 else:
-                    logger.debug(f"[Doc {i}] URL generation returned empty for source: {source_path}")
+                    logger.debug(f"[Doc {i}] URL generation returned empty for source: {storage_path}")
             except Exception as e:
-                logger.warning(f"[Doc {i}] Error generating URL for '{source_path}': {e}")
+                logger.warning(f"[Doc {i}] Error generating URL for '{storage_path}': {e}")
                 
         return documents
 
@@ -239,34 +231,23 @@ class SearchService:
     ) -> Dict[str, Any]:
         """統合検索パイプライン (Unified Search: Documents + FAQ)"""
         try:
-            # 1. クエリ拡張
             expanded_query = await self.expand_query(query)
-
-            # 2. Embedding生成
             query_embedding = await self.get_embedding(expanded_query)
             if not query_embedding: return {"documents": [], "is_faq_match": False}
 
-            # 3. DB検索 (Unified Search)
-            # リランク前の取得候補数
             match_count = PARAMS.get("RERANK_TOP_K_INPUT", 15)
-            # 足切りライン（低すぎるスコアのものはDB側で除外）
             similarity_threshold = 0.3 
             
-            # SQL関数呼び出し
-            # NOTE: 前手順でSQL関数の戻り値型を text に変更済みであること
             response = db_client.client.rpc("match_unified_search", {
                 "p_query_embedding": query_embedding,
                 "p_match_threshold": similarity_threshold,
                 "p_match_count": match_count
             }).execute()
             
-            # データの受け取り処理
             raw_docs = []
             if response and hasattr(response, 'data'):
                 for d in response.data:
                     meta_data = d.get('metadata', {})
-                    
-                    # メタデータのパース処理強化（DBから文字列で来た場合に対応）
                     if isinstance(meta_data, str):
                         try:
                             meta_data = json.loads(meta_data)
@@ -279,30 +260,25 @@ class SearchService:
 
                     raw_docs.append(
                         SearchResult(
-                            id=d.get('id'), # IDは文字列(uuid/text)または数値(int)に対応
+                            id=d.get('id'),
                             content=d.get('content'),
                             metadata=DocumentMetadata(**meta_data),
                             similarity=d.get('similarity', 0.0)
                         )
                     )
 
-            # 4. パイプライン実行（バッチリランク呼び出し）
             reranked = await self.rerank(query, raw_docs, top_k)
             
-            # FAQ一致判定ロジック
             is_faq_match = False
             if reranked:
                 top_doc = reranked[0]
-                
                 sim_threshold = PARAMS.get("QA_SIMILARITY_THRESHOLD", 0.90)
                 score_threshold = PARAMS.get("RERANK_SCORE_THRESHOLD", 6.0)
                 
-                # FAQテーブル由来 または 高スコア判定
                 is_faq_source = (top_doc.metadata.source == "FAQ")
                 high_score = (top_doc.similarity >= sim_threshold and 
                               top_doc.metadata.rerank_score >= score_threshold)
                 
-                # FAQ由来なら閾値超えで即マッチとみなす
                 if (is_faq_source and top_doc.metadata.rerank_score >= score_threshold) or high_score:
                     is_faq_match = True
                     logger.info(f"[Search] FAQ/High-Confidence match. ID: {top_doc.id}, Source: {top_doc.metadata.source}")
@@ -310,7 +286,6 @@ class SearchService:
             reordered = self.reorder_litm(reranked)
             final_docs = self.filter_diversity(reordered)
             
-            # 5. URL付与 (修正版呼び出し)
             final_docs_with_url = await self._enrich_with_urls(final_docs)
 
             return {
