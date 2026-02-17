@@ -142,7 +142,7 @@ def generate_storage_url(source_name: str) -> Optional[str]:
         # ▼▼▼ 追加・修正箇所 ▼▼▼
         
         # 日本語ファイル名が含まれるとAPIが400エラーになるためURLエンコードする
-        encoded_path = quote(file_path)
+        encoded_path = quote(file_path, safe='/')
 
         # 署名付きURL生成
         res = supabase.storage.from_(STORAGE_BUCKET_NAME).create_signed_url(
