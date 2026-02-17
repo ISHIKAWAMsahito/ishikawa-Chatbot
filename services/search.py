@@ -17,7 +17,7 @@ from services.llm import LLMService
 from services import prompts
 from core.database import db_client
 from core.config import GEMINI_API_KEY, EMBEDDING_MODEL_DEFAULT
-from core.constants import PARAMS  # 【追加】定数読み込み
+from core.constants import PARAMS
 
 # Storageサービスのインポート (エラー回避付き)
 try:
@@ -52,6 +52,15 @@ class SearchResult(BaseModel):
     similarity: float = 0.0
     model_config = {"extra": "ignore"}
 
+# ★追加: バッチリランク解析用モデル
+class RerankItem(BaseModel):
+    id: int = Field(..., description="ドキュメントのインデックス番号")
+    score: float = Field(..., description="関連性スコア (0.0-10.0)")
+    reason: str = Field(..., description="採点理由")
+
+class BatchRerankResult(BaseModel):
+    ranked_items: List[RerankItem]
+
 # =================================================================
 # 2. 検索サービスの定義
 # =================================================================
@@ -85,68 +94,96 @@ class SearchService:
             logger.warning(f"Query expansion failed: {e}")
             return query
 
-    async def _check_relevance_single(self, query: str, doc: SearchResult, index: int) -> Optional[SearchResult]:
-        """単一ドキュメントの並列評価 (Re-ranking)"""
-        eval_content = doc.metadata.parent_content or doc.content
-        snippet = eval_content[:500].replace('\n', ' ')
-        
-        prompt = f"""
-        あなたは検索エンジンのリランクシステムです。
-        以下の質問に対するドキュメントの関連性を0.0〜10.0で評価し、JSONで答えてください。
-        質問: {query}
-        ドキュメント: {snippet}
-        出力形式: {{"score": 8.5, "reason": "理由"}}
-        """
-
-        try:
-            async for attempt in AsyncRetrying(
-                stop=stop_after_attempt(2), 
-                wait=wait_exponential(min=1, max=3),
-                retry=retry_if_exception_type(Exception)
-            ):
-                with attempt:
-                    model = genai.GenerativeModel("models/gemini-2.5-flash")
-                    response = await model.generate_content_async(
-                        prompt,
-                        generation_config={"response_mime_type": "application/json"}
-                    )
-                    
-                    text = response.text.replace("```json", "").replace("```", "").strip()
-                    data = json.loads(text)
-                    score = float(data.get("score", 0.0))
-                    
-                    # 【修正】定数を使用してフィルタリング
-                    threshold = PARAMS.get("RERANK_SCORE_THRESHOLD", 6.0)
-                    if score >= threshold:
-                        doc.metadata.rerank_score = score
-                        doc.metadata.rerank_reason = data.get("reason", "")
-                        if doc.metadata.parent_content:
-                            doc.content = doc.metadata.parent_content
-                        return doc
-                    return None
-        except Exception as e:
-            logger.error(f"Relevance check failed for doc {index}: {e}")
-            return None
-
-    @traceable(name="Step2_AI_Rerank", run_type="chain")
+    @traceable(name="Step2_AI_Rerank_Batch", run_type="chain")
     async def rerank(self, query: str, documents: List[SearchResult], top_k: int) -> List[SearchResult]:
-        """AIリランク"""
+        """
+        AIリランク（バッチ処理版）
+        上位候補をまとめてLLMに渡し、一括でスコアリングを行うことでAPI回数を1回に削減。
+        """
         if not documents:
             return []
 
-        candidates = documents[:5]
-        tasks = [self._check_relevance_single(query, doc, i) for i, doc in enumerate(candidates)]
-        
-        results = await asyncio.gather(*tasks)
-        reranked = [doc for doc in results if doc is not None]
-        
-        reranked.sort(key=lambda x: x.metadata.rerank_score, reverse=True)
-        
-        if not reranked:
-            logger.info("Rerank filtered all docs. Fallback to similarity order.")
-            return documents[:top_k]
+        # 1. リランク対象の選定
+        # 全件やるとトークン過多になるため、PARAMSで指定された上位件数(デフォルト5)のみリランク
+        rerank_input_count = PARAMS.get("RERANK_TOP_K_INPUT", 5)
+        candidates = documents[:rerank_input_count]
+
+        # 2. プロンプト用のコンテキスト作成
+        # トークン節約のため、各ドキュメントは先頭800文字程度に制限
+        candidates_text = ""
+        for i, doc in enumerate(candidates):
+            # 親コンテンツがある場合はそちらを優先して評価に使う
+            eval_content = doc.metadata.parent_content or doc.content
+            content_preview = eval_content[:800].replace('\n', ' ')
+            candidates_text += f"ID: {i}\nContent: {content_preview}\n\n"
+
+        prompt = prompts.RERANK.format(
+            query=query,
+            count=len(candidates) - 1,
+            candidates_text=candidates_text
+        )
+
+        try:
+            # 3. LLMによる一括判定 (JSONモード)
+            # llm.generate_json は response_schema に対応している前提
+            response = await self.llm.generate_json(prompt, BatchRerankResult)
             
-        return reranked[:top_k]
+            # レスポンスのテキスト取得
+            if hasattr(response, 'text'):
+                text = response.text
+            else:
+                text = str(response)
+            
+            # JSONクリーニング
+            text = text.replace("```json", "").replace("```", "").strip()
+            # 万が一JSON以外の文字が混じっている場合の簡易ガードは本来必要だが、
+            # GeminiのJSONモードは信頼性が高いためここでは直接パース
+            data = json.loads(text)
+            
+            # Pydanticで検証
+            result_obj = BatchRerankResult(**data)
+            
+            # 4. スコアのマッピングとフィルタリング
+            reranked_docs = []
+            threshold = PARAMS.get("RERANK_SCORE_THRESHOLD", 6.0)
+
+            for item in result_obj.ranked_items:
+                # IDが範囲内かチェック
+                if 0 <= item.id < len(candidates):
+                    doc = candidates[item.id]
+                    
+                    # スコア基準チェック
+                    if item.score >= threshold:
+                        doc.metadata.rerank_score = item.score
+                        doc.metadata.rerank_reason = item.reason
+                        
+                        # リランク合格時、回答生成用に「親チャンク」へ内容を差し替え
+                        # (検索は小さいチャンクで行い、回答は大きいコンテキストで行うため)
+                        if doc.metadata.parent_content:
+                            doc.content = doc.metadata.parent_content
+                        
+                        reranked_docs.append(doc)
+
+            # 5. スコア順にソート
+            reranked_docs.sort(key=lambda x: x.metadata.rerank_score, reverse=True)
+            
+            # 誰も基準を超えなかった場合、検索結果ゼロにするのではなく、
+            # 類似度検索の上位をそのまま返す（フォールバック）
+            if not reranked_docs:
+                logger.info("Rerank filtered all docs. Fallback to similarity order.")
+                # ただしこの場合は parent_content への置換が行われないため手動で行う
+                fallback_docs = documents[:top_k]
+                for d in fallback_docs:
+                    if d.metadata.parent_content:
+                        d.content = d.metadata.parent_content
+                return fallback_docs
+
+            return reranked_docs[:top_k]
+
+        except Exception as e:
+            logger.error(f"Batch rerank failed: {e}", exc_info=True)
+            # エラー時はFail Safeとして、元のベクトル検索結果をそのまま返す
+            return documents[:top_k]
 
     def reorder_litm(self, documents: List[SearchResult]) -> List[SearchResult]:
         """Lost in the Middle対策"""
@@ -197,7 +234,7 @@ class SearchService:
         collection_name: str, 
         top_k: int = 5,
         **kwargs
-    ) -> Dict[str, Any]: # 【修正】戻り値をDict[str, Any]に変更
+    ) -> Dict[str, Any]:
         """統合検索パイプライン"""
         try:
             # 1. クエリ拡張
@@ -208,8 +245,9 @@ class SearchService:
             if not query_embedding: return {"documents": [], "is_faq_match": False}
 
             # 3. DB検索
-            # 【修正】定数を使用して検索数を制御
+            # 定数を使用して検索数を制御 (リランク前なので多めに取得)
             match_count = PARAMS.get("RERANK_TOP_K_INPUT", 15)
+            
             response = db_client.client.rpc("match_documents_hybrid", {
                 "p_query_text": expanded_query,
                 "p_query_embedding": query_embedding,
@@ -235,10 +273,10 @@ class SearchService:
                     )
                 )
 
-            # 4. パイプライン実行
+            # 4. パイプライン実行（バッチリランク呼び出し）
             reranked = await self.rerank(query, raw_docs, top_k)
             
-            # 【追加】FAQ一致判定ロジック
+            # FAQ一致判定ロジック
             is_faq_match = False
             if reranked:
                 top_doc = reranked[0]
@@ -259,7 +297,7 @@ class SearchService:
 
             return {
                 "documents": [d.model_dump() for d in final_docs_with_url],
-                "is_faq_match": is_faq_match # フラグを追加
+                "is_faq_match": is_faq_match
             }
 
         except Exception as e:
