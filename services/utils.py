@@ -5,7 +5,7 @@ import os
 import re
 import time
 from typing import List, Union, Optional, Any, Dict
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from fastapi import Request
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
@@ -139,11 +139,18 @@ def generate_storage_url(source_name: str) -> Optional[str]:
         return None
 
     try:
+        # ▼▼▼ 追加・修正箇所 ▼▼▼
+        
+        # 日本語ファイル名が含まれるとAPIが400エラーになるためURLエンコードする
+        encoded_path = quote(file_path)
+
         # 署名付きURL生成
         res = supabase.storage.from_(STORAGE_BUCKET_NAME).create_signed_url(
-            file_path,
+            encoded_path,  # file_path ではなく encoded_path を渡す
             3600
         )
+        
+        # ▲▲▲ 追加・修正箇所終わり ▲▲▲
 
         # レスポンスハンドリング（Strict Typing: バージョン差分吸収）
         if isinstance(res, dict) and 'signedURL' in res:
