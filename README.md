@@ -35,7 +35,7 @@ FastAPI (Python) / Gemini API / Auth0 (OAuth2.0)
 - **データベース層**: 
 Supabase (PostgreSQL + pgvector)
 - **インフラ・監視層**: 
-Render / Docker / LangSmith (トレース・評価)
+Render / Docker / LangSmith / UptimeRobot(トレース・評価)
 ![システム構成図](./docs/system_architecture.png)
 ---
 
@@ -90,7 +90,7 @@ GEMINI_API_KEY=your_gemini_api_key
 SUPABASE_URL=your_supabase_url
 SUPABASE_SERVICE_KEY=your_supabase_service_key
 
-# --- 監視 (LangSmith) ---
+# --- 監視 ---
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY=your_langchain_api_key
 
