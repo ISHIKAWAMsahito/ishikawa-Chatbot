@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 # LangSmith / Utils
 from langsmith import traceable
 from core.constants import PARAMS
-from services.storage import supabase
+from services.utils import supabase
 from models.schemas import SearchResult, DocumentMetadata
 from services.llm import LLMService
 from services.prompts import QUERY_EXPANSION, RERANK
