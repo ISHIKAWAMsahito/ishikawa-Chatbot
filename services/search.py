@@ -235,64 +235,83 @@ class SearchService:
         top_k: int = 5,
         **kwargs
     ) -> Dict[str, Any]:
-        """統合検索パイプライン"""
+        """統合検索パイプライン (Unified Search: Documents + FAQ)"""
         try:
-            # 1. クエリ拡張
+            # 1. クエリ拡張 (変更なし)
             expanded_query = await self.expand_query(query)
 
-            # 2. Embedding生成
+            # 2. Embedding生成 (変更なし)
             query_embedding = await self.get_embedding(expanded_query)
             if not query_embedding: return {"documents": [], "is_faq_match": False}
 
-            # 3. DB検索
-            # 定数を使用して検索数を制御 (リランク前なので多めに取得)
-            match_count = PARAMS.get("RERANK_TOP_K_INPUT", 15)
+            # 3. DB検索 (★ここを修正)
+            # 以前の match_documents_hybrid から match_unified_search に変更
             
-            response = db_client.client.rpc("match_documents_hybrid", {
-                "p_query_text": expanded_query,
+            # リランク前の取得候補数
+            match_count = PARAMS.get("RERANK_TOP_K_INPUT", 15)
+            # 足切りライン（低すぎるスコアのものはDB側で除外）
+            similarity_threshold = 0.3 
+            
+            # ★ SQLで定義した関数を呼び出す
+            response = db_client.client.rpc("match_unified_search", {
                 "p_query_embedding": query_embedding,
-                "p_match_count": match_count,
-                "p_collection_name": collection_name
+                "p_match_threshold": similarity_threshold,
+                "p_match_count": match_count
             }).execute()
             
+            # --- データの受け取り処理 (既存コードとほぼ同じでOK) ---
             raw_docs = []
             for d in response.data:
                 meta_data = d.get('metadata', {})
+                
+                # 文字列で返ってきた場合のパース処理（既存維持）
                 if isinstance(meta_data, str):
                     try:
                         meta_data = json.loads(meta_data)
                     except:
                         meta_data = {}
                 
+                # SQLで 'source_type' を返していますが、
+                # metadata内の 'source' (FAQの場合は自動でセット済) が優先されます
+                
                 raw_docs.append(
                     SearchResult(
                         id=d.get('id'),
-                        content=d.get('content'),
+                        content=d.get('content'), # FAQの場合はここが回答文になっています
                         metadata=DocumentMetadata(**meta_data),
                         similarity=d.get('similarity', 0.0)
                     )
                 )
 
-            # 4. パイプライン実行（バッチリランク呼び出し）
+            # 4. パイプライン実行（バッチリランク呼び出し）(変更なし)
             reranked = await self.rerank(query, raw_docs, top_k)
             
-            # FAQ一致判定ロジック
+            # FAQ一致判定ロジック (★少し改良)
             is_faq_match = False
             if reranked:
                 top_doc = reranked[0]
-                # 類似度0.9以上 かつ リランクスコア基準以上
+                
+                # 設定値の取得
                 sim_threshold = PARAMS.get("QA_SIMILARITY_THRESHOLD", 0.90)
                 score_threshold = PARAMS.get("RERANK_SCORE_THRESHOLD", 6.0)
                 
-                if (top_doc.similarity >= sim_threshold and 
-                    top_doc.metadata.rerank_score >= score_threshold):
+                # 条件A: 類似度とリランクスコアが高い（既存ロジック）
+                high_score = (top_doc.similarity >= sim_threshold and 
+                              top_doc.metadata.rerank_score >= score_threshold)
+                              
+                # 条件B: データソースがFAQであり、かつリランクスコアが合格点
+                # (FAQデータは人間が作った正解なので、信頼度を少し甘く見ても良い場合の判定)
+                is_faq_source = top_doc.metadata.source == "FAQ"
+                faq_hit = is_faq_source and (top_doc.metadata.rerank_score >= score_threshold)
+
+                if high_score or faq_hit:
                     is_faq_match = True
-                    logger.info(f"[Search] High confidence FAQ match detected. ID: {top_doc.id}")
+                    logger.info(f"[Search] FAQ/High-Confidence match detected. ID: {top_doc.id}, Source: {top_doc.metadata.source}")
 
             reordered = self.reorder_litm(reranked)
             final_docs = self.filter_diversity(reordered)
             
-            # 5. URL付与
+            # 5. URL付与 (変更なし)
             final_docs_with_url = await self._enrich_with_urls(final_docs)
 
             return {
