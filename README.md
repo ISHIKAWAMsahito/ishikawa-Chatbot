@@ -29,7 +29,7 @@ Retrieval-Augmented Generation (RAG) を活用した、学生支援チャット�
 ## 🏗️ システム構成
 
 - **フロントエンド層**: 
-HTML / Vanilla JS / Chart.js / WebSocket (リアルタイム設定反映)
+HTML / JavaScript / WebSocket (リアルタイム設定反映)
 - **アプリケーション層**:
 FastAPI (Python) / Gemini API / Auth0 (OAuth2.0)
 - **データベース層**: 
