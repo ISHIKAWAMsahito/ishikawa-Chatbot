@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 # LangSmith / Utils
 from langsmith import traceable
 from core.constants import PARAMS
-from services.storage import db_client
+from services.storage import supabase
 from models.schemas import SearchResult, DocumentMetadata
 from services.llm import LLMService
 from services.prompts import QUERY_EXPANSION, RERANK
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class SearchService:
     def __init__(self, llm_service: LLMService):
         self.llm_service = llm_service
-        self.supabase = db_client.client  # Supabaseクライアントへの参照
+        self.supabase = supabase  # Supabaseクライアントへの参照
 
     @traceable(name="Query_Expansion", run_type="chain")
     async def expand_query(self, query: str) -> str:
