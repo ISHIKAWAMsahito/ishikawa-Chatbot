@@ -579,10 +579,24 @@ async function fetchData() {
         const data = await res.json();
         renderDashboard(data);
     } catch (e) {
-        showToast('データ取得失敗: ' + e.message, 'error');
-        document.getElementById('tableBody').innerHTML =
-            `<tr><td colspan="3" style="text-align:center;color:#dc3545;padding:20px">エラー: ${e.message}</td></tr>`;
-    }
+    showToast('データ取得失敗: ' + e.message, 'error');
+    
+    // 安全なDOM操作による書き換え
+    const tbody = document.getElementById('tableBody');
+    tbody.innerHTML = ''; // 一旦クリア
+
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    
+    td.colSpan = 3;
+    td.style.textAlign = 'center';
+    td.style.color = '#dc3545';
+    td.style.padding = '20px';
+    td.textContent = 'エラー: ' + e.message; // 【重要】textContentを使うことでXSSを防ぐ
+    
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
 }
 
 function renderDashboard(data) {
@@ -802,12 +816,26 @@ async function sendQuery() {
 
     } catch (e) {
         console.error(e);
-        aiEl.innerHTML = `<span style="color:#dc3545">エラー: ${e.message}</span>`;
-    } finally {
-        btn.disabled = false;
-    }
-}
+        
+        // 安全なDOM操作による書き換え
+        aiEl.innerHTML = ''; // 一旦クリア
+        
+        const errSpan = document.createElement('span');
+        errSpan.style.color = '#dc3545';
+        errSpan.textContent = 'エラー: ' + e.message; // 【重要】textContentを使うことでXSSを防ぐ
+        
+        aiEl.appendChild(errSpan);
 
+    } finally {
+        // ▼ ここが不足していました ▼
+        const btn = document.getElementById('sendBtn'); // 念のため再取得、あるいはスコープ内のbtnを使用
+        if(btn) btn.disabled = false; // 送信ボタンを再度押せるように戻す
+    } // ← finallyブロックを閉じる
+
+} // ← sendQuery関数全体を閉じる
+
+
+// ▼ ここから次の関数定義 ▼
 function appendMsg(role, text) {
     const history = document.getElementById('chatHistory');
     const div = document.createElement('div');
