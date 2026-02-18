@@ -3,471 +3,827 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI chatbot system【統計・相談】</title>
+    <title>AI chatbot system【統計・改善アドバイザー】</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
-    
+
 <style>
-    /* --- 基本デザイン (admin.htmlと共通) --- */
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        min-height: 100vh;
-        padding: 24px;
-        color: #333;
-    }
-    .container {
-        max-width: 1400px;
-        margin: 0 auto;
-        background: rgba(255, 255, 255, 0.98);
-        border-radius: 16px;
-        box-shadow: 0 32px 64px rgba(0, 0, 0, 0.15);
-        overflow: hidden;
-        min-height: 80vh;
-        display: flex;
-        flex-direction: column;
-    }
-    .header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 24px 30px;
-        text-align: center;
-        position: relative;
-        flex-shrink: 0;
-    }
-    .header h1 { margin-bottom: 5px; text-shadow: 2px 2px 8px rgba(0,0,0,0.3); font-size: 1.8rem; }
-    .header p { font-size: 0.9rem; opacity: 0.9; }
-    
-    .nav-btn {
-        position: absolute;
-        top: 25px;
-        padding: 8px 20px;
-        border-radius: 30px;
-        text-decoration: none;
-        font-weight: bold;
-        font-size: 0.85rem;
-        background-color: white; 
-        color: #333; 
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .nav-btn:hover { background-color: #f0f0f0; transform: translateY(-1px); }
-    .logout-btn { right: 25px; }
-    .admin-link-btn { left: 25px; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-    /* ダッシュボードレイアウト */
-    .dashboard-content { 
-        padding: 32px; 
-        display: grid; 
-        grid-template-columns: 1fr 400px; /* 右側を少し広げました */
-        gap: 32px; 
-        flex-grow: 1;
-    }
-    
-    /* カードエリア */
-    .stats-cards {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 20px;
-        margin-bottom: 30px;
-    }
-    .card {
-        background: white;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        border-left: 5px solid #4facfe;
-        text-align: center;
-    }
-    .card h3 { font-size: 0.85rem; color: #666; margin-bottom: 8px; }
-    .card .value { font-size: 1.8rem; font-weight: bold; color: #333; }
-    .card .sub { font-size: 0.75rem; color: #888; }
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    padding: 24px;
+    color: #333;
+}
 
-    /* テーブルエリア */
-    .table-container {
-        background: white;
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        overflow-x: auto;
-    }
-    .section-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 15px;
-        border-bottom: 2px solid #f0f0f0;
-        padding-bottom: 10px;
-    }
-    .section-header h2 { font-size: 1.2rem; color: #444; }
-    table { width: 100%; border-collapse: collapse; min-width: 500px; }
-    th { text-align: left; padding: 10px; background: #f8f9fa; color: #555; font-weight: 600; border-bottom: 2px solid #eee; font-size: 0.9rem; }
-    td { padding: 10px; border-bottom: 1px solid #eee; font-size: 0.9rem; vertical-align: top; }
-    .col-date { width: 140px; color: #888; font-size: 0.8rem; }
-    .col-rating { width: 100px; text-align: center; }
-    
-    /* 右サイドパネル */
-    .sidebar { display: flex; flex-direction: column; gap: 24px; height: 100%; }
-    .panel-box {
-        background: white;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-    }
+.container {
+    max-width: 1500px;
+    margin: 0 auto;
+    background: rgba(255, 255, 255, 0.98);
+    border-radius: 20px;
+    box-shadow: 0 32px 64px rgba(0, 0, 0, 0.18);
+    overflow: hidden;
+    min-height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
 
-    /* --- チャットボット風 UI (Consultation) --- */
-    .chat-panel {
-        display: flex;
-        flex-direction: column;
-        flex-grow: 1; /* 残りの高さを埋める */
-        min-height: 400px;
-        border: 2px solid #e0e7ff;
-    }
-    .chat-header {
-        border-bottom: 1px solid #eee;
-        padding-bottom: 10px;
-        margin-bottom: 10px;
-    }
-    .chat-header h3 { font-size: 1.1rem; color: #4facfe; display: flex; align-items: center; gap: 8px; }
-    
-    .chat-history {
-        flex-grow: 1;
-        overflow-y: auto;
-        padding: 10px;
-        background: #f9faff;
-        border-radius: 8px;
-        margin-bottom: 15px;
-        display: flex;
-        flex-direction: column;
-        gap: 15px;
-        max-height: 500px;
-    }
-    
-    /* メッセージバブル */
-    .message {
-        max-width: 90%;
-        padding: 10px 14px;
-        border-radius: 12px;
-        font-size: 0.9rem;
-        line-height: 1.5;
-        position: relative;
-    }
-    .message.user {
-        align-self: flex-end;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border-bottom-right-radius: 2px;
-    }
-    .message.ai {
-        align-self: flex-start;
-        background: white;
-        color: #333;
-        border: 1px solid #e0e0e0;
-        border-bottom-left-radius: 2px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    .message.ai strong { color: #d63384; } /* 重要箇所を強調 */
-    .message.ai ul { padding-left: 20px; margin: 5px 0; }
+/* ヘッダー */
+.header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 28px 32px;
+    text-align: center;
+    position: relative;
+}
+.header h1 { font-size: 1.9rem; font-weight: 700; text-shadow: 1px 2px 8px rgba(0,0,0,0.25); }
+.header p  { font-size: 0.9rem; opacity: 0.88; margin-top: 4px; }
 
-    /* 入力エリア */
-    .input-area {
-        display: flex;
-        gap: 10px;
-    }
-    .input-area textarea {
-        flex-grow: 1;
-        resize: none;
-        height: 50px;
-        padding: 10px;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        font-family: inherit;
-    }
-    .input-area button {
-        width: 60px;
-        background: #4facfe;
-        color: white;
-        border: none;
-        border-radius: 8px;
-        cursor: pointer;
-        transition: background 0.2s;
-    }
-    .input-area button:hover { background: #00f2fe; }
-    .input-area button:disabled { background: #ccc; cursor: not-allowed; }
+.nav-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 8px 18px;
+    border-radius: 30px;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 0.85rem;
+    background: rgba(255,255,255,0.95);
+    color: #444;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    transition: all 0.2s;
+}
+.nav-btn:hover { background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.2); transform: translateY(calc(-50% - 2px)); }
+.nav-btn.left  { left: 24px; }
+.nav-btn.right { right: 24px; }
 
-    /* レスポンシブ */
-    @media (max-width: 1000px) {
-        .dashboard-content { grid-template-columns: 1fr; }
-        .stats-cards { grid-template-columns: 1fr; }
-        .chat-panel { height: 500px; }
-    }
+/* ダッシュボード本体 */
+.dashboard {
+    display: grid;
+    grid-template-columns: 1fr 480px;
+    gap: 28px;
+    padding: 28px;
+    flex-grow: 1;
+    min-height: 0;
+}
+
+/* --- KPIカード --- */
+.kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.kpi-card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 18px 20px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.07);
+    border-top: 4px solid #667eea;
+    transition: transform 0.2s;
+}
+.kpi-card:hover { transform: translateY(-3px); }
+.kpi-card.green  { border-top-color: #28a745; }
+.kpi-card.blue   { border-top-color: #17a2b8; }
+.kpi-card.orange { border-top-color: #fd7e14; }
+.kpi-card h3 { font-size: 0.78rem; color: #888; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.kpi-card .val { font-size: 2rem; font-weight: 800; color: #333; margin: 4px 0; }
+.kpi-card .sub { font-size: 0.75rem; color: #aaa; }
+
+/* --- フィードバックテーブル --- */
+.table-box {
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.07);
+    overflow: hidden;
+}
+.table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid #f0f0f0;
+}
+.table-header h2 { font-size: 1rem; font-weight: 700; color: #444; }
+.refresh-btn {
+    padding: 6px 14px;
+    background: #f0f4ff;
+    color: #667eea;
+    border: 1px solid #c5cff7;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+.refresh-btn:hover { background: #e0e8ff; }
+
+.table-scroll { overflow-x: auto; max-height: 340px; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+th {
+    position: sticky;
+    top: 0;
+    background: #f8f9fa;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    color: #555;
+    border-bottom: 2px solid #eee;
+    white-space: nowrap;
+}
+td { padding: 10px 14px; border-bottom: 1px solid #f3f3f3; vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #fafbff; }
+.badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+.badge.good { background: #d4edda; color: #155724; }
+.badge.bad  { background: #f8d7da; color: #721c24; }
+
+/* =====================================================
+   右サイドパネル: AI相談チャット
+   ===================================================== */
+.sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
+}
+
+/* ベクトル化ステータスカード */
+.vec-status-card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 16px 20px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.07);
+    border-left: 5px solid #4facfe;
+}
+.vec-status-card h3 { font-size: 0.9rem; font-weight: 700; color: #444; margin-bottom: 10px; }
+.vec-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+    margin-bottom: 6px;
+}
+.vec-row .label { color: #666; }
+.vec-row .nums  { font-weight: 700; }
+.progress-bar {
+    height: 6px;
+    background: #eee;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 4px;
+}
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4facfe, #00f2fe);
+    border-radius: 3px;
+    transition: width 0.5s ease;
+}
+.vec-actions { display: flex; gap: 8px; margin-top: 12px; }
+.vec-btn {
+    flex: 1;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.vec-btn.primary { background: linear-gradient(135deg,#4facfe,#00f2fe); color: white; }
+.vec-btn.primary:hover { opacity: 0.88; }
+.vec-btn.secondary { background: #f0f4ff; color: #667eea; border: 1px solid #c5cff7; }
+.vec-btn.secondary:hover { background: #e0e8ff; }
+.vec-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* チャットパネル */
+.chat-panel {
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.07);
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    min-height: 0;
+    border: 2px solid #e8edff;
+    overflow: hidden;
+}
+.chat-panel-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid #f0f0f0;
+    flex-shrink: 0;
+}
+.chat-panel-header h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #444;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.chat-panel-header p { font-size: 0.78rem; color: #999; margin-top: 3px; }
+
+/* 例示クエリ */
+.example-queries {
+    padding: 12px 16px;
+    border-bottom: 1px solid #f5f5f5;
+    flex-shrink: 0;
+}
+.example-queries p { font-size: 0.75rem; color: #aaa; margin-bottom: 6px; font-weight: 600; }
+.ex-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ex-chip {
+    padding: 4px 10px;
+    background: #f0f4ff;
+    border: 1px solid #d0daff;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    color: #667eea;
+    cursor: pointer;
+    transition: all 0.18s;
+    font-weight: 600;
+}
+.ex-chip:hover { background: #e0e8ff; border-color: #667eea; }
+
+/* 会話履歴 */
+.chat-history {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    background: #fafbff;
+    min-height: 0;
+}
+.msg {
+    max-width: 92%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 0.88rem;
+    line-height: 1.65;
+    animation: fadeUp 0.25s ease;
+}
+@keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+
+.msg.user {
+    align-self: flex-end;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    border-bottom-right-radius: 3px;
+}
+.msg.ai {
+    align-self: flex-start;
+    background: white;
+    color: #333;
+    border: 1px solid #e8e8e8;
+    border-bottom-left-radius: 3px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+}
+/* Markdownスタイル */
+.msg.ai h1,.msg.ai h2,.msg.ai h3 { margin: 8px 0 4px; color: #444; }
+.msg.ai ul,.msg.ai ol { padding-left: 18px; margin: 5px 0; }
+.msg.ai li { margin: 2px 0; }
+.msg.ai strong { color: #c0392b; }
+.msg.ai hr { border:none; border-top: 1px solid #eee; margin: 8px 0; }
+.msg.ai table { font-size: 0.82rem; border-collapse: collapse; width: 100%; margin-top: 8px; }
+.msg.ai th,.msg.ai td { border: 1px solid #ddd; padding: 5px 8px; }
+.msg.ai th { background: #f0f4ff; }
+
+/* 入力エリア */
+.chat-input-area {
+    display: flex;
+    gap: 8px;
+    padding: 12px 14px;
+    border-top: 1px solid #f0f0f0;
+    flex-shrink: 0;
+    background: #fff;
+}
+.chat-textarea {
+    flex-grow: 1;
+    resize: none;
+    height: 52px;
+    padding: 10px 14px;
+    border: 2px solid #e0e7ff;
+    border-radius: 12px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s;
+}
+.chat-textarea:focus { border-color: #667eea; }
+.send-btn {
+    width: 52px;
+    height: 52px;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 1.4rem;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.send-btn:hover { opacity: 0.88; transform: scale(1.05); }
+.send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+/* ローディングドット */
+.typing-dots { display: flex; gap: 4px; align-items: center; padding: 4px 2px; }
+.typing-dots span {
+    width: 7px; height: 7px;
+    background: #bbb;
+    border-radius: 50%;
+    animation: dot-bounce 1.2s infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dot-bounce { 0%,80%,100%{transform:scale(0.8);opacity:0.5} 40%{transform:scale(1.2);opacity:1} }
+
+/* チャートパネル */
+.chart-box {
+    background: #fff;
+    border-radius: 14px;
+    padding: 18px 20px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.07);
+}
+.chart-box h3 { font-size: 0.9rem; font-weight: 700; color: #444; margin-bottom: 12px; }
+
+/* Toast通知 */
+.toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: white;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    z-index: 9999;
+    opacity: 0;
+    transform: translateY(12px);
+    transition: all 0.3s;
+    pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.success { background: #28a745; }
+.toast.error   { background: #dc3545; }
+.toast.info    { background: #17a2b8; }
+
+/* レスポンシブ */
+@media (max-width: 1100px) {
+    .dashboard { grid-template-columns: 1fr; }
+    .kpi-row   { grid-template-columns: repeat(2, 1fr); }
+    .sidebar   { min-height: 600px; }
+}
+@media (max-width: 600px) {
+    body { padding: 10px; }
+    .kpi-row { grid-template-columns: 1fr 1fr; }
+    .nav-btn.left { left: 10px; font-size: 0.78rem; padding: 6px 12px; }
+    .nav-btn.right { right: 10px; font-size: 0.78rem; padding: 6px 12px; }
+}
 </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <a href="/admin.html" class="nav-btn admin-link-btn">⬅ 管理画面へ戻る</a>
-            <a href="/logout" class="nav-btn logout-btn">🚪 ログアウト</a>
-            <h1>📊 統計・改善アドバイザー</h1>
-            <p>学生の声の分析と、AIパートナーとの改善相談</p>
-        </div>
+<div class="container">
 
-        <div class="dashboard-content">
-            <div class="main-area">
-                <div class="stats-cards">
-                    <div class="card">
-                        <h3>📝 総フィードバック数</h3>
-                        <div class="value" id="totalCount">-</div>
-                        <div class="sub">全期間の累計</div>
-                    </div>
-                    <div class="card">
-                        <h3>👍 高評価率</h3>
-                        <div class="value" id="goodRate">-</div>
-                        <div class="sub" id="goodCountSub">Good: 0 / Bad: 0</div>
-                    </div>
-                    <div class="card">
-                        <h3>📅 今週の利用</h3>
-                        <div class="value" id="weeklyCount">-</div>
-                        <div class="sub">過去7日間</div>
-                    </div>
+    <!-- ヘッダー -->
+    <div class="header">
+        <a href="/admin.html" class="nav-btn left">⬅ 管理画面</a>
+        <h1>📊 統計・改善アドバイザー</h1>
+        <p>学生の声の分析 &amp; AIパートナーとの改善相談</p>
+        <a href="/logout" class="nav-btn right">🚪 ログアウト</a>
+    </div>
+
+    <!-- ダッシュボード本体 -->
+    <div class="dashboard">
+
+        <!-- 左: KPI + テーブル -->
+        <div class="main-area">
+
+            <!-- KPI -->
+            <div class="kpi-row">
+                <div class="kpi-card">
+                    <h3>📝 総フィードバック</h3>
+                    <div class="val" id="kpiTotal">—</div>
+                    <div class="sub">全期間の累計</div>
                 </div>
+                <div class="kpi-card green">
+                    <h3>👍 高評価率</h3>
+                    <div class="val" id="kpiGoodRate">—</div>
+                    <div class="sub" id="kpiGoodSub">Good: 0 / Bad: 0</div>
+                </div>
+                <div class="kpi-card blue">
+                    <h3>📅 今週の利用</h3>
+                    <div class="val" id="kpiWeekly">—</div>
+                    <div class="sub">過去7日間</div>
+                </div>
+                <div class="kpi-card orange">
+                    <h3>💬 チャットログ</h3>
+                    <div class="val" id="kpiLogs">—</div>
+                    <div class="sub" id="kpiLogsSub">ベクトル化済み: —</div>
+                </div>
+            </div>
 
-                <div class="table-container">
-                    <div class="section-header">
-                        <h2>📋 最新のフィードバック履歴</h2>
-                        <button class="small-btn" onclick="fetchData()" style="padding:6px 12px; cursor:pointer; background:#f0f0f0; border:1px solid #ccc; border-radius:4px;">🔄 更新</button>
-                    </div>
+            <!-- フィードバックテーブル -->
+            <div class="table-box">
+                <div class="table-header">
+                    <h2>📋 最新フィードバック履歴</h2>
+                    <button class="refresh-btn" onclick="fetchData()">🔄 更新</button>
+                </div>
+                <div class="table-scroll">
                     <table>
                         <thead>
                             <tr>
-                                <th class="col-date">日時</th>
-                                <th class="col-rating">評価</th>
-                                <th class="col-log">会話ログ / コメント</th>
+                                <th style="width:130px">日時</th>
+                                <th style="width:90px">評価</th>
+                                <th>コメント</th>
                             </tr>
                         </thead>
-                        <tbody id="dataTableBody">
-                            <tr><td colspan="3" style="text-align:center;">データを読み込み中...</td></tr>
+                        <tbody id="tableBody">
+                            <tr><td colspan="3" style="text-align:center;padding:24px;color:#aaa">読み込み中...</td></tr>
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            <div class="sidebar">
-                <div class="panel-box">
-                    <h3>📈 評価の割合</h3>
-                    <canvas id="ratingChart"></canvas>
+        </div><!-- /main-area -->
+
+        <!-- 右: AI相談 -->
+        <div class="sidebar">
+
+            <!-- ベクトル化ステータス -->
+            <div class="vec-status-card">
+                <h3>🔢 ベクトルDB ステータス</h3>
+
+                <div class="vec-row">
+                    <span class="label">チャットログ</span>
+                    <span class="nums" id="vecLogsNum">— / —</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="vecLogsBar" style="width:0%"></div>
                 </div>
 
-                <div class="panel-box chat-panel">
-                    <div class="chat-header">
-                        <h3>🤖 AI業務改善パートナー</h3>
-                        <p style="font-size:0.8rem; color:#888;">蓄積されたログを基に、改善案を相談できます。</p>
-                    </div>
-                    
-                    <div id="chatHistory" class="chat-history">
-                        <div class="message ai">
-                            こんにちは。学生対応ログの分析担当です。<br>
-                            「最近の1年生の悩みは？」や「履修登録のFAQに不足はない？」など、お気軽にご相談ください。
-                        </div>
-                    </div>
-                    
-                    <div class="input-area">
-                        <textarea id="queryInput" placeholder="質問を入力してください..." onkeydown="handleEnter(event)"></textarea>
-                        <button id="sendBtn" onclick="sendConsultation()">送信</button>
-                    </div>
+                <div class="vec-row" style="margin-top:10px">
+                    <span class="label">意見・要望</span>
+                    <span class="nums" id="vecCmNum">— / —</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="vecCmBar" style="width:0%"></div>
+                </div>
+
+                <div class="vec-actions">
+                    <button class="vec-btn primary" id="vecBothBtn" onclick="runVectorize('both')">
+                        ⚡ 未処理を一括ベクトル化
+                    </button>
+                    <button class="vec-btn secondary" onclick="fetchVecStatus()">
+                        🔄 状態確認
+                    </button>
                 </div>
             </div>
-        </div>
-    </div>
 
-    <script>
-    let chartInstance = null;
+            <!-- AI相談チャット -->
+            <div class="chat-panel">
+                <div class="chat-panel-header">
+                    <h3>🤖 AI 業務改善パートナー</h3>
+                    <p>蓄積された学生とのやりとりをもとに、改善提案・動向分析をお手伝いします</p>
+                </div>
 
-    // --- 1. 統計データの取得と表示 (既存機能) ---
-    async function fetchData() {
-        try {
-            const response = await fetch('/api/admin/stats/data');
-            
-            if (!response.ok) {
-                if (response.status === 401 || response.status === 403) {
-                    window.location.href = '/login';
-                    return;
-                }
-                throw new Error("データの取得に失敗しました");
-            }
+                <div class="example-queries">
+                    <p>💡 こんな質問ができます</p>
+                    <div class="ex-chips">
+                        <span class="ex-chip" onclick="setQuery('最近の学生が困っていることを教えてください')">最近の学生の困りごと</span>
+                        <span class="ex-chip" onclick="setQuery('履修登録に関する質問の傾向を分析してください')">履修登録の傾向</span>
+                        <span class="ex-chip" onclick="setQuery('FAQに追加すべき項目はありますか？')">FAQ改善案</span>
+                        <span class="ex-chip" onclick="setQuery('学生の意見・要望で多いものは何ですか？')">意見・要望の傾向</span>
+                        <span class="ex-chip" onclick="setQuery('AIが回答できていない質問のパターンを教えてください')">未解決の質問</span>
+                    </div>
+                </div>
 
-            const data = await response.json();
-            renderDashboard(data);
+                <div class="chat-history" id="chatHistory">
+                    <div class="msg ai">
+                        こんにちは。学生対応改善のサポートをします。<br><br>
+                        チャットログや学生の意見・要望を<strong>ベクトル検索</strong>して、
+                        関連する情報だけを抽出して分析します。<br><br>
+                        左上の「ベクトル化」ボタンでデータを登録してから、
+                        お気軽に質問してください！
+                    </div>
+                </div>
 
-        } catch (err) {
-            console.error("Fetch error:", err);
-            document.getElementById('dataTableBody').innerHTML = `<tr><td colspan="3" style="color:red; text-align:center;">エラー: ${err.message}</td></tr>`;
+                <div class="chat-input-area">
+                    <textarea
+                        id="queryInput"
+                        class="chat-textarea"
+                        placeholder="質問を入力（Shift+Enterで改行）"
+                        onkeydown="handleKey(event)"
+                    ></textarea>
+                    <button class="send-btn" id="sendBtn" onclick="sendQuery()" title="送信">
+                        ➤
+                    </button>
+                </div>
+            </div><!-- /chat-panel -->
+
+            <!-- チャート -->
+            <div class="chart-box">
+                <h3>📈 評価の内訳</h3>
+                <canvas id="ratingChart" height="160"></canvas>
+            </div>
+
+        </div><!-- /sidebar -->
+    </div><!-- /dashboard -->
+</div><!-- /container -->
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ==================================================
+// 設定
+// ==================================================
+marked.setOptions({ breaks: true, gfm: true });
+let chartInstance = null;
+
+// ==================================================
+// Toast 通知
+// ==================================================
+function showToast(msg, type = 'info', duration = 3500) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `toast ${type} show`;
+    setTimeout(() => { t.classList.remove('show'); }, duration);
+}
+
+// ==================================================
+// 1. フィードバックデータ取得
+// ==================================================
+async function fetchData() {
+    try {
+        const res = await fetch('/api/admin/stats/data');
+        if (!res.ok) {
+            if (res.status === 401 || res.status === 403) { location.href = '/login'; return; }
+            throw new Error(res.statusText);
         }
+        const data = await res.json();
+        renderDashboard(data);
+    } catch (e) {
+        showToast('データ取得失敗: ' + e.message, 'error');
+        document.getElementById('tableBody').innerHTML =
+            `<tr><td colspan="3" style="text-align:center;color:#dc3545;padding:20px">エラー: ${e.message}</td></tr>`;
     }
+}
 
-    function renderDashboard(data) {
-        const total = data.length;
-        const good = data.filter(i => i.rating === 'good').length;
-        const bad = data.filter(i => i.rating === 'bad').length;
-        const rate = total > 0 ? Math.round((good / total) * 100) : 0;
+function renderDashboard(data) {
+    const total  = data.length;
+    const good   = data.filter(i => i.rating === 'good').length;
+    const bad    = data.filter(i => i.rating === 'bad').length;
+    const rate   = total > 0 ? Math.round(good / total * 100) : 0;
+    const week   = new Date(); week.setDate(week.getDate() - 7);
+    const weekly = data.filter(i => new Date(i.created_at) > week).length;
 
-        const oneWeekAgo = new Date();
-        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-        const weekly = data.filter(i => new Date(i.created_at) > oneWeekAgo).length;
+    document.getElementById('kpiTotal').textContent    = total + '件';
+    document.getElementById('kpiGoodRate').textContent = rate + '%';
+    document.getElementById('kpiGoodSub').textContent  = `Good: ${good} / Bad: ${bad}`;
+    document.getElementById('kpiWeekly').textContent   = weekly + '件';
 
-        document.getElementById('totalCount').textContent = total + "件"; 
-        document.getElementById('goodRate').textContent = rate + "%";
-        document.getElementById('goodCountSub').textContent = `Good: ${good} / Bad: ${bad}`;
-        document.getElementById('weeklyCount').textContent = weekly + "件";
+    // テーブル描画
+    const tbody = document.getElementById('tableBody');
+    tbody.innerHTML = '';
+    if (data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#aaa">データがありません</td></tr>';
+    } else {
+        data.forEach(item => {
+            const tr = document.createElement('tr');
+            const date = new Date(item.created_at).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' });
+            const ratingBadge = item.rating === 'good'
+                ? '<span class="badge good">👍 Good</span>'
+                : '<span class="badge bad">👎 Bad</span>';
 
-        const tbody = document.getElementById('dataTableBody');
-        tbody.innerHTML = '';
-        
-        if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">データがありません</td></tr>';
-        } else {
-            data.forEach(item => {
-                const tr = document.createElement('tr');
-                const date = new Date(item.created_at).toLocaleString('ja-JP');
-                
-                const tdDate = document.createElement('td');
-                tdDate.className = 'col-date';
-                tdDate.textContent = date;
+            const tdDate   = document.createElement('td');
+            tdDate.style.color = '#999';
+            tdDate.style.fontSize = '0.82rem';
+            tdDate.style.whiteSpace = 'nowrap';
+            tdDate.textContent = date;
 
-                const tdRating = document.createElement('td');
-                tdRating.className = 'col-rating';
-                tdRating.innerHTML = item.rating === 'good' 
-                    ? '<span style="color:#28a745">👍 Good</span>' 
-                    : '<span style="color:#dc3545">👎 Bad</span>';
+            const tdRating = document.createElement('td');
+            tdRating.innerHTML = ratingBadge; // バッジのみ（固定文字列）
 
-                const tdLog = document.createElement('td');
-                tdLog.className = 'col-log';
-                tdLog.textContent = item.comment || item.content || "(ログなし)"; // XSS対策
+            const tdComment = document.createElement('td');
+            tdComment.textContent = item.comment || item.content || '（コメントなし）';
 
-                tr.appendChild(tdDate);
-                tr.appendChild(tdRating);
-                tr.appendChild(tdLog);
-                tbody.appendChild(tr);
-            });
-        }
-        renderChart(good, bad);
-    }
-
-    function renderChart(good, bad) {
-        const ctx = document.getElementById('ratingChart').getContext('2d');
-        if (chartInstance) chartInstance.destroy();
-
-        chartInstance = new Chart(ctx, {
-            type: 'doughnut',
-            data: {
-                labels: ['Good (高評価)', 'Bad (低評価)'],
-                datasets: [{
-                    data: [good, bad],
-                    backgroundColor: ['#28a745', '#dc3545'],
-                    borderWidth: 0
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: { legend: { position: 'bottom' } }
-            }
+            tr.appendChild(tdDate);
+            tr.appendChild(tdRating);
+            tr.appendChild(tdComment);
+            tbody.appendChild(tr);
         });
     }
 
-    // --- 2. AI相談チャット機能 (新規実装) ---
-    
-    // Enterキー送信対応
-    function handleEnter(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendConsultation();
+    renderChart(good, bad);
+}
+
+function renderChart(good, bad) {
+    const ctx = document.getElementById('ratingChart').getContext('2d');
+    if (chartInstance) chartInstance.destroy();
+    chartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Good（高評価）', 'Bad（低評価）'],
+            datasets: [{
+                data: [good, bad],
+                backgroundColor: ['#28a745', '#dc3545'],
+                borderWidth: 0,
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { position: 'bottom', labels: { font: { size: 12 } } } },
+            cutout: '65%',
         }
+    });
+}
+
+// ==================================================
+// 2. ベクトル化ステータス
+// ==================================================
+async function fetchVecStatus() {
+    try {
+        const res = await fetch('/api/admin/stats/vectorize/status');
+        if (!res.ok) throw new Error(res.statusText);
+        const d = await res.json();
+
+        const logs = d.chat_logs;
+        const cm   = d.anonymous_comments;
+
+        // KPI
+        document.getElementById('kpiLogs').textContent    = logs.total + '件';
+        document.getElementById('kpiLogsSub').textContent = `ベクトル化済み: ${logs.vectorized}件`;
+
+        // ステータスカード
+        document.getElementById('vecLogsNum').textContent = `${logs.vectorized} / ${logs.total}`;
+        document.getElementById('vecCmNum').textContent   = `${cm.vectorized} / ${cm.total}`;
+
+        const logsPct = logs.total > 0 ? Math.round(logs.vectorized / logs.total * 100) : 0;
+        const cmPct   = cm.total   > 0 ? Math.round(cm.vectorized   / cm.total   * 100) : 0;
+        document.getElementById('vecLogsBar').style.width = logsPct + '%';
+        document.getElementById('vecCmBar').style.width   = cmPct + '%';
+
+    } catch (e) {
+        console.warn('vectorize status error:', e);
     }
+}
 
-    async function sendConsultation() {
-        const input = document.getElementById('queryInput');
-        const btn = document.getElementById('sendBtn');
-        const history = document.getElementById('chatHistory');
-        const query = input.value.trim();
+// ==================================================
+// 3. 一括ベクトル化
+// ==================================================
+async function runVectorize(target) {
+    const btn = document.getElementById('vecBothBtn');
+    btn.disabled = true;
+    btn.textContent = '処理中...';
+    showToast('ベクトル化を開始しました。しばらくお待ちください。', 'info', 8000);
 
-        if (!query) return;
+    try {
+        const res = await fetch('/api/admin/stats/vectorize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target, limit: 200 }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
 
-        // 1. ユーザーメッセージ表示
-        appendMessage('user', query);
-        input.value = '';
-        btn.disabled = true;
+        // 結果サマリーをToastで表示
+        let msg = '✅ ベクトル化完了 | ';
+        if (data.results.chat_logs) {
+            const r = data.results.chat_logs;
+            msg += `ログ: ${r.succeeded}件成功 `;
+        }
+        if (data.results.anonymous_comments) {
+            const r = data.results.anonymous_comments;
+            msg += `意見: ${r.succeeded}件成功`;
+        }
+        showToast(msg, 'success', 5000);
+        await fetchVecStatus();
+    } catch (e) {
+        showToast('ベクトル化エラー: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ 未処理を一括ベクトル化';
+    }
+}
 
-        // 2. AIの空バブルを作成（ローディング表示）
-        const aiBubbleId = 'ai-' + Date.now();
-        appendMessage('ai', '<span id="' + aiBubbleId + '">考え中...</span>');
-        
-        try {
-            // API呼び出し (Step 4で作成したエンドポイント)
-            // api/stats.py が /api/admin/stats にマウントされていると仮定
-            const response = await fetch('/api/admin/stats/chat_analysis', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    query: query,
-                    target_period_days: 30 // 過去30日分を分析対象とする
-                })
-            });
+// ==================================================
+// 4. AI相談チャット
+// ==================================================
+function setQuery(text) {
+    document.getElementById('queryInput').value = text;
+    document.getElementById('queryInput').focus();
+}
 
-            if (!response.ok) throw new Error("API Error: " + response.statusText);
+function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendQuery();
+    }
+}
 
-            // ストリーミング処理
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let aiResponseText = "";
-            const bubbleContent = document.getElementById(aiBubbleId);
+async function sendQuery() {
+    const input  = document.getElementById('queryInput');
+    const btn    = document.getElementById('sendBtn');
+    const history = document.getElementById('chatHistory');
+    const query  = input.value.trim();
+    if (!query) return;
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                
-                const chunk = decoder.decode(value, { stream: true });
-                // APIの実装により "data: " プレフィックスがある場合とない場合に対応
-                // 今回の実装では raw text が返ってくる想定だが、念のため整形
-                aiResponseText += chunk;
-                
-                // マークダウン変換して表示更新
-                bubbleContent.innerHTML = DOMPurify.sanitize(marked.parse(aiResponseText));
-                
-                // スクロール追従
-                history.scrollTop = history.scrollHeight;
+    // ユーザーメッセージ追加
+    appendMsg('user', query);
+    input.value = '';
+    btn.disabled = true;
+
+    // AIローディングバブル
+    const aiEl = document.createElement('div');
+    aiEl.className = 'msg ai';
+    aiEl.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
+    history.appendChild(aiEl);
+    history.scrollTop = history.scrollHeight;
+
+    let aiText = '';
+
+    try {
+        const res = await fetch('/api/admin/stats/chat_analysis', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, target_period_days: 30 }),
+        });
+
+        if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
+
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder();
+        let isFirst   = true;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            aiText += chunk;
+
+            if (isFirst) {
+                // ローディングドットを消してテキスト開始
+                aiEl.innerHTML = '';
+                isFirst = false;
             }
 
-        } catch (error) {
-            console.error(error);
-            const bubbleContent = document.getElementById(aiBubbleId);
-            if(bubbleContent) bubbleContent.innerText = "エラーが発生しました: " + error.message;
-        } finally {
-            btn.disabled = false;
-            input.focus();
+            // Markdown + DOMPurify でレンダリング
+            const rawHtml  = marked.parse(aiText);
+            const safeHtml = DOMPurify.sanitize(rawHtml, {
+                ALLOWED_TAGS: ['p','br','strong','em','ul','ol','li','h1','h2','h3','h4',
+                               'blockquote','code','pre','hr','table','thead','tbody','tr','th','td','a'],
+                ALLOWED_ATTR: ['href','target','rel'],
+            });
+            aiEl.innerHTML = safeHtml;
+            history.scrollTop = history.scrollHeight;
         }
-    }
 
-    function appendMessage(role, htmlContent) {
-        const history = document.getElementById('chatHistory');
-        const div = document.createElement('div');
-        div.className = `message ${role}`;
-        
-        if (role === 'user') {
-            // ユーザー入力はテキストとして扱う（XSS対策）
-            div.textContent = htmlContent;
-        } else {
-            // AI回答はHTML（Markdown変換後）として扱う
-            div.innerHTML = htmlContent;
+        if (isFirst) {
+            // 空レスポンス
+            aiEl.textContent = '（回答を生成できませんでした）';
         }
-        
-        history.appendChild(div);
-        history.scrollTop = history.scrollHeight;
-    }
 
-    // 初期化
-    fetchData();
-    </script>
+    } catch (e) {
+        console.error(e);
+        aiEl.innerHTML = `<span style="color:#dc3545">エラー: ${e.message}</span>`;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function appendMsg(role, text) {
+    const history = document.getElementById('chatHistory');
+    const div = document.createElement('div');
+    div.className = `msg ${role}`;
+    div.textContent = text; // ユーザー入力はテキストとして安全に表示
+    history.appendChild(div);
+    history.scrollTop = history.scrollHeight;
+}
+
+// ==================================================
+// 初期化
+// ==================================================
+(async () => {
+    await fetchData();
+    await fetchVecStatus();
+})();
+</script>
 </body>
 </html>
