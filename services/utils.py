@@ -10,16 +10,13 @@ from fastapi import Request
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 
-# ロガーの設定
 logger = logging.getLogger(__name__)
 
-# --- 設定: 環境変数から取得 ---
-# 【修正】デフォルトバケット名を 'images' に変更
+# --- 設定 ---
 STORAGE_BUCKET_NAME = os.getenv("SUPABASE_STORAGE_BUCKET", "images")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
-# --- 【指針準拠修正】Fail Fast: 必須変数がなければ起動停止 ---
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     error_msg = "Critical Error: SUPABASE_URL or SUPABASE_SERVICE_KEY is missing."
     logger.critical(error_msg)
@@ -31,7 +28,6 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}", exc_info=True)
     raise ValueError(f"Supabase initialization failed: {e}")
 
-# 定数設定
 MAX_TOTAL_SESSIONS = 1000
 SESSION_TIMEOUT_SEC = 3600 * 24
 
@@ -44,13 +40,13 @@ class SessionData(BaseModel):
     history: List[ChatMessage] = Field(default_factory=list)
     last_accessed: float = Field(default_factory=time.time)
 
-# --- Functions (Session / Logging) ---
+# --- Session / Logging helpers ---
 
 def get_or_create_session_id(request: Request) -> str:
-    session_id = request.session.get('chat_session_id')
+    session_id = request.session.get("chat_session_id")
     if not session_id:
         session_id = str(uuid.uuid4())
-        request.session['chat_session_id'] = session_id
+        request.session["chat_session_id"] = session_id
     return session_id
 
 def send_sse(data: Union[BaseModel, dict]) -> str:
@@ -60,8 +56,10 @@ def send_sse(data: Union[BaseModel, dict]) -> str:
         json_str = json.dumps(data, ensure_ascii=False)
     return f"data: {json_str}\n\n"
 
-def log_context(session_id: str, message: str, level: str = "info", exc_info: bool = False):
-    safe_message = message.replace('\n', '\\n').replace('\r', '\\r')
+def log_context(
+    session_id: str, message: str, level: str = "info", exc_info: bool = False
+):
+    safe_message = message.replace("\n", "\\n").replace("\r", "\\r")
     msg = f"[Session: {session_id}] {safe_message}"
     log_func = getattr(logger, level.lower(), logger.info)
     log_func(msg, exc_info=exc_info)
@@ -73,12 +71,17 @@ class ChatHistoryManager:
 
     def _cleanup(self):
         current_time = time.time()
-        expired = [sid for sid, data in self._store.items() if current_time - data.last_accessed > SESSION_TIMEOUT_SEC]
+        expired = [
+            sid
+            for sid, data in self._store.items()
+            if current_time - data.last_accessed > SESSION_TIMEOUT_SEC
+        ]
         for sid in expired:
             del self._store[sid]
-        
         if len(self._store) > MAX_TOTAL_SESSIONS:
-            sorted_sessions = sorted(self._store.items(), key=lambda x: x[1].last_accessed)
+            sorted_sessions = sorted(
+                self._store.items(), key=lambda x: x[1].last_accessed
+            )
             excess = len(self._store) - MAX_TOTAL_SESSIONS
             for i in range(excess):
                 del self._store[sorted_sessions[i][0]]
@@ -92,7 +95,7 @@ class ChatHistoryManager:
         session.last_accessed = time.time()
         session.history.append(ChatMessage(role=role, content=content))
         if len(session.history) > self.max_length:
-            session.history = session.history[-self.max_length:]
+            session.history = session.history[-self.max_length :]
 
     def get_history(self, session_id: str) -> List[dict]:
         if session_id in self._store:
@@ -101,119 +104,162 @@ class ChatHistoryManager:
             return [msg.model_dump() for msg in session.history]
         return []
 
+
 def format_urls_as_links(text: str) -> str:
     if not text:
         return ""
-    url_pattern = r'(?<!\()(https?://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|])'
+    url_pattern = (
+        r"(?<!\()(https?://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|])"
+    )
     def replace_link(match):
         url = match.group(0)
         try:
             parsed = urlparse(url)
-            if parsed.scheme not in ('http', 'https'):
+            if parsed.scheme not in ("http", "https"):
                 return url
         except Exception:
             return url
         return f"[{url}]({url})"
     return re.sub(url_pattern, replace_link, text)
 
-# --- 【機能修正】URL生成ロジック ---
+
+# ─────────────────────────────────────────────────────────
+# ストレージ URL 生成ロジック
+# ─────────────────────────────────────────────────────────
+
+# Supabase Storage で有効なキー: ASCII英数字・ハイフン・アンダースコア・ピリオド・スラッシュ
+# 日本語等のマルチバイト文字を含むキーは InvalidKey になるため事前にはじく
+_ALLOWED_KEY_RE = re.compile(r'^[A-Za-z0-9_./()\-]+$')
+
+# ★ ハッシュ値っぽいパス（16進数32文字 + 拡張子）かどうかを判定
+_HASH_LIKE_RE = re.compile(r'^[0-9a-f]{8,}[^/]*\.[a-z]{2,5}$', re.IGNORECASE)
+
+
+def _is_valid_storage_key(path: str) -> bool:
+    """
+    Supabase Storage キーとして安全に使えるパスかを判定する。
+    - マルチバイト文字（日本語など）を含む場合は False
+    - http/https で始まる URL は False（既に URL が分かっている場合）
+    """
+    if not path:
+        return False
+    if path.startswith(("http://", "https://")):
+        return False
+    # ASCII 範囲外の文字が含まれていたら NG
+    try:
+        path.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return True
+
 
 def generate_storage_url(file_path: str) -> Optional[str]:
     """
-    Supabase Storageの署名付きURL（有効期限1時間）を生成する。
-    Args:
-        file_path: Storage内のファイルパス (ハッシュ化されたファイル名など)
+    Supabase Storage の署名付きURL（有効期限1時間）を生成する。
+
+    ★ 修正ポイント:
+    - 日本語等のマルチバイト文字を含むパスは試みずに None を返す（InvalidKey 防止）
+    - 存在しないキーや 400/404 エラーは DEBUG ログのみ（スタックトレース抑制）
     """
     if not file_path or not supabase:
         return None
 
-    # 拡張子チェック（ホワイトリスト方式）
-    allowed_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf')
+    # マルチバイト文字チェック（日本語ファイル名は Storage キーとして使えない）
+    if not _is_valid_storage_key(file_path):
+        logger.debug(
+            f"Storage URL skipped (non-ASCII path): {file_path!r}"
+        )
+        return None
+
+    # 拡張子チェック（ホワイトリスト）
+    allowed_extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf")
     if not file_path.lower().endswith(allowed_extensions):
+        logger.debug(f"Storage URL skipped (unsupported ext): {file_path!r}")
         return None
 
     try:
-        # 日本語ファイル名が含まれる場合の対策 (ハッシュ名なら不要だが念のため)
-        encoded_path = quote(file_path, safe='/')
-
-        # 署名付きURL生成
         res = supabase.storage.from_(STORAGE_BUCKET_NAME).create_signed_url(
-            encoded_path, 
-            3600
+            file_path, 3600
         )
-        
-        # レスポンスハンドリング
-        if isinstance(res, dict) and 'signedURL' in res:
-            return res['signedURL']
-        elif isinstance(res, str) and res.startswith('http'):
+        if isinstance(res, dict) and "signedURL" in res:
+            return res["signedURL"]
+        elif isinstance(res, str) and res.startswith("http"):
             return res
-        
-        signed_url = getattr(res, 'signed_url', None) or getattr(res, 'signedURL', None)
+        signed_url = getattr(res, "signed_url", None) or getattr(res, "signedURL", None)
         if isinstance(signed_url, str):
             return signed_url
-            
         return None
 
     except Exception as e:
-        logger.warning(f"Failed to generate signed URL for {file_path}: {e}", exc_info=True)
+        # ★ スタックトレースなしの DEBUG ログに変更（ノイズ削減）
+        err_msg = str(e)
+        if "not_found" in err_msg or "404" in err_msg:
+            logger.debug(f"Storage object not found: {file_path!r}")
+        elif "InvalidKey" in err_msg or "400" in err_msg:
+            logger.debug(f"Storage invalid key: {file_path!r}")
+        else:
+            logger.warning(f"Storage URL error ({file_path!r}): {err_msg}")
         return None
 
 
 def format_references(documents: List[Any]) -> str:
     """
     RAG検索結果から参照元リストを生成。
+
+    ★ 修正ポイント:
+    - metadata.image_path（ハッシュ値）があればそれで URL を試みる
+    - image_path がない場合は source（日本語表示名）を URL 生成に使わない
+      → リンクなしでファイル名のみ表示
     """
     if not documents:
         return ""
 
-    formatted_lines = ["\n\n## 参照元 (クリックで資料を表示・1時間有効)"]
+    formatted_lines = ["\n\n## 参照元"]
     seen_sources = set()
     index = 1
 
     for doc in documents:
-        # メタデータの取得
-        metadata = {}
+        metadata: dict = {}
         if isinstance(doc, dict):
-            metadata = doc.get("metadata", {})
+            metadata = doc.get("metadata", {}) or {}
         elif hasattr(doc, "metadata"):
             m = getattr(doc, "metadata", {})
             metadata = m if isinstance(m, dict) else {}
-        
-        # ソース名（表示用）
+
+        # 表示用ファイル名（source = 日本語表示名）
         source_name = str(metadata.get("source", "資料名不明"))
         display_name = os.path.basename(source_name)
-        
-        # URL生成用パスの特定: image_path(実体)があればそれを優先、なければsourceを使う
-        storage_path = metadata.get("image_path") or source_name
-        
-        url = metadata.get("url")
-        
-        # URL自動生成の試行
-        if not url and storage_path != "資料名不明":
-            url = generate_storage_url(storage_path)
 
-        # URLバリデーション
+        # ★ URL 生成には image_path（ハッシュ値）を優先使用
+        #    source は表示専用・Storage キーとしては使わない
+        image_path = metadata.get("image_path")
+        url = metadata.get("url")  # キャッシュ済み URL があればそれを使う
+
+        # image_path がある場合のみ署名付きURL を試みる
+        if not url and image_path:
+            url = generate_storage_url(image_path)
+
+        # URL バリデーション
         if url:
             try:
                 parsed = urlparse(url)
-                if parsed.scheme not in ('http', 'https'):
+                if parsed.scheme not in ("http", "https"):
                     url = None
             except Exception:
                 url = None
 
         unique_key = url if url else display_name
-        
         if unique_key in seen_sources:
             continue
-        
         seen_sources.add(unique_key)
 
-        # Markdownエスケープ
+        # Markdown エスケープ
         safe_display_name = display_name.replace("[", "\\[").replace("]", "\\]")
 
         if url:
-            line = f"* [{index}] [{safe_display_name}]({url})"
+            line = f"* [{index}] [{safe_display_name}]({url}) ⏳1時間有効"
         else:
+            # URL が取得できない場合はリンクなし（日本語ファイル名でも表示は維持）
             line = f"* [{index}] {safe_display_name}"
 
         formatted_lines.append(line)
@@ -221,5 +267,4 @@ def format_references(documents: List[Any]) -> str:
 
     if len(formatted_lines) > 1:
         return "\n".join(formatted_lines)
-    
     return ""
