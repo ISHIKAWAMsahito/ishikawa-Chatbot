@@ -395,6 +395,14 @@ tr:hover td { background: #fafbff; }
     .nav-btn.left { left: 10px; font-size: 0.78rem; padding: 6px 12px; }
     .nav-btn.right { right: 10px; font-size: 0.78rem; padding: 6px 12px; }
 }
+
+/* 停止ボタン */
+.send-btn.generating {
+    background: linear-gradient(135deg, #dc3545, #c82333);
+}
+.send-btn.generating:hover {
+    opacity: 0.88;
+}
 </style>
 </head>
 <body>
@@ -555,7 +563,7 @@ tr:hover td { background: #fafbff; }
 // ==================================================
 marked.setOptions({ breaks: true, gfm: true });
 let chartInstance = null;
-
+let abortController = null;
 // ==================================================
 // Toast 通知
 // ==================================================
@@ -752,16 +760,46 @@ function handleKey(e) {
 }
 
 async function sendQuery() {
-    const input  = document.getElementById('queryInput');
-    const btn    = document.getElementById('sendBtn');
+    const input   = document.getElementById('queryInput');
+    const btn     = document.getElementById('sendBtn');
     const history = document.getElementById('chatHistory');
-    const query  = input.value.trim();
+
+    // ── 停止ロジック ──
+    if (abortController) {
+        abortController.abort();
+        abortController = null;
+        btn.classList.remove('generating');
+        btn.title = '送信';
+        btn.textContent = '➤';
+
+        // 最後のAIバブルに「停止」を追記
+        const bubbles = history.querySelectorAll('.msg.ai');
+        if (bubbles.length > 0) {
+            const last = bubbles[bubbles.length - 1];
+            if (!last.dataset.finished) {
+                const stop = document.createElement('span');
+                stop.style.cssText = 'display:block;color:#dc3545;font-size:0.78rem;margin-top:6px;font-weight:700;';
+                stop.textContent = '⏹ 停止しました';
+                last.appendChild(stop);
+                last.dataset.finished = 'true';
+            }
+        }
+        return;
+    }
+
+    // ── 送信ロジック ──
+    const query = input.value.trim();
     if (!query) return;
 
-    // ユーザーメッセージ追加
     appendMsg('user', query);
     input.value = '';
-    btn.disabled = true;
+    btn.disabled = false; // abort可能なので disabled にしない
+    btn.classList.add('generating');
+    btn.title = '停止';
+    btn.textContent = '⏹';
+
+    abortController = new AbortController();
+    const signal = abortController.signal;
 
     // AIローディングバブル
     const aiEl = document.createElement('div');
@@ -770,35 +808,33 @@ async function sendQuery() {
     history.appendChild(aiEl);
     history.scrollTop = history.scrollHeight;
 
-    let aiText = '';
+    let aiText  = '';
+    let isFirst = true;
 
     try {
         const res = await fetch('/api/admin/stats/chat_analysis', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query, target_period_days: 30 }),
+            signal,
         });
 
         if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
 
         const reader  = res.body.getReader();
         const decoder = new TextDecoder();
-        let isFirst   = true;
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            aiText += chunk;
+            aiText += decoder.decode(value, { stream: true });
 
             if (isFirst) {
-                // ローディングドットを消してテキスト開始
                 aiEl.innerHTML = '';
                 isFirst = false;
             }
 
-            // Markdown + DOMPurify でレンダリング
             const rawHtml  = marked.parse(aiText);
             const safeHtml = DOMPurify.sanitize(rawHtml, {
                 ALLOWED_TAGS: ['p','br','strong','em','ul','ol','li','h1','h2','h3','h4',
@@ -810,29 +846,30 @@ async function sendQuery() {
         }
 
         if (isFirst) {
-            // 空レスポンス
             aiEl.textContent = '（回答を生成できませんでした）';
         }
+        aiEl.dataset.finished = 'true';
 
     } catch (e) {
-        console.error(e);
-        
-        // 安全なDOM操作による書き換え
-        aiEl.innerHTML = ''; // 一旦クリア
-        
-        const errSpan = document.createElement('span');
-        errSpan.style.color = '#dc3545';
-        errSpan.textContent = 'エラー: ' + e.message; // 【重要】textContentを使うことでXSSを防ぐ
-        
-        aiEl.appendChild(errSpan);
-
+        if (e.name === 'AbortError') {
+            // 停止ロジック側で処理済み
+        } else {
+            console.error(e);
+            aiEl.innerHTML = '';
+            const errSpan = document.createElement('span');
+            errSpan.style.color = '#dc3545';
+            errSpan.textContent = 'エラー: ' + e.message;
+            aiEl.appendChild(errSpan);
+        }
     } finally {
-        // ▼ ここが不足していました ▼
-        const btn = document.getElementById('sendBtn'); // 念のため再取得、あるいはスコープ内のbtnを使用
-        if(btn) btn.disabled = false; // 送信ボタンを再度押せるように戻す
-    } // ← finallyブロックを閉じる
-
-} // ← sendQuery関数全体を閉じる
+        if (abortController) {
+            abortController = null;
+            btn.classList.remove('generating');
+            btn.title = '送信';
+            btn.textContent = '➤';
+        }
+    }
+}
 
 
 // ▼ ここから次の関数定義 ▼
