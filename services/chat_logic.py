@@ -1,172 +1,167 @@
 import logging
 import uuid
-import asyncio # ★追加
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, AsyncGenerator, Optional
 from fastapi import Request
 
-# LangSmith トレース用
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
 
-# 依存モジュールのインポート
 from core.constants import PARAMS, AI_MESSAGES
-from models.schemas import ChatQuery, ChatLogCreate # ★ChatLogCreateを追加
+from models.schemas import ChatQuery, ChatLogCreate
 from services.llm import LLMService
 from services.search import SearchService
 from services.storage import StorageService
-from services.chat_log import ChatLogService # ★追加
+from services.chat_log import ChatLogService
 from services.utils import (
-    get_or_create_session_id, 
-    send_sse, 
-    log_context, 
-    ChatHistoryManager, 
-    format_references 
+    get_or_create_session_id,
+    send_sse,
+    log_context,
+    ChatHistoryManager,
+    format_references,
 )
-# プロンプトモジュールのインポート
 from services import prompts
 
-# DI（依存性の注入）
 llm_service = LLMService()
 search_service = SearchService(llm_service)
 storage_service = StorageService()
 history_manager = ChatHistoryManager(max_length=PARAMS["MAX_HISTORY_LENGTH"])
 
+
 @traceable(name="Chat_Pipeline_Parent", run_type="chain")
-async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGenerator[str, None]:
+async def enhanced_chat_logic(
+    request: Request, chat_req: ChatQuery
+) -> AsyncGenerator[str, None]:
     """
-    RAGチャットロジック（FAQ優先・プライバシー保護対応版・ログ保存機能付き）
+    RAGチャットロジック（FAQ優先・プライバシー保護対応版）
+    - search_mode を ChatQuery から受け取り検索パイプラインに渡す
+    - 自動ベクトル化バックグラウンドタスクは削除（次元数不一致エラー回避）
     """
     session_id = get_or_create_session_id(request)
-    user_input = chat_req.question or chat_req.query
-    
+    user_input = chat_req.question
+
     collection_name = getattr(chat_req, "collection", "student-knowledge-base")
     top_k = getattr(chat_req, "top_k", 5)
     embedding_model = getattr(chat_req, "embedding_model", "models/gemini-embedding-001")
+    # ★ search_mode を取得（デフォルト: hybrid）
+    search_mode = getattr(chat_req, "search_mode", "hybrid")
 
-    # LangSmith用のRunTree取得
     run_tree = get_current_run_tree()
 
-    # プライバシー保護: クエリ内容を隠蔽
-    log_context(session_id, "Start processing query (content hidden)")
+    # プライバシー保護: クエリ内容をログに出さない
+    log_context(session_id, "Start processing query")
 
-    # 日時取得（JST）
-    JST = timezone(timedelta(hours=9), 'JST')
+    JST = timezone(timedelta(hours=9), "JST")
     now = datetime.now(JST)
     current_date_str = now.strftime("%Y年%m月%d日")
 
     search_results = []
     is_faq_match = False
-    ai_response_full = "" # 保存用に回答を蓄積する変数
-    
-    try:
-        # 1. 履歴の追加
-        history_manager.add(session_id, "user", user_input)
-        
-        yield send_sse({'status_message': '🔍 質問を分析しています...'})
+    ai_response_full = ""
 
-        # 2. 検索 (Search Service)
-        # まずクエリ拡張
+    try:
+        history_manager.add(session_id, "user", user_input)
+
+        yield send_sse({"status_message": "🔍 質問を分析しています..."})
+
+        # 1. クエリ拡張
         expanded_query = await search_service.expand_query(user_input)
-        
-        # 検索パイプライン実行
+
+        # 2. 検索パイプライン（search_mode を渡す）
         search_result_obj = await search_service.search(
-            query=expanded_query, 
+            query=expanded_query,
             session_id=session_id,
             collection_name=collection_name,
             top_k=top_k,
-            embedding_model=embedding_model
+            embedding_model=embedding_model,
+            search_mode=search_mode,
         )
         search_results = search_result_obj.get("documents", [])
-        # FAQ一致フラグを取得
         is_faq_match = search_result_obj.get("is_faq_match", False)
-        
-        # ヒットしなかった場合のフォールバック（元のクエリで再検索）
+
+        # ヒットしなかった場合、元クエリで再検索
         if not search_results and expanded_query != user_input:
-             search_result_obj = await search_service.search(
+            search_result_obj = await search_service.search(
                 query=user_input,
                 session_id=session_id,
                 collection_name=collection_name,
                 top_k=top_k,
-                embedding_model=embedding_model
-             )
-             search_results = search_result_obj.get("documents", [])
-             is_faq_match = search_result_obj.get("is_faq_match", False)
+                embedding_model=embedding_model,
+                search_mode=search_mode,
+            )
+            search_results = search_result_obj.get("documents", [])
+            is_faq_match = search_result_obj.get("is_faq_match", False)
 
         if not search_results:
-             not_found_msg = AI_MESSAGES.get("NOT_FOUND", "申し訳ありません。関連情報が見つかりませんでした。")
-             yield send_sse({'content': not_found_msg})
-             
-             # 履歴保存 & ログ保存 (見つからなかった場合も記録)
-             history_manager.add(session_id, "assistant", not_found_msg)
-             
-             # ★ログ保存タスクの投入 (Not Found時)
-             log_entry = ChatLogCreate(
+            not_found_msg = AI_MESSAGES.get(
+                "NOT_FOUND", "申し訳ありません。関連情報が見つかりませんでした。"
+            )
+            yield send_sse({"content": not_found_msg})
+            history_manager.add(session_id, "assistant", not_found_msg)
+
+            log_entry = ChatLogCreate(
                 session_id=session_id,
                 user_query=user_input,
                 ai_response=not_found_msg,
                 metadata={
                     "collection": collection_name,
                     "result": "not_found",
-                    "top_k": top_k
-                }
-             )
-             asyncio.create_task(ChatLogService.save_log_async(log_entry))
+                    "top_k": top_k,
+                    "search_mode": search_mode,
+                },
+            )
+            # ★ 非同期タスクとして保存（ベクトル化は行わない）
+            asyncio.create_task(_save_log_only(log_entry))
 
-             yield send_sse({'done': True, 'feedback_id': str(uuid.uuid4())})
-             return
+            yield send_sse({"done": True, "feedback_id": str(uuid.uuid4())})
+            return
 
-        yield send_sse({'status_message': '✍️ 回答を生成しています...'})
+        yield send_sse({"status_message": "✍️ 回答を生成しています..."})
 
-        # 3. 回答生成 (LLM Service)
+        # 3. 回答生成
         chat_history = history_manager.get_history(session_id)
-        
-        # コンテキスト構築
+
         context_parts = []
         for idx, doc in enumerate(search_results, 1):
-            doc_content = doc.get('content', '')
+            doc_content = doc.get("content", "")
             context_parts.append(f"<doc id='{idx}'>{doc_content}</doc>")
         context_str = "\n".join(context_parts)
 
-        # システムプロンプト準備
-        # FAQ一致時は強い指示を追加
         system_prompt_base = prompts.SYSTEM_GENERATION
         if is_faq_match:
-            system_prompt_base += "\n\n**重要: ユーザーの質問に完全に合致するFAQ資料が見つかりました。<doc id='1'>の内容を最優先し、その回答を正確に伝えてください。**"
+            system_prompt_base += (
+                "\n\n**重要: ユーザーの質問に完全に合致するFAQ資料が見つかりました。"
+                "<doc id='1'>の内容を最優先し、その回答を正確に伝えてください。**"
+            )
 
         try:
             full_system_prompt = system_prompt_base.format(
-                context_text=context_str,
-                current_date=current_date_str
+                context_text=context_str, current_date=current_date_str
             )
         except Exception:
-             full_system_prompt = f"以下の情報を元に回答してください。\n{context_str}"
+            full_system_prompt = f"以下の情報を元に回答してください。\n{context_str}"
 
-        # ストリーミング回答の開始
         async for chunk in llm_service.generate_response_stream(
             query=user_input,
-            context_docs=search_results, 
+            context_docs=search_results,
             history=chat_history,
-            system_prompt=full_system_prompt
+            system_prompt=full_system_prompt,
         ):
             text_chunk = chunk if isinstance(chunk, str) else chunk.get("content", "")
             ai_response_full += text_chunk
-            yield send_sse({'content': text_chunk})
+            yield send_sse({"content": text_chunk})
 
         # 4. 参照元リスト
         references_text = format_references(search_results)
         if references_text:
-            yield send_sse({'content': references_text})
-            # 参照元もログに含めるか検討: ここでは純粋なAI回答のみ保存するか、含めるかは要件次第
-            # 今回は履歴整合性を重視し、参照元テキストもAI回答の一部として扱います
+            yield send_sse({"content": references_text})
             ai_response_full += "\n" + references_text
 
-        # 5. 履歴保存 (メモリ内)
+        # 5. 履歴保存
         history_manager.add(session_id, "assistant", ai_response_full)
 
-        # -------------------------------------------------------
-        # 【追加】 6. 会話ログの永続化 (DB保存)
-        # -------------------------------------------------------
+        # 6. チャットログ保存（ベクトル化なし）
         log_entry = ChatLogCreate(
             session_id=session_id,
             user_query=user_input,
@@ -176,61 +171,70 @@ async def enhanced_chat_logic(request: Request, chat_req: ChatQuery) -> AsyncGen
                 "top_k": top_k,
                 "is_faq_match": is_faq_match,
                 "result": "success",
-                "doc_count": len(search_results)
-            }
+                "doc_count": len(search_results),
+                "search_mode": search_mode,
+            },
         )
-        # ストリーミングを阻害しないよう、非同期タスクとして投入
-        asyncio.create_task(ChatLogService.save_log_async(log_entry))
-        # -------------------------------------------------------
+        asyncio.create_task(_save_log_only(log_entry))
 
-        # 7. 完了シグナル
         feedback_id = str(uuid.uuid4())
-        yield send_sse({'done': True, 'feedback_id': feedback_id})
+        yield send_sse({"done": True, "feedback_id": feedback_id})
 
     except Exception as e:
-        # エラーハンドリング: スタックトレースを含める
-        log_context(session_id, f"Critical Pipeline Error: {e}", "error", exc_info=True)
+        log_context(session_id, f"Pipeline Error: {type(e).__name__}", "error", exc_info=True)
         if run_tree:
             run_tree.end(error=str(e))
-            
+
         error_str = str(e)
         msg = AI_MESSAGES.get("SYSTEM_ERROR", "システムエラーが発生しました。")
-        yield send_sse({'content': f"\n\n{msg} (Error: {error_str})"})
-        
-        # エラーログも保存（オプション）
-        try:
-            error_log = ChatLogCreate(
-                session_id=session_id,
-                user_query=user_input,
-                ai_response=f"SYSTEM ERROR: {error_str}",
-                metadata={"result": "error"}
-            )
-            asyncio.create_task(ChatLogService.save_log_async(error_log))
-        except:
-            pass # エラー保存のエラーは無視
-        
+        yield send_sse({"content": f"\n\n{msg}"})
+
     finally:
         log_context(session_id, "Response generation finished.")
 
 
+async def _save_log_only(log_entry: ChatLogCreate) -> None:
+    """
+    チャットログをDBに保存するだけのタスク。
+    ★ ベクトル化は行わない（chat_logs.embeddingの次元数不一致エラー回避）
+    　　管理者が stats.html の「一括ベクトル化」から手動実行することを推奨。
+    """
+    try:
+        data = log_entry.model_dump(mode="json")
+        from core.database import db_client
+        response = db_client.client.table("chat_logs").insert(data).execute()
+        if response.data:
+            log_id = response.data[0].get("id")
+            logging.getLogger(__name__).info(f"Chat log saved. ID: {log_id}")
+        else:
+            logging.getLogger(__name__).warning("Chat log saved but no data returned.")
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to save chat log: {e}", exc_info=True)
+
+
 @traceable(name="Feedback_Analysis_Job", run_type="chain")
-async def analyze_feedback_trends(logs: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
-    """
-    フィードバック分析用ロジック
-    """
+async def analyze_feedback_trends(
+    logs: List[Dict[str, Any]]
+) -> AsyncGenerator[str, None]:
+    """フィードバック分析用ロジック"""
     if not logs:
-        yield send_sse({'content': '分析対象データがありません。'})
+        yield send_sse({"content": "分析対象データがありません。"})
         return
-    
-    summary = "\n".join([f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}" for l in logs[:50]])
+
+    summary = "\n".join(
+        [
+            f"- 評価:{l.get('rating','-')} | {l.get('comment','-')[:100]}"
+            for l in logs[:50]
+        ]
+    )
     prompt = prompts.FEEDBACK_ANALYSIS.format(summary=summary)
 
     try:
         stream = await llm_service.generate_stream(prompt)
         async for chunk in stream:
-            text = chunk.text if hasattr(chunk, 'text') else str(chunk)
+            text = chunk.text if hasattr(chunk, "text") else str(chunk)
             if text:
-                yield send_sse({'content': text})
+                yield send_sse({"content": text})
     except Exception as e:
         logging.error(f"Feedback analysis error: {e}", exc_info=True)
-        yield send_sse({'content': f'分析エラー: {e}'})
+        yield send_sse({"content": f"分析エラー: {e}"})
