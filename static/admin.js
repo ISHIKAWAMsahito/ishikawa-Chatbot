@@ -1,14 +1,21 @@
 // ▼▼▼ Supabase初期化 ▼▼▼
-    const { createClient } = supabase;
     window.supabaseClient = null;
 
     async function initializeSupabase() {
         try {
+            // supabaseライブラリがロードされているか確認
+            if (typeof supabase === 'undefined') {
+                console.error("Supabaseライブラリがロードされていません。");
+                return;
+            }
+
             const response = await fetch('/api/client/config');
             if (!response.ok) return;
             const config = await response.json();
+            
             if (config.supabase_url && config.supabase_anon_key) {
-                window.supabaseClient = createClient(config.supabase_url, config.supabase_anon_key);
+                // const { createClient } = ... を使わず、直接 supabase.createClient を呼ぶ
+                window.supabaseClient = supabase.createClient(config.supabase_url, config.supabase_anon_key);
                 console.log('✅ Supabase初期化完了 (Admin)');
             }
         } catch (error) {
