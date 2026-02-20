@@ -8,7 +8,10 @@
                 console.error("Supabaseライブラリがロードされていません。");
                 return;
             }
-
+// ★追加：すでに初期化済みなら、新しく作らずにスキップする
+            if (window.supabaseClient) {
+                return;
+            }
             const response = await fetch('/api/client/config');
             if (!response.ok) return;
             const config = await response.json();
