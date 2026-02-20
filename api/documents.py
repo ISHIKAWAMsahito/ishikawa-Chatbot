@@ -1,4 +1,5 @@
 import logging
+import certifi
 import asyncio
 import traceback
 import json
@@ -145,9 +146,11 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         raise HTTPException(400, err_msg)
 
     try:
-        # 1. サイトへのアクセス
+        # 1. サイトへのアクセス (SSL検証に certifi の証明書セットを使用)
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
-        async with httpx.AsyncClient(verify=False, headers=headers, follow_redirects=True) as client:
+        
+        # verify=False を certifi.where() に変更
+        async with httpx.AsyncClient(verify=certifi.where(), headers=headers, follow_redirects=True) as client:
             resp = await client.get(request.url, timeout=30.0)
             resp.raise_for_status()
 
