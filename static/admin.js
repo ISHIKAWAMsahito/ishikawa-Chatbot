@@ -1,28 +1,38 @@
 // ▼▼▼ Supabase初期化 ▼▼▼
     window.supabaseClient = null;
+    window.isInitializingSupabase = false; // ★追加：「今作っている最中だよ」のフラグ
 
     async function initializeSupabase() {
         try {
-            // supabaseライブラリがロードされているか確認
             if (typeof supabase === 'undefined') {
                 console.error("Supabaseライブラリがロードされていません。");
                 return;
             }
-// ★追加：すでに初期化済みなら、新しく作らずにスキップする
-            if (window.supabaseClient) {
+
+            // ★修正：完成済み、または「作っている最中」ならスキップする
+            if (window.supabaseClient || window.isInitializingSupabase) {
                 return;
             }
+            
+            // ★フラグをONにする（お使いに出発！）
+            window.isInitializingSupabase = true;
+
             const response = await fetch('/api/client/config');
-            if (!response.ok) return;
+            if (!response.ok) {
+                window.isInitializingSupabase = false;
+                return;
+            }
             const config = await response.json();
             
             if (config.supabase_url && config.supabase_anon_key) {
-                // const { createClient } = ... を使わず、直接 supabase.createClient を呼ぶ
                 window.supabaseClient = supabase.createClient(config.supabase_url, config.supabase_anon_key);
                 console.log('✅ Supabase初期化完了 (Admin)');
             }
         } catch (error) {
             console.error("Supabase初期化失敗:", error);
+        } finally {
+            // ★処理が終わったら、成功しても失敗してもフラグを戻す
+            window.isInitializingSupabase = false;
         }
     }
     initializeSupabase();
