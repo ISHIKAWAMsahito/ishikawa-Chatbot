@@ -6,11 +6,12 @@ prefix: /api/admin/stats  (main.py で登録済み)
 
 【エンドポイント一覧】
 GET  /data                  - フィードバック履歴の取得
-GET  /vectorize/status      - ベクトル化の進捗確認  ← 必ず /vectorize より先に定義
+GET  /vectorize/status      - ベクトル化の進捗確認  ← /vectorize より先に定義
 POST /vectorize             - 一括ベクトル化
 POST /chat_analysis         - ベクトル検索 × LLM 相談 (SSE)
 """
 import logging
+import re
 from typing import AsyncGenerator, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,7 +26,6 @@ from services import prompts
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
 llm_service = LLMService()
 
 
@@ -36,6 +36,33 @@ llm_service = LLMService()
 class VectorizeRequest(BaseModel):
     target: str = Field("both", description="'chat_logs' | 'comments' | 'both'")
     limit: int  = Field(200, ge=1, le=1000)
+
+
+# ==================================================================
+# 共通: comment カラムから表示用テキストを抽出
+# ==================================================================
+
+def _summarize_comment(comment: str, rating: str) -> str:
+    """
+    anonymous_comments.comment（Q: / A: 形式）から
+    分析コンテキスト用の短いテキストを生成する。
+    """
+    text = (comment or "").strip()
+    rating_label = {"good": "✅", "bad": "❌"}.get(rating, "−")
+
+    q_match = re.search(r"Q:\s*(.*?)(?=\nA:|\Z)", text, re.DOTALL)
+    a_match = re.search(r"A:\s*(.*)", text, re.DOTALL)
+
+    q = (q_match.group(1).strip() if q_match else "").strip()
+    a = (a_match.group(1).strip() if a_match else "").strip()
+
+    if q:
+        a_short = (a[:150].split("\n")[0]) if a else "（回答なし）"
+        return f"{rating_label} Q: {q} → A要約: {a_short}"
+    elif a:
+        return f"{rating_label} {a[:200]}"
+    else:
+        return f"{rating_label} {text[:200]}"
 
 
 # ==================================================================
@@ -61,16 +88,15 @@ async def get_stats_data(user: dict = Depends(require_auth)):
 
 
 # ==================================================================
-# 2. ベクトル化の進捗確認  ← /vectorize より必ず先に定義する
+# 2. ベクトル化の進捗確認  ← /vectorize より先に定義
 # ==================================================================
 
 @router.get("/vectorize/status", summary="ベクトル化の進捗を確認")
 async def vectorize_status(user: dict = Depends(require_auth)):
     """
     chat_logs と anonymous_comments のベクトル化進捗を返す。
-    テーブルが存在しない場合でも 200 を返す（total=0 扱い）。
     """
-    def _count(table: str, null_filter: bool = False):
+    def _count(table: str, null_filter: bool = False) -> int:
         try:
             q = db_client.client.table(table).select("id", count="exact", head=True)
             if null_filter:
@@ -79,10 +105,10 @@ async def vectorize_status(user: dict = Depends(require_auth)):
         except Exception:
             return 0
 
-    logs_total    = _count("chat_logs")
-    logs_pending  = _count("chat_logs",          null_filter=True)
-    cm_total      = _count("anonymous_comments")
-    cm_pending    = _count("anonymous_comments", null_filter=True)
+    logs_total   = _count("chat_logs")
+    logs_pending = _count("chat_logs",          null_filter=True)
+    cm_total     = _count("anonymous_comments")
+    cm_pending   = _count("anonymous_comments", null_filter=True)
 
     return {
         "chat_logs": {
@@ -107,7 +133,6 @@ async def bulk_vectorize(
     request: VectorizeRequest,
     user: dict = Depends(require_auth),
 ):
-    """embedding が未設定のレコードを最大 limit 件ベクトル化する"""
     from services.vectorize_logs import bulk_vectorize_chat_logs, bulk_vectorize_comments
 
     if request.target not in ("chat_logs", "comments", "both"):
@@ -117,10 +142,8 @@ async def bulk_vectorize(
         )
 
     results: dict = {}
-
     if request.target in ("chat_logs", "both"):
         results["chat_logs"] = await bulk_vectorize_chat_logs(limit=request.limit)
-
     if request.target in ("comments", "both"):
         results["anonymous_comments"] = await bulk_vectorize_comments(limit=request.limit)
 
@@ -137,18 +160,19 @@ async def chat_with_logs(
     user: dict = Depends(require_auth),
 ):
     """
-    職員・教員からの質問に対し、
-    chat_logs と anonymous_comments をベクトル検索して
-    関連性の高いログのみをコンテキストに LLM が分析する。
-    ベクトルがまだない場合はフォールバックで直近ログを使用する。
+    職員・教員の質問をベクトル検索して関連ログを収集し、
+    LLM（Gemini 2.5 Flash）がSSEでストリーミング回答する。
+
+    データソース:
+      ① chat_logs            … 学生↔AI の会話ログ
+      ② anonymous_comments   … Q&A形式 + good/bad 評価付きフィードバック
     """
     logger.info(f"Admin analysis query: {request.query}")
 
     try:
-        # ① クエリをベクトル化
         query_embedding = await llm_service.get_embedding(request.query)
 
-        # ② chat_logs をベクトル検索（失敗時は直近20件にフォールバック）
+        # ── ① chat_logs ベクトル検索 ──────────────────────────────
         log_context_parts: list[str] = []
         try:
             log_res = db_client.client.rpc(
@@ -185,49 +209,64 @@ async def chat_with_logs(
             except Exception as fe:
                 logger.warning(f"chat_logs fallback also failed: {fe}")
 
-        # ③ anonymous_comments をベクトル検索
+        # ── ② anonymous_comments ベクトル検索（rating付き）─────────
         comment_context_parts: list[str] = []
+        bad_questions: list[str] = []   # bad評価の質問を別途収集
         try:
             cm_res = db_client.client.rpc(
                 "match_anonymous_comments",
                 {
                     "p_query_embedding": query_embedding,
                     "p_match_threshold": 0.35,
-                    "p_match_count":     10,
+                    "p_match_count":     15,
                 },
             ).execute()
             for i, row in enumerate(cm_res.data or [], 1):
                 ts      = (row.get("created_at") or "")[:10]
-                rating  = row.get("rating", "-")
-                comment = row.get("comment", "")
+                rating  = row.get("rating") or ""
+                comment = row.get("comment", "") or ""
                 sim     = row.get("similarity", 0.0)
+                summary = _summarize_comment(comment, rating)
                 comment_context_parts.append(
-                    f"[意見{i} | {ts} | 評価:{rating} | 類似度:{sim:.2f}]\n{comment}"
+                    f"[FB{i} | {ts} | 類似度:{sim:.2f}]\n{summary}"
                 )
+                # bad評価の質問文を抽出
+                if rating == "bad":
+                    q_match = re.search(r"Q:\s*(.*?)(?=\nA:|\Z)", comment, re.DOTALL)
+                    q_text = (q_match.group(1).strip() if q_match else "").strip()
+                    if q_text:
+                        bad_questions.append(q_text)
         except Exception as ce:
             logger.warning(f"anonymous_comments vector search failed: {ce}")
 
-        # ④ データがまったくない場合
+        # ── ③ データなし ────────────────────────────────────────────
         if not log_context_parts and not comment_context_parts:
             async def _empty():
                 yield (
                     "分析対象となるデータがまだありません。\n\n"
-                    "まずは学生がチャット画面で質問を行い、"
-                    "「ベクトル化」ボタンでデータを登録してください。"
+                    "まずは「⚡ 未処理を一括ベクトル化」ボタンでデータを登録してください。"
                 )
             return StreamingResponse(_empty(), media_type="text/event-stream")
 
-        # ⑤ プロンプト構築
-        log_block     = "\n\n".join(log_context_parts)     if log_context_parts     else "（該当するチャットログなし）"
-        comment_block = "\n\n".join(comment_context_parts) if comment_context_parts else "（該当する意見・要望なし）"
+        # ── ④ プロンプト構築 ──────────────────────────────────────
+        log_block     = "\n\n".join(log_context_parts)     or "（該当するチャットログなし）"
+        comment_block = "\n\n".join(comment_context_parts) or "（該当するフィードバックなし）"
+
+        bad_block = ""
+        if bad_questions:
+            bad_block = (
+                "\n\n【❌ bad評価の質問一覧（AIが答えられなかった）】\n"
+                + "\n".join(f"  - {q}" for q in bad_questions)
+            )
 
         user_prompt = (
             f"【職員・教員からの相談】\n{request.query}\n\n"
             f"【関連チャットログ（学生 ↔ AI）】\n{log_block}\n\n"
-            f"【関連する学生からの意見・要望】\n{comment_block}"
+            f"【関連するフィードバック（✅good / ❌bad 評価付き）】\n"
+            f"{comment_block}{bad_block}"
         )
 
-        # ⑥ SSEストリーミング
+        # ── ⑤ SSEストリーミング ──────────────────────────────────
         return StreamingResponse(
             _generate_stream(user_prompt),
             media_type="text/event-stream",

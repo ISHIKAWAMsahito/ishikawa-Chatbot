@@ -22,9 +22,14 @@ from core.dependencies import require_auth
 from core import database
 from core import settings
 from core.config import ACTIVE_COLLECTION_NAME
-from services import document_processor
+
+# ★修正ポイント1: クラスを直接インポートする
+from services.document_processor import SimpleDocumentProcessor
 
 router = APIRouter()
+
+# ★修正ポイント2: プロセッサのインスタンスをここで作成する
+simple_processor = SimpleDocumentProcessor()
 
 # エラー時は汎用メッセージを返し、詳細はログのみ (情報開示対策)
 GENERIC_ERROR_MSG = "処理に失敗しました。"
@@ -99,19 +104,11 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
                 if "collection_name" not in doc.metadata:
                     doc.metadata["collection_name"] = collection_name
                 
-                # --- ★修正ポイント: 重複保存の解消 ---
-                # 以前はここで親コンテンツ(parent_content)をcontentカラムに入れていたため、
-                # 同じ親を持つ複数のレコードが「重複」して見えていました。
-                # 今回から、ユニークな「子チャンク(doc.page_content)」をcontentカラムに入れます。
-                
                 # 子チャンク（短い固有の文章）をメインコンテンツとする
                 child_content = doc.page_content
                 
-                # 親コンテンツはメタデータ側で保持する（検索後の回答生成時に利用可能）
-                # document_processor側ですでに metadata["parent_content"] に入っている想定
-                
                 database.db_client.insert_document(
-                    content=child_content,  # ★修正: 子チャンクを保存（これで重複しなくなる）
+                    content=child_content,
                     embedding=embeddings[j],
                     metadata=doc.metadata
                 )
@@ -131,11 +128,12 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
                 raise e
 
 # ----------------------------------------------------------------
-# Webスクレイピング処理 (Gemini 2.5 Flash & 重複解消版)
+# Webスクレイピング処理
 # ----------------------------------------------------------------
 @router.post("/scrape")
 async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_auth)):
-    if not database.db_client or not document_processor.simple_processor:
+    # ★修正ポイント3: 作成した simple_processor が存在するかチェックする
+    if not database.db_client or not simple_processor:
         raise HTTPException(503, "システム初期化エラー")
 
     ok, err_msg = _is_url_allowed_for_scrape(request.url)
@@ -143,7 +141,7 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         raise HTTPException(400, err_msg)
 
     try:
-        # 1. サイトへのアクセス (TLS検証有効: MITM対策)
+        # 1. サイトへのアクセス
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
         async with httpx.AsyncClient(verify=True, headers=headers, follow_redirects=True) as client:
             resp = await client.get(request.url, timeout=30.0)
@@ -173,14 +171,13 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         raw_title = soup.title.string.strip() if soup.title else "名称未設定"
         safe_title = re.sub(r'[\\/:*?"<>|]', '', raw_title)
         
-        # 拡張子を .md に設定（processorの警告回避とMarkdown認識のため）
         source_name = f"scrape_{safe_title}_{url_hash}.md"
 
         # 不要なタグを消去
         for tag in soup(["script", "style", "nav", "footer", "iframe", "noscript"]): tag.decompose()
         main_html = str(soup.body) if soup.body else str(soup)
 
-        # 2. GeminiによるMarkdown整形 (★モデルを gemini-2.5-flash に変更)
+        # 2. GeminiによるMarkdown整形
         extract_model = genai.GenerativeModel("models/gemini-2.5-flash")
         extracted_info = "\n".join(output_blocks)
         prompt = f"""
@@ -195,11 +192,12 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         ai_resp = await extract_model.generate_content_async([prompt, main_html])
         cleaned_text = ai_resp.text
 
-        # 3. 古いデータの削除 (source_name完全一致で削除し、実行ごとの重複を防ぐ)
+        # 3. 古いデータの削除
         database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
 
         # 4. 親子チャンキング保存
-        doc_generator = document_processor.simple_processor.process_and_chunk(
+        # ★修正ポイント4: ここで simple_processor を呼び出す
+        doc_generator = simple_processor.process_and_chunk(
             filename=source_name, 
             content=cleaned_text.encode('utf-8'), 
             category="Webスクレイピング", 
@@ -211,8 +209,6 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         total_chunks = 0
 
         for doc in doc_generator:
-            # チャンクごとの重複チェック (doc.page_content = 子チャンク のハッシュで判定)
-            # Snyk対策 (CWE-916): MD5 -> SHA-256に変更
             chunk_hash = hashlib.sha256(doc.page_content.encode()).hexdigest()
             if chunk_hash in seen_contents:
                 continue
@@ -237,7 +233,7 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         logging.error(f"Scrape Error: {e}", exc_info=LOG_EXC_INFO)
         raise HTTPException(500, "スクレイピングに失敗しました。")
 
-# --- 以下、既存のエンドポイント (変更なし) ---
+# --- 以下、既存のエンドポイント ---
 @router.get("/all")
 async def get_all_documents(
     page: int = Query(1, ge=1),
