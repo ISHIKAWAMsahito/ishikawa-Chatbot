@@ -99,19 +99,23 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
             )
             embeddings = embedding_response["embedding"]
             
+            # --- ★修正ポイント1: 正しいSupabaseクライアントを取得する ---
+            client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
+            
             inserted_count = 0
             for j, doc in enumerate(batch_docs):
                 if "collection_name" not in doc.metadata:
                     doc.metadata["collection_name"] = collection_name
                 
-                # 子チャンク（短い固有の文章）をメインコンテンツとする
                 child_content = doc.page_content
                 
-                database.db_client.insert_document(
-                    content=child_content,
-                    embedding=embeddings[j],
-                    metadata=doc.metadata
-                )
+                # --- ★修正ポイント2: 存在しない insert_document ではなく、標準の書き方で保存する ---
+                client.table("documents").insert({
+                    "content": child_content,
+                    "embedding": embeddings[j],
+                    "metadata": doc.metadata
+                }).execute()
+                
                 inserted_count += 1
                 
             return inserted_count
