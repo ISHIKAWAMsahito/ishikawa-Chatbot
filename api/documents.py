@@ -143,7 +143,7 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
     try:
         # 1. サイトへのアクセス
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
-        async with httpx.AsyncClient(verify=True, headers=headers, follow_redirects=True) as client:
+        async with httpx.AsyncClient(verify=False, headers=headers, follow_redirects=True) as client:
             resp = await client.get(request.url, timeout=30.0)
             resp.raise_for_status()
 
@@ -306,6 +306,7 @@ async def delete_document(document_id: int, user: dict = Depends(require_auth)):
         raise HTTPException(503, "Database not initialized")
     try:
         client = database.db_client.client if hasattr(database.db_client, "client") else database.db_client
+        client.table("documents").delete().eq("id", document_id).execute()
         client.table("documents").delete().eq("id", document_id).execute()
         return {"message": f"Document {document_id} deleted successfully"}
     except Exception as e:
