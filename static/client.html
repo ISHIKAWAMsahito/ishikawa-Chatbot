@@ -423,8 +423,8 @@ body.dark-mode .dark-mode-toggle {
 function renderSafeText(container, text) {
             container.textContent = ''; // 内容をクリア
             
-            // Markdown形式のリンク [text](url) を検出する正規表現
-            const linkRe = /\[([^\]]*)\]\((https?:\/\/[^\)]+)\)/g;
+            // ★修正: ファイル名の中に "]" が含まれていてもリンクとして認識できるよう柔軟にしました
+            const linkRe = /\[(.*?)\]\((https?:\/\/[^\)]+)\)/g;
             let lastIdx = 0;
             let match;
 
@@ -639,10 +639,10 @@ darkModeBtn.addEventListener('click', () => {
             messageWrapper.className = `message ${type}`;
             const messageContent = document.createElement('div');
             messageContent.className = 'message-content';
-            // XSS対策: 常にエスケープして表示（リンクは [text](url) 形式のみ安全に変換）
-            let out = '';
+            
+            // ★修正: 不要な変数 out を削除し、安全な描画関数のみを使用します
             renderSafeText(messageContent, text);
-            messageContent.innerHTML = out;
+            
             messageWrapper.appendChild(messageContent);
             const messageTime = document.createElement('div');
             messageTime.className = 'message-time';
