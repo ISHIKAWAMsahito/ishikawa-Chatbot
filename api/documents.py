@@ -146,10 +146,9 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         raise HTTPException(400, err_msg)
 
     try:
-        # 1. サイトへのアクセス (SSL検証に certifi の証明書セットを使用)
+        # 1. サイトへのアクセス (SSL検証に certifi の証明書セットを使用し安全を担保)
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
         
-        # verify=False を certifi.where() に変更
         async with httpx.AsyncClient(verify=certifi.where(), headers=headers, follow_redirects=True) as client:
             resp = await client.get(request.url, timeout=30.0)
             resp.raise_for_status()
@@ -234,11 +233,28 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
 
         return {"message": f"「{raw_title}」の取り込み完了 (.md保存)", "chunks": total_chunks}
 
+    # ▼▼▼ 追加したエラーハンドリング（アプローチ2） ▼▼▼
+    except httpx.ConnectError as e:
+        error_msg = str(e)
+        if "CERTIFICATE_VERIFY_FAILED" in error_msg or "SSL" in error_msg:
+            logging.error(f"SSL Certificate Error for {request.url}: {e}")
+            # フロント側に400エラーとわかりやすいメッセージを返す
+            raise HTTPException(400, "対象のWebサイトはセキュリティ証明書に問題があるため、安全に取得できませんでした。URLをご確認ください。")
+        else:
+            logging.error(f"Connection Error for {request.url}: {e}")
+            raise HTTPException(400, "対象のWebサイトへの接続に失敗しました。URLが正しいか確認してください。")
+            
+    except httpx.HTTPStatusError as e:
+        logging.error(f"HTTP Error for {request.url}: {e.response.status_code}")
+        raise HTTPException(400, f"対象のWebサイトからエラー（{e.response.status_code}）が返されました。")
+        
     except HTTPException:
         raise
+        
     except Exception as e:
         logging.error(f"Scrape Error: {e}", exc_info=LOG_EXC_INFO)
         raise HTTPException(500, "スクレイピングに失敗しました。")
+    # ▲▲▲ 追加したエラーハンドリング（アプローチ2） ▲▲▲
 
 # --- 以下、既存のエンドポイント ---
 @router.get("/all")
