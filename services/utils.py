@@ -155,45 +155,46 @@ def _is_valid_storage_key(path: str) -> bool:
 
 def generate_storage_url(file_path: str) -> Optional[str]:
     """
-    Supabase Storage の署名付きURL（3600秒 = 1時間）を生成。
-    フォールバック処理: .txt 等のファイルが指定された場合、同名の画像ファイルを探してURLを生成する。
+    Supabase Storage の署名付きURLを生成（デバッグ用ログ強化版）
     """
+    logger.warning(f"[DEBUG-STORAGE] ---------- URL生成処理開始 ----------")
+    logger.warning(f"[DEBUG-STORAGE] 引数 file_path: {file_path!r}")
+
     if not file_path or not supabase:
+        logger.warning("[DEBUG-STORAGE] 失敗: file_path が空、または supabase クライアントが初期化されていません。")
         return None
 
-    # 日本語等のマルチバイト文字が含まれるキーはエラーになるため除外
+    # 日本語等のマルチバイト文字やURLが含まれるキーの除外
     if not _is_valid_storage_key(file_path):
-        logger.debug(f"Storage URL skipped (invalid key): {file_path!r}")
+        logger.warning(f"[DEBUG-STORAGE] スキップ: 無効なキーです（日本語が含まれる、またはすでにURL等）: {file_path!r}")
         return None
 
-    # 検索するファイルの候補リストを作成
     candidates = []
     base_name, ext = os.path.splitext(file_path)
     ext = ext.lower()
-    
-    # 許可されている画像（およびPDF）の拡張子リスト
     allowed_extensions = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"]
     
     if ext in allowed_extensions:
-        # 元のファイルが画像/PDFなら、そのまま候補の筆頭にする
         candidates.append(file_path)
     elif ext in [".txt", ".md", ".csv"]:
-        # .txt や .md などのテキストファイルの場合、画像拡張子に置換して探す（フォールバック）
-        logger.debug(f"Fallback initiated for text file: {file_path!r}")
         for img_ext in [".jpg", ".jpeg", ".png", ".webp"]:
             candidates.append(f"{base_name}{img_ext}")
     else:
-        # 対象外の拡張子の場合はスキップ
+        logger.warning(f"[DEBUG-STORAGE] スキップ: 対象外の拡張子です: {ext!r}")
         return None
 
-    # 候補のパス順に URL 生成を試みる
+    logger.warning(f"[DEBUG-STORAGE] 検索候補リスト: {candidates}")
+
     for candidate_path in candidates:
         try:
+            logger.warning(f"[DEBUG-STORAGE] Supabaseへリクエスト送信: {candidate_path}")
+            # 有効期限 3600秒(1時間)で署名付きURLを発行
             res = supabase.storage.from_(STORAGE_BUCKET_NAME).create_signed_url(
                 candidate_path, 3600
             )
             
-            # 戻り値のチェック
+            logger.warning(f"[DEBUG-STORAGE] Supabaseからの生のレスポンス: {res}")
+            
             signed_url = None
             if isinstance(res, dict) and "signedURL" in res:
                 signed_url = res["signedURL"]
@@ -205,26 +206,21 @@ def generate_storage_url(file_path: str) -> Optional[str]:
                     signed_url = str(s_url)
             
             if signed_url:
-                # 成功したらその URL を返す
-                if candidate_path != file_path:
-                    logger.info(f"Fallback successful: {file_path} -> {candidate_path}")
+                logger.warning(f"[DEBUG-STORAGE] 成功: URLを取得しました -> {signed_url}")
                 return signed_url
+            else:
+                logger.warning("[DEBUG-STORAGE] 警告: URLの抽出に失敗しました（レスポンス形式が想定外です）。")
                 
         except Exception as e:
-            # 存在しない場合などはエラーになるため、無視して次の候補を探す
-            err_msg = str(e)
-            if "not_found" in err_msg or "404" in err_msg:
-                logger.debug(f"Storage object not found during fallback: {candidate_path!r}")
-            else:
-                logger.debug(f"Fallback generation failed for {candidate_path!r}: {e}")
+            logger.warning(f"[DEBUG-STORAGE] エラー発生 ({candidate_path}): {str(e)}")
             continue
 
-    # 全ての候補で生成失敗した場合
-    logger.warning(f"Failed to generate signed URL for any candidates of {file_path!r}")
+    logger.warning(f"[DEBUG-STORAGE] 失敗: 全ての候補でURL生成に失敗しました。")
     return None
+
 def format_references(documents: List[Any]) -> str:
     """
-    参照元リストの生成（文言の削除と画像URL生成の確実化）。
+    参照元リストの生成（デバッグ用）
     """
     if not documents:
         return ""
@@ -240,16 +236,17 @@ def format_references(documents: List[Any]) -> str:
         display_name = os.path.basename(source_name)
         image_path = metadata.get("image_path")
         
-        # 修正点：画像(jpg/png等)の場合は、既存の url よりも新規署名付きURLの生成を優先する
+        logger.warning(f"[DEBUG-STORAGE] --- ドキュメント処理開始: {display_name} ---")
+        logger.warning(f"[DEBUG-STORAGE] DBからの image_path の値: {image_path!r}")
+        
         url = None
         if image_path:
             url = generate_storage_url(image_path)
         
-        # 画像パスがない、または生成に失敗した場合のみ、既存の url フィールドを参照
         if not url:
             url = metadata.get("url")
+            logger.warning(f"[DEBUG-STORAGE] DBからの既存 url の値へフォールバック: {url!r}")
 
-        # 重複チェック
         unique_key = url if url else display_name
         if unique_key in seen_sources:
             continue
@@ -257,7 +254,6 @@ def format_references(documents: List[Any]) -> str:
 
         safe_display_name = display_name.replace("[", "\\[").replace("]", "\\]")
 
-        # 修正点：「⏳1時間有効」の文言を削除
         if url:
             line = f"* [{index}] [{safe_display_name}]({url})"
         else:
@@ -267,4 +263,3 @@ def format_references(documents: List[Any]) -> str:
         index += 1
 
     return "\n".join(formatted_lines) if len(formatted_lines) > 1 else ""
-    return ""
