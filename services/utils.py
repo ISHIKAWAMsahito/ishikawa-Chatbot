@@ -155,61 +155,76 @@ def _is_valid_storage_key(path: str) -> bool:
 
 def generate_storage_url(file_path: str) -> Optional[str]:
     """
-    Supabase Storage の署名付きURL（有効期限1時間）を生成する。
-
-    ★ 修正ポイント:
-    - 日本語等のマルチバイト文字を含むパスは試みずに None を返す（InvalidKey 防止）
-    - 存在しないキーや 400/404 エラーは DEBUG ログのみ（スタックトレース抑制）
+    Supabase Storage の署名付きURL（3600秒 = 1時間）を生成。
+    フォールバック処理: .txt 等のファイルが指定された場合、同名の画像ファイルを探してURLを生成する。
     """
     if not file_path or not supabase:
         return None
 
-    # マルチバイト文字チェック（日本語ファイル名は Storage キーとして使えない）
+    # 日本語等のマルチバイト文字が含まれるキーはエラーになるため除外
     if not _is_valid_storage_key(file_path):
-        logger.debug(
-            f"Storage URL skipped (non-ASCII path): {file_path!r}"
-        )
+        logger.debug(f"Storage URL skipped (invalid key): {file_path!r}")
         return None
 
-    # 拡張子チェック（ホワイトリスト）
-    allowed_extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf")
-    if not file_path.lower().endswith(allowed_extensions):
-        logger.debug(f"Storage URL skipped (unsupported ext): {file_path!r}")
+    # 検索するファイルの候補リストを作成
+    candidates = []
+    base_name, ext = os.path.splitext(file_path)
+    ext = ext.lower()
+    
+    # 許可されている画像（およびPDF）の拡張子リスト
+    allowed_extensions = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"]
+    
+    if ext in allowed_extensions:
+        # 元のファイルが画像/PDFなら、そのまま候補の筆頭にする
+        candidates.append(file_path)
+    elif ext in [".txt", ".md", ".csv"]:
+        # .txt や .md などのテキストファイルの場合、画像拡張子に置換して探す（フォールバック）
+        logger.debug(f"Fallback initiated for text file: {file_path!r}")
+        for img_ext in [".jpg", ".jpeg", ".png", ".webp"]:
+            candidates.append(f"{base_name}{img_ext}")
+    else:
+        # 対象外の拡張子の場合はスキップ
         return None
 
-    try:
-        res = supabase.storage.from_(STORAGE_BUCKET_NAME).create_signed_url(
-            file_path, 3600
-        )
-        if isinstance(res, dict) and "signedURL" in res:
-            return res["signedURL"]
-        elif isinstance(res, str) and res.startswith("http"):
-            return res
-        signed_url = getattr(res, "signed_url", None) or getattr(res, "signedURL", None)
-        if isinstance(signed_url, str):
-            return signed_url
-        return None
+    # 候補のパス順に URL 生成を試みる
+    for candidate_path in candidates:
+        try:
+            res = supabase.storage.from_(STORAGE_BUCKET_NAME).create_signed_url(
+                candidate_path, 3600
+            )
+            
+            # 戻り値のチェック
+            signed_url = None
+            if isinstance(res, dict) and "signedURL" in res:
+                signed_url = res["signedURL"]
+            elif isinstance(res, str) and res.startswith("http"):
+                signed_url = res
+            else:
+                s_url = getattr(res, "signed_url", None) or getattr(res, "signedURL", None)
+                if s_url:
+                    signed_url = str(s_url)
+            
+            if signed_url:
+                # 成功したらその URL を返す
+                if candidate_path != file_path:
+                    logger.info(f"Fallback successful: {file_path} -> {candidate_path}")
+                return signed_url
+                
+        except Exception as e:
+            # 存在しない場合などはエラーになるため、無視して次の候補を探す
+            err_msg = str(e)
+            if "not_found" in err_msg or "404" in err_msg:
+                logger.debug(f"Storage object not found during fallback: {candidate_path!r}")
+            else:
+                logger.debug(f"Fallback generation failed for {candidate_path!r}: {e}")
+            continue
 
-    except Exception as e:
-        # ★ スタックトレースなしの DEBUG ログに変更（ノイズ削減）
-        err_msg = str(e)
-        if "not_found" in err_msg or "404" in err_msg:
-            logger.debug(f"Storage object not found: {file_path!r}")
-        elif "InvalidKey" in err_msg or "400" in err_msg:
-            logger.debug(f"Storage invalid key: {file_path!r}")
-        else:
-            logger.warning(f"Storage URL error ({file_path!r}): {err_msg}")
-        return None
-
-
+    # 全ての候補で生成失敗した場合
+    logger.warning(f"Failed to generate signed URL for any candidates of {file_path!r}")
+    return None
 def format_references(documents: List[Any]) -> str:
     """
-    RAG検索結果から参照元リストを生成。
-
-    ★ 修正ポイント:
-    - metadata.image_path（ハッシュ値）があればそれで URL を試みる
-    - image_path がない場合は source（日本語表示名）を URL 生成に使わない
-      → リンクなしでファイル名のみ表示
+    参照元リストの生成（文言の削除と画像URL生成の確実化）。
     """
     if not documents:
         return ""
@@ -219,52 +234,37 @@ def format_references(documents: List[Any]) -> str:
     index = 1
 
     for doc in documents:
-        metadata: dict = {}
-        if isinstance(doc, dict):
-            metadata = doc.get("metadata", {}) or {}
-        elif hasattr(doc, "metadata"):
-            m = getattr(doc, "metadata", {})
-            metadata = m if isinstance(m, dict) else {}
-
-        # 表示用ファイル名（source = 日本語表示名）
+        metadata = doc.get("metadata", {}) if isinstance(doc, dict) else getattr(doc, "metadata", {})
+        
         source_name = str(metadata.get("source", "資料名不明"))
         display_name = os.path.basename(source_name)
-
-        # ★ URL 生成には image_path（ハッシュ値）を優先使用
-        #    source は表示専用・Storage キーとしては使わない
         image_path = metadata.get("image_path")
-        url = metadata.get("url")  # キャッシュ済み URL があればそれを使う
-
-        # image_path がある場合のみ署名付きURL を試みる
-        if not url and image_path:
+        
+        # 修正点：画像(jpg/png等)の場合は、既存の url よりも新規署名付きURLの生成を優先する
+        url = None
+        if image_path:
             url = generate_storage_url(image_path)
+        
+        # 画像パスがない、または生成に失敗した場合のみ、既存の url フィールドを参照
+        if not url:
+            url = metadata.get("url")
 
-        # URL バリデーション
-        if url:
-            try:
-                parsed = urlparse(url)
-                if parsed.scheme not in ("http", "https"):
-                    url = None
-            except Exception:
-                url = None
-
+        # 重複チェック
         unique_key = url if url else display_name
         if unique_key in seen_sources:
             continue
         seen_sources.add(unique_key)
 
-        # Markdown エスケープ
         safe_display_name = display_name.replace("[", "\\[").replace("]", "\\]")
 
+        # 修正点：「⏳1時間有効」の文言を削除
         if url:
-            line = f"* [{index}] [{safe_display_name}]({url}) ⏳1時間有効"
+            line = f"* [{index}] [{safe_display_name}]({url})"
         else:
-            # URL が取得できない場合はリンクなし（日本語ファイル名でも表示は維持）
             line = f"* [{index}] {safe_display_name}"
 
         formatted_lines.append(line)
         index += 1
 
-    if len(formatted_lines) > 1:
-        return "\n".join(formatted_lines)
+    return "\n".join(formatted_lines) if len(formatted_lines) > 1 else ""
     return ""
