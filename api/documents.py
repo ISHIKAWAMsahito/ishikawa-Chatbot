@@ -125,7 +125,7 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
             is_quota_error = "429" in str(e) or "quota" in str(e).lower()
             if is_quota_error and attempt < max_retries:
                 wait_time = 60
-                logging.warning(f"API制限(429)検知。{wait_time}秒待機してリトライ... ({attempt+1}/{max_retries})")
+                logging.warning(f"API制限(429)検知(Embedding)。{wait_time}秒待機してリトライ... ({attempt+1}/{max_retries})")
                 await asyncio.sleep(wait_time)
                 continue
             else:
@@ -195,7 +195,7 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         for tag in soup(["script", "style", "nav", "footer", "iframe", "noscript"]): tag.decompose()
         main_html = str(soup.body) if soup.body else str(soup)
 
-        # 2. GeminiによるMarkdown整形
+        # 2. GeminiによるMarkdown整形 (★リトライロジック追加)
         extract_model = genai.GenerativeModel("models/gemini-2.5-flash")
         extracted_info = "\n".join(output_blocks)
         prompt = f"""
@@ -207,8 +207,26 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         
         {COMMON_CLEANING_INSTRUCTION}
         """
-        ai_resp = await extract_model.generate_content_async([prompt, main_html])
-        cleaned_text = ai_resp.text
+        
+        max_ai_retries = 2
+        cleaned_text = ""
+        
+        for ai_attempt in range(max_ai_retries + 1):
+            try:
+                ai_resp = await extract_model.generate_content_async([prompt, main_html])
+                cleaned_text = ai_resp.text
+                break  # 成功したらループを抜ける
+            except Exception as e:
+                # 429エラー (Quota Exceeded) の場合のみ待機してリトライ
+                if "429" in str(e) or "quota" in str(e).lower():
+                    if ai_attempt < max_ai_retries:
+                        wait_time = 25  # 少し長めに待機
+                        logging.warning(f"Gemini API制限(429)検知(Scrape)。{wait_time}秒待機してリトライ... ({ai_attempt+1}/{max_ai_retries})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                # その他のエラー、またはリトライ上限到達時
+                logging.error(f"AI整形エラー: {e}")
+                raise e
 
         # 3. 古いデータの削除
         database.db_client.client.table("documents").delete().eq("metadata->>source", source_name).execute()
