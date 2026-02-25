@@ -155,18 +155,12 @@ def _is_valid_storage_key(path: str) -> bool:
 
 def generate_storage_url(file_path: str) -> Optional[str]:
     """
-    Supabase Storage の署名付きURLを生成（デバッグ用ログ強化版）
+    Supabase Storage の署名付きURLを生成（ログをクリーンアップ済み）
     """
-    logger.warning(f"[DEBUG-STORAGE] ---------- URL生成処理開始 ----------")
-    logger.warning(f"[DEBUG-STORAGE] 引数 file_path: {file_path!r}")
-
     if not file_path or not supabase:
-        logger.warning("[DEBUG-STORAGE] 失敗: file_path が空、または supabase クライアントが初期化されていません。")
         return None
 
-    # 日本語等のマルチバイト文字やURLが含まれるキーの除外
     if not _is_valid_storage_key(file_path):
-        logger.warning(f"[DEBUG-STORAGE] スキップ: 無効なキーです（日本語が含まれる、またはすでにURL等）: {file_path!r}")
         return None
 
     candidates = []
@@ -180,20 +174,14 @@ def generate_storage_url(file_path: str) -> Optional[str]:
         for img_ext in [".jpg", ".jpeg", ".png", ".webp"]:
             candidates.append(f"{base_name}{img_ext}")
     else:
-        logger.warning(f"[DEBUG-STORAGE] スキップ: 対象外の拡張子です: {ext!r}")
         return None
-
-    logger.warning(f"[DEBUG-STORAGE] 検索候補リスト: {candidates}")
 
     for candidate_path in candidates:
         try:
-            logger.warning(f"[DEBUG-STORAGE] Supabaseへリクエスト送信: {candidate_path}")
             # 有効期限 3600秒(1時間)で署名付きURLを発行
             res = supabase.storage.from_(STORAGE_BUCKET_NAME).create_signed_url(
                 candidate_path, 3600
             )
-            
-            logger.warning(f"[DEBUG-STORAGE] Supabaseからの生のレスポンス: {res}")
             
             signed_url = None
             if isinstance(res, dict) and "signedURL" in res:
@@ -206,21 +194,18 @@ def generate_storage_url(file_path: str) -> Optional[str]:
                     signed_url = str(s_url)
             
             if signed_url:
-                logger.warning(f"[DEBUG-STORAGE] 成功: URLを取得しました -> {signed_url}")
                 return signed_url
-            else:
-                logger.warning("[DEBUG-STORAGE] 警告: URLの抽出に失敗しました（レスポンス形式が想定外です）。")
                 
         except Exception as e:
-            logger.warning(f"[DEBUG-STORAGE] エラー発生 ({candidate_path}): {str(e)}")
+            # 内部的なエラーのみデバッグレベルで記録
+            logger.debug(f"Storage URL generation error ({candidate_path}): {str(e)}")
             continue
 
-    logger.warning(f"[DEBUG-STORAGE] 失敗: 全ての候補でURL生成に失敗しました。")
     return None
 
 def format_references(documents: List[Any]) -> str:
     """
-    参照元リストの生成（デバッグ用）
+    参照元リストの生成（ログ出力を抑制）
     """
     if not documents:
         return ""
@@ -236,16 +221,12 @@ def format_references(documents: List[Any]) -> str:
         display_name = os.path.basename(source_name)
         image_path = metadata.get("image_path")
         
-        logger.warning(f"[DEBUG-STORAGE] --- ドキュメント処理開始: {display_name} ---")
-        logger.warning(f"[DEBUG-STORAGE] DBからの image_path の値: {image_path!r}")
-        
         url = None
         if image_path:
             url = generate_storage_url(image_path)
         
         if not url:
             url = metadata.get("url")
-            logger.warning(f"[DEBUG-STORAGE] DBからの既存 url の値へフォールバック: {url!r}")
 
         unique_key = url if url else display_name
         if unique_key in seen_sources:
