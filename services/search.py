@@ -171,6 +171,7 @@ class SearchService:
                             file_path=meta.get("file_path"),
                             url=meta.get("url"),
                             category=meta.get("category"),
+                            image_path=meta.get("image_path"),
                         ),
                         similarity=item.get("similarity", 0.0),
                     )
@@ -214,6 +215,7 @@ class SearchService:
                             source="FAQ",  # ★ FAQフラグ
                             category=category_val,
                             url=raw_meta.get("url"),
+                            image_path=raw_meta.get("image_path"),
                         ),
                         similarity=item.get("similarity", 0.0),
                     )

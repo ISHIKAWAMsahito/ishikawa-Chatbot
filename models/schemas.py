@@ -156,6 +156,7 @@ class AnalysisQuery(BaseModel):
 class DocumentMetadata(BaseModel):
     """検索結果のメタデータ構造定義"""
     source: str = "不明な資料"
+    image_path: Optional[str] = None
     page: Optional[int] = None
     chunk: Optional[int] = None
     file_path: Optional[str] = None
