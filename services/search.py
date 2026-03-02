@@ -75,11 +75,16 @@ class SearchService:
             response = await self.llm_service.generate_json(prompt, None)
 
             try:
+                # 候補が存在し、かつパーツが含まれているか確認
+                if not response.candidates or not response.candidates[0].content.parts:
+                    logger.warning(f"LLM returned an empty response. Finish reason: {response.candidates[0].finish_reason}")
+                    return documents[:top_k]
+                
                 result_text = response.text
                 result_json = json.loads(result_text)
                 ranked_items = result_json.get("ranked_items", [])
-            except Exception:
-                logger.warning("Rerank JSON parse failed, returning original order.")
+            except (AttributeError, IndexError, json.JSONDecodeError) as e:
+                logger.warning(f"Rerank parse failed or blocked: {e}")
                 return documents[:top_k]
 
             reranked_docs = []
