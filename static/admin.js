@@ -337,7 +337,7 @@
             let fullResponse = '';
 
             try {
-                const response = await fetch(`/api/admin/chat`, {
+                const response = await fetch(`/api/admin/chat/stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

@@ -32,7 +32,7 @@ def get_chat_config():
     }
 # ▲▲▲ 修正ここまで ▲▲▲
 
-@router.post("/chat", summary="AIチャット送信 (ストリーミング)")
+@router.post("/chat/stream", summary="AIチャット送信 (ストリーミング)")
 async def chat_endpoint(
     request: Request,
     query: ChatQuery,
