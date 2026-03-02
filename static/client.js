@@ -344,7 +344,7 @@ darkModeBtn.addEventListener('click', () => {
 
             try {
                 // APIリクエスト
-                const response = await fetch(`${BACKEND_API_BASE_URL}/api/client/chat`, {
+                const response = await fetch(`${BACKEND_API_BASE_URL}/api/client/chat/stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
