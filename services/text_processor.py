@@ -8,8 +8,10 @@ class TextProcessor:
     ホワイトスペース正規化、マークダウン変換、HTMLエスケープを統一的に処理します
     """
     
-    # マークダウンヘッダーのマッピング
-    ROMAN_NUMERAL_PATTERN = r'^
+    # マークダウンヘッダーのマッピング（★修正：途切れていた正規表現を補完）
+    # 行頭(^)にあるローマ数字(Ⅰ〜Ⅻ または I,V,X)をグループ1(\1)として捉え、
+    # ピリオドや空白を挟んで、続く文字列をグループ2(\2)として捉えます。
+    ROMAN_NUMERAL_PATTERN = r'^([Ⅰ-ⅫIIVX]+)[．\.\s]+(.*)$'
     
     @staticmethod
     def normalize_whitespace_and_newlines(text: str) -> str:
@@ -49,6 +51,7 @@ class TextProcessor:
             return ""
         
         # ローマ数字見出しをマークダウンH1に変換
+        # 例: 「Ⅰ. 履修について」 -> 「# Ⅰ．履修について」
         text = re.sub(
             TextProcessor.ROMAN_NUMERAL_PATTERN,
             r'# \1．\2',

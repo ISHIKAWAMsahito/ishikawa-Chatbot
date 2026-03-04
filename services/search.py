@@ -284,22 +284,27 @@ class SearchService:
         if not reranked_results:
             return {"documents": [], "is_faq_match": False}
 
-        # 4. FAQモード判定（AND条件）
-        top_doc = reranked_results[0]
+        # 4. FAQモード判定
         rerank_threshold = PARAMS.get("RERANK_SCORE_THRESHOLD", 6.0)
-        similarity_threshold = PARAMS.get("QA_SIMILARITY_THRESHOLD", 0.90)
+        # 類似度の条件を少し緩めてヒットしやすく調整 (0.90 -> 0.85)
+        similarity_threshold = PARAMS.get("QA_SIMILARITY_THRESHOLD", 0.85)
 
-        is_faq_source = top_doc.metadata.source == "FAQ"
-        is_high_score = top_doc.score >= rerank_threshold
-        is_high_similarity = top_doc.similarity >= similarity_threshold
+        # ★ ここが重要です！ 1位(top_doc)だけを見るのではなく、全体を探すループ処理に変更します
+        matched_faq = None
+        for doc in reranked_results:
+            if (doc.metadata.source == "FAQ" and 
+                doc.score >= rerank_threshold and 
+                doc.similarity >= similarity_threshold):
+                matched_faq = doc
+                break  # 条件を満たすFAQが見つかったら即採用してループを抜ける
 
-        if is_faq_source and is_high_score and is_high_similarity:
+        if matched_faq:
             # --- FAQ一致モード ---
             logger.info(
-                f"FAQ Match Triggered: Score={top_doc.score:.1f}, Sim={top_doc.similarity:.3f}"
+                f"FAQ Match Triggered: Score={matched_faq.score:.1f}, Sim={matched_faq.similarity:.3f}"
             )
             return {
-                "documents": [top_doc.model_dump()],
+                "documents": [matched_faq.model_dump()],
                 "is_faq_match": True,
             }
         else:
