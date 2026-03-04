@@ -8,6 +8,8 @@ import google.generativeai as genai
 from core.database import db_client
 from core.dependencies import require_auth
 from core.config import GEMINI_API_KEY
+# 修正1: FallbackResponse をインポートに追加
+from models.schemas import FallbackCreate, FallbackUpdate, FallbackResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -15,25 +17,6 @@ router = APIRouter()
 # Gemini Embeddings 設定
 genai.configure(api_key=GEMINI_API_KEY)
 EMBEDDING_MODEL = "models/gemini-embedding-001"
-
-# --- Pydantic Models ---
-class FallbackBase(BaseModel):
-    category: str
-    question: str
-    answer: str
-
-class FallbackCreate(FallbackBase):
-    pass
-
-class FallbackUpdate(BaseModel):
-    category: Optional[str] = None
-    question: Optional[str] = None
-    answer: Optional[str] = None
-
-class FallbackResponse(FallbackBase):
-    id: int
-    created_at: str
-    embedding: Optional[List[float]] = None 
 
 # --- Helper Functions ---
 def generate_embedding(text: str) -> List[float]:
@@ -53,17 +36,11 @@ def generate_embedding(text: str) -> List[float]:
 def process_db_item(item: dict) -> dict:
     """
     DBからの生データをAPIレスポンス用に加工する
-    1. category_name -> category
-    2. embedding (str) -> embedding (list)
+    1. embedding (str) -> embedding (list)
     """
-    # 1. カラム名の変更
-    if 'category_name' in item:
-        item['category'] = item.pop('category_name')
-    # categoryもcategory_nameもない場合はデフォルト値を設定
-    if 'category' not in item:
-        item['category'] = 'general'
+    # 修正2: category_name を category に変換する処理を削除し、名前を維持する
 
-    # 2. Embedding文字列のパース ("[-0.1, ...]" -> [-0.1, ...])
+    # Embedding文字列のパース ("[-0.1, ...]" -> [-0.1, ...])
     if item.get('embedding') and isinstance(item['embedding'], str):
         try:
             item['embedding'] = json.loads(item['embedding'])
@@ -94,15 +71,14 @@ async def list_fallbacks(user: dict = Depends(require_auth)):
 
 @router.post("/", response_model=FallbackResponse)
 async def create_fallback(
-    fallback: FallbackCreate, 
+    fallback: FallbackCreate, # schemas.py の定義を使用
     user: dict = Depends(require_auth)
 ):
-    """新しいQ&Aを作成"""
     try:
         embedding = generate_embedding(fallback.question)
         
         data = {
-            "category_name": fallback.category, 
+            "category_name": fallback.category_name, 
             "question": fallback.question,
             "answer": fallback.answer,
             "embedding": embedding
@@ -131,8 +107,9 @@ async def update_fallback(
     try:
         update_data = {}
         
-        if fallback.category:
-            update_data["category_name"] = fallback.category
+        # 修正3: fallback.category を fallback.category_name に変更
+        if fallback.category_name:
+            update_data["category_name"] = fallback.category_name
         
         if fallback.answer:
             update_data["answer"] = fallback.answer

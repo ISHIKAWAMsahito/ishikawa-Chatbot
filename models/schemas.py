@@ -5,6 +5,16 @@ from pydantic import BaseModel, Field
 # -----------------------------------------------------------------------------
 # Chat / RAG Request Models
 # -----------------------------------------------------------------------------
+class FallbackResponse(BaseModel):
+    id: int
+    category_name: str
+    question: str
+    answer: str
+    created_at: datetime
+    embedding: Optional[List[float]] = None
+
+    class Config:
+        from_attributes = True
 class ChatQuery(BaseModel):
     """
     チャットリクエスト用スキーマ（DoS対策: question に長さ制限）

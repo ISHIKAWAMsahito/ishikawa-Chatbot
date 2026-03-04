@@ -796,6 +796,17 @@
         function closeQAModal() { document.getElementById('qaEditModal').classList.remove('show'); }
 
         async function saveQA() {
+            // saveQA 関数内
+const token = localStorage.getItem('admin_token'); // トークンの取得元に合わせて調整
+
+const response = await fetch(url, {
+    method: method,
+    headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}` // 認証トークンを付与
+    },
+    body: JSON.stringify(body)
+});
             const id = document.getElementById('qaEditId').value;
             const category = document.getElementById('qaEditCategory').value.trim();
             const question = document.getElementById('qaEditQuestion').value.trim();
