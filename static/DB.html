@@ -796,60 +796,60 @@
         function closeQAModal() { document.getElementById('qaEditModal').classList.remove('show'); }
 
         async function saveQA() {
-            // saveQA 関数内
-const token = localStorage.getItem('admin_token'); // トークンの取得元に合わせて調整
+    // 1. 画面からの入力値を取得
+    const id = document.getElementById('qaEditId').value;
+    const category = document.getElementById('qaEditCategory').value.trim();
+    const question = document.getElementById('qaEditQuestion').value.trim();
+    const answer = document.getElementById('qaEditAnswer').value.trim();
 
-const response = await fetch(url, {
-    method: method,
-    headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}` // 認証トークンを付与
-    },
-    body: JSON.stringify(body)
-});
-            const id = document.getElementById('qaEditId').value;
-            const category = document.getElementById('qaEditCategory').value.trim();
-            const question = document.getElementById('qaEditQuestion').value.trim();
-            const answer = document.getElementById('qaEditAnswer').value.trim();
+    // 2. 入力チェック
+    if (!category || !question || !answer) {
+        alert('カテゴリー、質問、回答はすべて必須です。');
+        return;
+    }
+    
+    // 3. 【重要】送信先のURLとメソッドを定義（ここで url を作ります）
+    const isNew = !id;
+    const url = isNew ? '/api/admin/fallbacks' : `/api/admin/fallbacks/${id}`;
+    const method = isNew ? 'POST' : 'PUT';
 
-            if (!category || !question || !answer) {
-                alert('カテゴリー、質問、回答はすべて必須です。');
-                return;
-            }
-            
-            const isNew = !id;
-            // ★修正: /api/admin/fallbacks に変更
-            const url = isNew ? '/api/admin/fallbacks' : `/api/admin/fallbacks/${id}`;
-            const method = isNew ? 'POST' : 'PUT';
+    // 4. 送信するデータを定義
+    const body = {
+        question: question,
+        answer: answer,
+        category_name: category 
+    };
 
-            const body = {
-                question: question,
-                answer: answer,
-                category_name: category 
-            };
+    // 5. 認証トークンを取得（キー名は実際の環境に合わせて調整してください）
+    const token = localStorage.getItem('admin_token'); 
 
-            try {
-                const response = await fetch(url, {
-                    method: method,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                
-                if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error(err.detail || `HTTP error! status: ${response.status}`);
-                }
-                
-                const result = await response.json();
-                alert(result.message);
-                closeQAModal();
-                loadQA(); 
-                
-            } catch (error) {
-                console.error('Error saving Q&A:', error);
-                alert('Q&Aの保存に失敗しました: ' + error.message);
-            }
+    try {
+        // 6. サーバーへ送信（上で作った url, method, body, token をここで使います）
+        const response = await fetch(url, {
+            method: method,
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}` 
+            },
+            body: JSON.stringify(body)
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || `HTTP error! status: ${response.status}`);
         }
+        
+        const result = await response.json();
+        // result.message が無い場合のフォールバックメッセージを追加しています
+        alert(result.message || 'Q&Aの保存が完了しました。'); 
+        closeQAModal();
+        loadQA(); 
+        
+    } catch (error) {
+        console.error('Error saving Q&A:', error);
+        alert('Q&Aの保存に失敗しました: ' + error.message);
+    }
+}
 
         async function deleteQA(id) {
             if (!confirm(`ID ${id} のQ&Aを削除してもよろしいですか？`)) return;
