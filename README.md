@@ -95,8 +95,11 @@ LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY=your_langchain_api_key
 
 2. ローカル開発 (Docker)
-docker build -t chatbot-app .
-docker run -p 8000:8000 --env-file .env chatbot-app
+# 初回起動、または requirements.txt 変更時
+docker compose up --build
+
+# 2回目以降（コード修正のみの場合）
+docker compose up
 
 🔒 セキュリティと運用ビジョン
 自律的な改善サイクル
