@@ -150,17 +150,13 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
         
         # URLからドメイン（ホスト名）を取得
+        # URLからドメイン（ホスト名）を取得
         parsed_url = urlparse(request.url)
         target_host = parsed_url.hostname or ""
 
-        # ★特例ルールの追加：sgu.ac.jp ドメインの場合はSSL検証をスキップ
-        is_trusted_domain = target_host.endswith(".sgu.ac.jp") or target_host == "sgu.ac.jp"
-        verify_ssl = False if is_trusted_domain else certifi.where()
+        # ★修正: Snyk (CWE-295) 対策。特例を廃止し、すべてのドメインで常にSSL証明書を検証する
+        verify_ssl = certifi.where()
 
-        if is_trusted_domain:
-            logging.info(f"信頼されたドメインのためSSL検証をスキップします: {target_host}")
-
-        # verify=verify_ssl で動的に切り替えます
         async with httpx.AsyncClient(verify=verify_ssl, headers=headers, follow_redirects=True) as client:
             resp = await client.get(request.url, timeout=30.0)
             resp.raise_for_status()
