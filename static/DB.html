@@ -820,16 +820,13 @@
         category_name: category 
     };
 
-    // 5. 認証トークンを取得（キー名は実際の環境に合わせて調整してください）
-    const token = localStorage.getItem('admin_token'); 
-
     try {
-        // 6. サーバーへ送信（上で作った url, method, body, token をここで使います）
+        // 6. サーバーへ送信
         const response = await fetch(url, {
             method: method,
             headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}` 
+                'Content-Type': 'application/json'
+                // ✅ Authorization ヘッダーを削除
             },
             body: JSON.stringify(body)
         });
