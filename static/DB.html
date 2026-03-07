@@ -796,57 +796,58 @@
         function closeQAModal() { document.getElementById('qaEditModal').classList.remove('show'); }
 
         async function saveQA() {
-    // 1. 画面からの入力値を取得
-    const id = document.getElementById('qaEditId').value;
-    const category = document.getElementById('qaEditCategory').value.trim();
-    const question = document.getElementById('qaEditQuestion').value.trim();
-    const answer = document.getElementById('qaEditAnswer').value.trim();
+        // 1. 画面からの入力値を取得
+        const id = document.getElementById('qaEditId').value;
+        const category = document.getElementById('qaEditCategory').value.trim();
+        const question = document.getElementById('qaEditQuestion').value.trim();
+        const answer = document.getElementById('qaEditAnswer').value.trim();
 
-    // 2. 入力チェック
-    if (!category || !question || !answer) {
-        alert('カテゴリー、質問、回答はすべて必須です。');
-        return;
-    }
-    
-    // 3. 【重要】送信先のURLとメソッドを定義（ここで url を作ります）
-    const isNew = !id;
-    const url = isNew ? '/api/admin/fallbacks' : `/api/admin/fallbacks/${id}`;
-    const method = isNew ? 'POST' : 'PUT';
-
-    // 4. 送信するデータを定義
-    const body = {
-        question: question,
-        answer: answer,
-        category_name: category 
-    };
-
-    try {
-        // 6. サーバーへ送信
-        const response = await fetch(url, {
-            method: method,
-            headers: { 
-                'Content-Type': 'application/json'
-                // ✅ Authorization ヘッダーを削除
-            },
-            body: JSON.stringify(body)
-        });
-        
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.detail || `HTTP error! status: ${response.status}`);
+        // 2. 入力チェック
+        if (!category || !question || !answer) {
+            alert('カテゴリー、質問、回答はすべて必須です。');
+            return;
         }
         
-        const result = await response.json();
-        // result.message が無い場合のフォールバックメッセージを追加しています
-        alert(result.message || 'Q&Aの保存が完了しました。'); 
-        closeQAModal();
-        loadQA(); 
-        
-    } catch (error) {
-        console.error('Error saving Q&A:', error);
-        alert('Q&Aの保存に失敗しました: ' + error.message);
+        // 3. 【重要】送信先のURLとメソッドを定義
+        const isNew = !id;
+        // ✅ 新規作成時はURL末尾にスラッシュを追加（リダイレクトによるCookie消失防止）
+        const url = isNew ? '/api/admin/fallbacks/' : `/api/admin/fallbacks/${id}`;
+        const method = isNew ? 'POST' : 'PUT';
+
+        // 4. 送信するデータを定義
+        const body = {
+            question: question,
+            answer: answer,
+            category_name: category 
+        };
+
+        try {
+            // 5. サーバーへ送信
+            const response = await fetch(url, {
+                method: method,
+                headers: { 
+                    'Content-Type': 'application/json'
+                },
+                // ✅ セッションCookieを確実に送信する設定を追加
+                credentials: 'include',
+                body: JSON.stringify(body)
+            });
+            
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || `HTTP error! status: ${response.status}`);
+            }
+            
+            const result = await response.json();
+            alert(result.message || 'Q&Aの保存が完了しました。'); 
+            closeQAModal();
+            loadQA(); 
+            
+        } catch (error) {
+            console.error('Error saving Q&A:', error);
+            alert('Q&Aの保存に失敗しました: ' + error.message);
+        }
     }
-}
 
         async function deleteQA(id) {
             if (!confirm(`ID ${id} のQ&Aを削除してもよろしいですか？`)) return;
