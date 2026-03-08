@@ -75,10 +75,11 @@ body {
 /* --- KPIカード --- */
 .kpi-row {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr); 
     gap: 16px;
     margin-bottom: 24px;
 }
+
 .kpi-card {
     background: #fff;
     border-radius: 14px;
@@ -390,25 +391,17 @@ tr:hover td { background: #fafbff; }
     .sidebar   { min-height: 600px; }
 }
 @media (max-width: 600px) {
-    body { padding: 10px; }
-    .kpi-row { grid-template-columns: 1fr 1fr; }
-    .nav-btn.left { left: 10px; font-size: 0.78rem; padding: 6px 12px; }
-    .nav-btn.right { right: 10px; font-size: 0.78rem; padding: 6px 12px; }
+    .kpi-row { grid-template-columns: 1fr; }
 }
 
 /* 停止ボタン */
-.send-btn.generating {
-    background: linear-gradient(135deg, #dc3545, #c82333);
-}
-.send-btn.generating:hover {
-    opacity: 0.88;
-}
+.send-btn.generating { background: linear-gradient(135deg, #dc3545, #c82333); }
+.send-btn.generating:hover { opacity: 0.88; }
 </style>
 </head>
 <body>
 <div class="container">
 
-    <!-- ヘッダー -->
     <div class="header">
         <a href="/admin.html" class="nav-btn left">⬅ 管理画面</a>
         <h1>📊 統計・改善アドバイザー</h1>
@@ -416,13 +409,10 @@ tr:hover td { background: #fafbff; }
         <a href="/logout" class="nav-btn right">🚪 ログアウト</a>
     </div>
 
-    <!-- ダッシュボード本体 -->
     <div class="dashboard">
 
-        <!-- 左: KPI + テーブル -->
         <div class="main-area">
 
-            <!-- KPI -->
             <div class="kpi-row">
                 <div class="kpi-card">
                     <h3>📝 総フィードバック</h3>
@@ -439,14 +429,8 @@ tr:hover td { background: #fafbff; }
                     <div class="val" id="kpiWeekly">—</div>
                     <div class="sub">過去7日間</div>
                 </div>
-                <div class="kpi-card orange">
-                    <h3>💬 チャットログ</h3>
-                    <div class="val" id="kpiLogs">—</div>
-                    <div class="sub" id="kpiLogsSub">ベクトル化済み: —</div>
-                </div>
             </div>
 
-            <!-- フィードバックテーブル -->
             <div class="table-box">
                 <div class="table-header">
                     <h2>📋 最新フィードバック履歴</h2>
@@ -456,34 +440,23 @@ tr:hover td { background: #fafbff; }
                     <table>
                         <thead>
                             <tr>
+                                <th style="width:60px">No.</th>
                                 <th style="width:130px">日時</th>
                                 <th style="width:90px">評価</th>
                                 <th>コメント</th>
                             </tr>
                         </thead>
                         <tbody id="tableBody">
-                            <tr><td colspan="3" style="text-align:center;padding:24px;color:#aaa">読み込み中...</td></tr>
+                            <tr><td colspan="4" style="text-align:center;padding:24px;color:#aaa">読み込み中...</td></tr>
                         </tbody>
                     </table>
                 </div>
             </div>
 
-        </div><!-- /main-area -->
+        </div><div class="sidebar">
 
-        <!-- 右: AI相談 -->
-        <div class="sidebar">
-
-            <!-- ベクトル化ステータス -->
             <div class="vec-status-card">
-                <h3>🔢 ベクトルDB ステータス</h3>
-
-                <div class="vec-row">
-                    <span class="label">チャットログ</span>
-                    <span class="nums" id="vecLogsNum">— / —</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="vecLogsBar" style="width:0%"></div>
-                </div>
+                <h3>🔢 AI分析データの準備状況</h3>
 
                 <div class="vec-row" style="margin-top:10px">
                     <span class="label">意見・要望</span>
@@ -503,7 +476,6 @@ tr:hover td { background: #fafbff; }
                 </div>
             </div>
 
-            <!-- AI相談チャット -->
             <div class="chat-panel">
                 <div class="chat-panel-header">
                     <h3>🤖 AI 業務改善パートナー</h3>
@@ -523,10 +495,7 @@ tr:hover td { background: #fafbff; }
 
                 <div class="chat-history" id="chatHistory">
                     <div class="msg ai">
-                        こんにちは。学生対応改善のサポートをします。<br><br>
-                        チャットログや学生の意見・要望を<strong>ベクトル検索</strong>して、
-                        関連する情報だけを抽出して分析します。<br><br>
-                        左上の「ベクトル化」ボタンでデータを登録してから、
+                        こんにちは。学生対応改善のサポートをします。
                         お気軽に質問してください！
                     </div>
                 </div>
@@ -542,353 +511,14 @@ tr:hover td { background: #fafbff; }
                         ➤
                     </button>
                 </div>
-            </div><!-- /chat-panel -->
-
-            <!-- チャート -->
-            <div class="chart-box">
+            </div><div class="chart-box">
                 <h3>📈 評価の内訳</h3>
                 <canvas id="ratingChart" height="160"></canvas>
             </div>
 
-        </div><!-- /sidebar -->
-    </div><!-- /dashboard -->
-</div><!-- /container -->
+        </div></div></div><div class="toast" id="toast"></div>
 
-<!-- Toast -->
-<div class="toast" id="toast"></div>
+<script src="/static/stats.js"></script>
 
-<script>
-// ==================================================
-// 設定
-// ==================================================
-marked.setOptions({ breaks: true, gfm: true });
-let chartInstance = null;
-let abortController = null;
-// ==================================================
-// Toast 通知
-// ==================================================
-function showToast(msg, type = 'info', duration = 3500) {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = `toast ${type} show`;
-    setTimeout(() => { t.classList.remove('show'); }, duration);
-}
-
-// ==================================================
-// 1. フィードバックデータ取得
-// ==================================================
-async function fetchData() {
-    try {
-        const res = await fetch('/api/admin/stats/data');
-        if (!res.ok) {
-            if (res.status === 401 || res.status === 403) { location.href = '/login'; return; }
-            throw new Error(res.statusText);
-        }
-        const data = await res.json();
-        renderDashboard(data);
-    } catch (e) {
-    showToast('データ取得失敗: ' + e.message, 'error');
-    
-    // 安全なDOM操作による書き換え
-    const tbody = document.getElementById('tableBody');
-    tbody.innerHTML = ''; // 一旦クリア
-
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    
-    td.colSpan = 3;
-    td.style.textAlign = 'center';
-    td.style.color = '#dc3545';
-    td.style.padding = '20px';
-    td.textContent = 'エラー: ' + e.message; // 【重要】textContentを使うことでXSSを防ぐ
-    
-    tr.appendChild(td);
-    tbody.appendChild(tr);
-}
-}
-
-function renderDashboard(data) {
-    const total  = data.length;
-    const good   = data.filter(i => i.rating === 'good').length;
-    const bad    = data.filter(i => i.rating === 'bad').length;
-    const rate   = total > 0 ? Math.round(good / total * 100) : 0;
-    const week   = new Date(); week.setDate(week.getDate() - 7);
-    const weekly = data.filter(i => new Date(i.created_at) > week).length;
-
-    document.getElementById('kpiTotal').textContent    = total + '件';
-    document.getElementById('kpiGoodRate').textContent = rate + '%';
-    document.getElementById('kpiGoodSub').textContent  = `Good: ${good} / Bad: ${bad}`;
-    document.getElementById('kpiWeekly').textContent   = weekly + '件';
-
-    // テーブル描画
-    const tbody = document.getElementById('tableBody');
-    tbody.innerHTML = '';
-    if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#aaa">データがありません</td></tr>';
-    } else {
-        data.forEach(item => {
-            const tr = document.createElement('tr');
-            const date = new Date(item.created_at).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' });
-            const ratingBadge = item.rating === 'good'
-                ? '<span class="badge good">👍 Good</span>'
-                : '<span class="badge bad">👎 Bad</span>';
-
-            const tdDate   = document.createElement('td');
-            tdDate.style.color = '#999';
-            tdDate.style.fontSize = '0.82rem';
-            tdDate.style.whiteSpace = 'nowrap';
-            tdDate.textContent = date;
-
-            const tdRating = document.createElement('td');
-            tdRating.innerHTML = ratingBadge; // バッジのみ（固定文字列）
-
-            const tdComment = document.createElement('td');
-            tdComment.textContent = item.comment || item.content || '（コメントなし）';
-
-            tr.appendChild(tdDate);
-            tr.appendChild(tdRating);
-            tr.appendChild(tdComment);
-            tbody.appendChild(tr);
-        });
-    }
-
-    renderChart(good, bad);
-}
-
-function renderChart(good, bad) {
-    const ctx = document.getElementById('ratingChart').getContext('2d');
-    if (chartInstance) chartInstance.destroy();
-    chartInstance = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: ['Good（高評価）', 'Bad（低評価）'],
-            datasets: [{
-                data: [good, bad],
-                backgroundColor: ['#28a745', '#dc3545'],
-                borderWidth: 0,
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: { legend: { position: 'bottom', labels: { font: { size: 12 } } } },
-            cutout: '65%',
-        }
-    });
-}
-
-// ==================================================
-// 2. ベクトル化ステータス
-// ==================================================
-async function fetchVecStatus() {
-    try {
-        const res = await fetch('/api/admin/stats/vectorize/status');
-        if (!res.ok) throw new Error(res.statusText);
-        const d = await res.json();
-
-        const logs = d.chat_logs;
-        const cm   = d.anonymous_comments;
-
-        // KPI
-        document.getElementById('kpiLogs').textContent    = logs.total + '件';
-        document.getElementById('kpiLogsSub').textContent = `ベクトル化済み: ${logs.vectorized}件`;
-
-        // ステータスカード
-        document.getElementById('vecLogsNum').textContent = `${logs.vectorized} / ${logs.total}`;
-        document.getElementById('vecCmNum').textContent   = `${cm.vectorized} / ${cm.total}`;
-
-        const logsPct = logs.total > 0 ? Math.round(logs.vectorized / logs.total * 100) : 0;
-        const cmPct   = cm.total   > 0 ? Math.round(cm.vectorized   / cm.total   * 100) : 0;
-        document.getElementById('vecLogsBar').style.width = logsPct + '%';
-        document.getElementById('vecCmBar').style.width   = cmPct + '%';
-
-    } catch (e) {
-        console.warn('vectorize status error:', e);
-    }
-}
-
-// ==================================================
-// 3. 一括ベクトル化
-// ==================================================
-async function runVectorize(target) {
-    const btn = document.getElementById('vecBothBtn');
-    btn.disabled = true;
-    btn.textContent = '処理中...';
-    showToast('ベクトル化を開始しました。しばらくお待ちください。', 'info', 8000);
-
-    try {
-        const res = await fetch('/api/admin/stats/vectorize', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target, limit: 200 }),
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-
-        // 結果サマリーをToastで表示
-        let msg = '✅ ベクトル化完了 | ';
-        if (data.results.chat_logs) {
-            const r = data.results.chat_logs;
-            msg += `ログ: ${r.succeeded}件成功 `;
-        }
-        if (data.results.anonymous_comments) {
-            const r = data.results.anonymous_comments;
-            msg += `意見: ${r.succeeded}件成功`;
-        }
-        showToast(msg, 'success', 5000);
-        await fetchVecStatus();
-    } catch (e) {
-        showToast('ベクトル化エラー: ' + e.message, 'error');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = '⚡ 未処理を一括ベクトル化';
-    }
-}
-
-// ==================================================
-// 4. AI相談チャット
-// ==================================================
-function setQuery(text) {
-    document.getElementById('queryInput').value = text;
-    document.getElementById('queryInput').focus();
-}
-
-function handleKey(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendQuery();
-    }
-}
-
-async function sendQuery() {
-    const input   = document.getElementById('queryInput');
-    const btn     = document.getElementById('sendBtn');
-    const history = document.getElementById('chatHistory');
-
-    // ── 停止ロジック ──
-    if (abortController) {
-        abortController.abort();
-        abortController = null;
-        btn.classList.remove('generating');
-        btn.title = '送信';
-        btn.textContent = '➤';
-
-        // 最後のAIバブルに「停止」を追記
-        const bubbles = history.querySelectorAll('.msg.ai');
-        if (bubbles.length > 0) {
-            const last = bubbles[bubbles.length - 1];
-            if (!last.dataset.finished) {
-                const stop = document.createElement('span');
-                stop.style.cssText = 'display:block;color:#dc3545;font-size:0.78rem;margin-top:6px;font-weight:700;';
-                stop.textContent = '⏹ 停止しました';
-                last.appendChild(stop);
-                last.dataset.finished = 'true';
-            }
-        }
-        return;
-    }
-
-    // ── 送信ロジック ──
-    const query = input.value.trim();
-    if (!query) return;
-
-    appendMsg('user', query);
-    input.value = '';
-    btn.disabled = false; // abort可能なので disabled にしない
-    btn.classList.add('generating');
-    btn.title = '停止';
-    btn.textContent = '⏹';
-
-    abortController = new AbortController();
-    const signal = abortController.signal;
-
-    // AIローディングバブル
-    const aiEl = document.createElement('div');
-    aiEl.className = 'msg ai';
-    aiEl.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
-    history.appendChild(aiEl);
-    history.scrollTop = history.scrollHeight;
-
-    let aiText  = '';
-    let isFirst = true;
-
-    try {
-        const res = await fetch('/api/admin/stats/chat_analysis', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, target_period_days: 30 }),
-            signal,
-        });
-
-        if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
-
-        const reader  = res.body.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            aiText += decoder.decode(value, { stream: true });
-
-            if (isFirst) {
-                aiEl.innerHTML = '';
-                isFirst = false;
-            }
-
-            const rawHtml  = marked.parse(aiText);
-            const safeHtml = DOMPurify.sanitize(rawHtml, {
-                ALLOWED_TAGS: ['p','br','strong','em','ul','ol','li','h1','h2','h3','h4',
-                               'blockquote','code','pre','hr','table','thead','tbody','tr','th','td','a'],
-                ALLOWED_ATTR: ['href','target','rel'],
-            });
-            aiEl.innerHTML = safeHtml;
-            history.scrollTop = history.scrollHeight;
-        }
-
-        if (isFirst) {
-            aiEl.textContent = '（回答を生成できませんでした）';
-        }
-        aiEl.dataset.finished = 'true';
-
-    } catch (e) {
-        if (e.name === 'AbortError') {
-            // 停止ロジック側で処理済み
-        } else {
-            console.error(e);
-            aiEl.innerHTML = '';
-            const errSpan = document.createElement('span');
-            errSpan.style.color = '#dc3545';
-            errSpan.textContent = 'エラー: ' + e.message;
-            aiEl.appendChild(errSpan);
-        }
-    } finally {
-        if (abortController) {
-            abortController = null;
-            btn.classList.remove('generating');
-            btn.title = '送信';
-            btn.textContent = '➤';
-        }
-    }
-}
-
-
-// ▼ ここから次の関数定義 ▼
-function appendMsg(role, text) {
-    const history = document.getElementById('chatHistory');
-    const div = document.createElement('div');
-    div.className = `msg ${role}`;
-    div.textContent = text; // ユーザー入力はテキストとして安全に表示
-    history.appendChild(div);
-    history.scrollTop = history.scrollHeight;
-}
-
-// ==================================================
-// 初期化
-// ==================================================
-(async () => {
-    await fetchData();
-    await fetchVecStatus();
-})();
-</script>
 </body>
 </html>

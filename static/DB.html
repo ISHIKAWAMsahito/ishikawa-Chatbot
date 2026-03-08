@@ -26,9 +26,30 @@
             color: white;
             padding: 30px;
             text-align: center;
+            position: relative;
         }
         .header h1 { font-size: 2rem; margin-bottom: 8px; }
         .header p { opacity: 0.95; }
+        /* --- ナビゲーションボタン --- */
+        .nav-btn {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            padding: 8px 18px;
+            border-radius: 30px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 0.85rem;
+            background: rgba(255,255,255,0.95);
+            color: #444;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            transition: all 0.2s;
+        }
+        .nav-btn:hover { background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.2); transform: translateY(calc(-50% - 2px)); }
+        .nav-btn.left  { left: 24px; }
+        .nav-btn.right { right: 24px; }
 
         /* --- タブ --- */
         .tabs {
@@ -198,14 +219,19 @@
             .controls { flex-direction: column; align-items: stretch; }
             .category-filter, .search-box, .btn { width: 100%; }
             th, td { font-size: 0.92rem; padding: 10px; }
+            /* ↓ ★この2行を追加 ↓ */
+            .nav-btn.left { left: 10px; font-size: 0.78rem; padding: 6px 12px; }
+            .nav-btn.right { right: 10px; font-size: 0.78rem; padding: 6px 12px; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
+            <a href="/admin" class="nav-btn left">⬅ 管理画面</a>
             <h1>📊 DB管理画面</h1>
             <p>データベース内のドキュメントとQ&Aを管理</p>
+            <a href="/logout" class="nav-btn right">🚪 ログアウト</a>
         </div>
 
         <div class="tabs">
