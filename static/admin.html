@@ -476,16 +476,26 @@ body.dark-mode .total-chunks-info {
 .admin-dark-toggle {
     position: absolute;
     top: 25px;
-    left: 40px;
-    background: rgba(255,255,255,0.2);
-    border: 1px solid rgba(255,255,255,0.5);
-    color: white;
-    border-radius: 30px;
-    padding: 8px 16px;
-    cursor: pointer;
-    font-size: 1.2rem;
+    left: 25px; /* ログアウトボタンと左右対称の余白に調整 */
     z-index: 100;
-    transition: all 0.3s;
+    
+    /* ログアウトボタンと同じデザイン設定 */
+    background-color: #ffffff;
+    color: #333333;
+    border: none;
+    padding: 10px 24px;
+    border-radius: 30px;
+    font-weight: bold;
+    font-size: 0.95rem;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    transition: all 0.3s ease;
+}
+.admin-dark-toggle:hover {
+    background-color: #f8f9fa;
+    color: #000000;
+    box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+    transform: translateY(-2px);
 }
 .admin-dark-toggle:hover {
     background: rgba(255,255,255,0.4);
