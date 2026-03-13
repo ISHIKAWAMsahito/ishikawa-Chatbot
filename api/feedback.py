@@ -1,76 +1,62 @@
-import os
-import json
+import asyncio
 import logging
-from datetime import datetime
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
-from core.config import BASE_DIR, JST
 from core.dependencies import require_auth, require_auth_client
+from core.database import db_client
+from services.vectorize_logs import vectorize_comment
 
-# ==========================================
-# 1. ルーターの定義 (これが不足していました)
-# ==========================================
 router = APIRouter()
 
-# ユーザーからの評価（Good/Bad/コメント）を保存します。
-
-# シンプル保存: 他の機能がSupabaseを使っているのに対し、このファイルは json ファイルへの読み書きを行っているようです（feedback.json）。
-
-# 集計: 解決率（Resolved rate）などの簡易的な統計情報を返します。
-
-# ==========================================
-# 2. データ受信用の型定義 (Pydanticモデル)
-# ==========================================
 class FeedbackRequest(BaseModel):
     feedback_id: str
     rating: str
     comment: str = Field("", max_length=2000)
 
-# ==========================================
-# 3. ロジッククラス (元のコード)
-# ==========================================
 class FeedbackManager:
-    """フィードバック管理クラス(簡素化版)"""
-    def __init__(self):
-        self.feedback_file = os.path.join(BASE_DIR, "feedback.json")
-
-    def save_feedback(self, feedback_id: str, rating: str, comment: str = ""):
-        """フィードバックを保存"""
+    """フィードバック管理クラス(Supabase DB & 自動ベクトル化対応版)"""
+    
+    async def save_feedback(self, feedback_id: str, rating: str, comment: str = ""):
         try:
-            feedback_data = []
-            if os.path.exists(self.feedback_file):
-                with open(self.feedback_file, 'r', encoding='utf-8') as f:
-                    feedback_data = json.load(f)
+            # 1. 評価値の数値化
+            rating_val = 5 if rating in ["good", "resolved"] else 1 if rating in ["bad", "not_resolved"] else 0
             
-            feedback_entry = {
-                "id": feedback_id,
-                "rating": rating,
-                "comment": comment,
-                "timestamp": datetime.now(JST).isoformat()
-            }
-            feedback_data.append(feedback_entry)
-            
-            with open(self.feedback_file, 'w', encoding='utf-8') as f:
-                json.dump(feedback_data, f, ensure_ascii=False, indent=2)
-            
-            logging.info(f"フィードバック保存完了: {feedback_id} - {rating}")
+            # 2. 既存のチャットログへの評価 (feedback_idが指定されている場合)
+            if feedback_id and feedback_id != "anonymous":
+                db_client.client.table("chat_logs").update({
+                    "rating": rating_val,
+                    "comment": comment
+                }).eq("id", feedback_id).execute()
+                logging.info(f"チャットログ(ID: {feedback_id})に評価を保存しました")
+
+            # 3. 匿名の意見・要望 (anonymous_commentsへの保存とベクトル化)
+            if comment and comment.strip():
+                res = db_client.client.table("anonymous_comments").insert({
+                    "comment": comment.strip()
+                }).execute()
+                
+                if res.data:
+                    new_comment_id = res.data[0]["id"]
+                    # ★ 保存直後にベクトル化をバックグラウンドで実行
+                    asyncio.create_task(vectorize_comment(new_comment_id, comment.strip()))
+                    logging.info(f"コメント自動ベクトル化開始(ID: {new_comment_id})")
+
         except Exception as e:
             logging.error(f"フィードバック保存エラー: {e}")
-            raise  # エラーを呼び出し元に伝える
+            raise
 
-    def get_feedback_stats(self) -> Dict[str, Any]:
-        """フィードバック統計を取得"""
+    async def get_feedback_stats(self) -> Dict[str, Any]:
+        """Supabase DBから統計情報を取得"""
         try:
-            if not os.path.exists(self.feedback_file):
-                return {"total": 0, "resolved": 0, "not_resolved": 0, "rate": 0}
-            with open(self.feedback_file, 'r', encoding='utf-8') as f:
-                feedback_data = json.load(f)
-            total = len(feedback_data)
-            resolved = sum(1 for fb in feedback_data if fb['rating'] == 'resolved')
+            res = db_client.client.table("chat_logs").select("rating").neq("rating", None).execute()
+            data = res.data or []
+            total = len(data)
+            resolved = sum(1 for d in data if d.get("rating", 0) >= 4)
             not_resolved = total - resolved
             rate = (resolved / total * 100) if total > 0 else 0
+            
             return {
                 "total": total,
                 "resolved": resolved,
@@ -78,22 +64,15 @@ class FeedbackManager:
                 "rate": round(rate, 1)
             }
         except Exception as e:
-            logging.error(f"フィードバック統計取得エラー: {e}")
+            logging.error(f"統計取得エラー: {e}")
             return {"total": 0, "resolved": 0, "not_resolved": 0, "rate": 0}
 
-# グローバルインスタンス
 feedback_manager = FeedbackManager()
 
-# ==========================================
-# 4. APIエンドポイントの実装 (ここが重要)
-# ==========================================
 @router.post("/")
 async def submit_feedback(request: FeedbackRequest, user: dict = Depends(require_auth_client)):
-    """
-    フィードバックを受け取るAPIエンドポイント（ログイン済みユーザーのみ）
-    """
     try:
-        feedback_manager.save_feedback(
+        await feedback_manager.save_feedback(
             feedback_id=request.feedback_id,
             rating=request.rating,
             comment=request.comment
@@ -105,7 +84,4 @@ async def submit_feedback(request: FeedbackRequest, user: dict = Depends(require
 
 @router.get("/stats")
 async def get_stats(user: dict = Depends(require_auth)):
-    """
-    統計情報を取得するAPIエンドポイント（管理者用）
-    """
-    return feedback_manager.get_feedback_stats()
+    return await feedback_manager.get_feedback_stats()

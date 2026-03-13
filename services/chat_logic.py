@@ -22,6 +22,7 @@ from services.utils import (
     format_references,
 )
 from services import prompts
+from services.vectorize_logs import vectorize_chat_log
 
 llm_service = LLMService()
 search_service = SearchService(llm_service)
@@ -112,7 +113,7 @@ async def enhanced_chat_logic(
                 },
             )
             # ★ 非同期タスクとして保存（ベクトル化は行わない）
-            asyncio.create_task(_save_log_only(log_entry))
+            asyncio.create_task(_save_and_vectorize_log(log_entry))
 
             yield send_sse({"done": True, "feedback_id": str(uuid.uuid4())})
             return
@@ -161,7 +162,7 @@ async def enhanced_chat_logic(
         # 5. 履歴保存
         history_manager.add(session_id, "assistant", ai_response_full)
 
-        # 6. チャットログ保存（ベクトル化なし）
+        # 6. チャットログ保存と自動ベクトル化
         log_entry = ChatLogCreate(
             session_id=session_id,
             user_query=user_input,
@@ -175,7 +176,7 @@ async def enhanced_chat_logic(
                 "search_mode": search_mode,
             },
         )
-        asyncio.create_task(_save_log_only(log_entry))
+        asyncio.create_task(_save_and_vectorize_log(log_entry))
 
         feedback_id = str(uuid.uuid4())
         yield send_sse({"done": True, "feedback_id": feedback_id})
@@ -193,23 +194,30 @@ async def enhanced_chat_logic(
         log_context(session_id, "Response generation finished.")
 
 
-async def _save_log_only(log_entry: ChatLogCreate) -> None:
+async def _save_and_vectorize_log(log_entry: ChatLogCreate) -> None:
     """
-    チャットログをDBに保存するだけのタスク。
-    ★ ベクトル化は行わない（chat_logs.embeddingの次元数不一致エラー回避）
-    　　管理者が stats.html の「一括ベクトル化」から手動実行することを推奨。
+    チャットログをDBに保存し、バックグラウンドで自動ベクトル化を行う。
     """
     try:
         data = log_entry.model_dump(mode="json")
         from core.database import db_client
         response = db_client.client.table("chat_logs").insert(data).execute()
+        
         if response.data:
             log_id = response.data[0].get("id")
             logging.getLogger(__name__).info(f"Chat log saved. ID: {log_id}")
+            
+            # ★ 追加: 保存成功後に自動ベクトル化タスクを起動
+            user_query = data.get("user_query", "")
+            ai_response = data.get("ai_response", "")
+            if user_query and ai_response:
+                # vectorize_chat_log をバックグラウンドで実行
+                asyncio.create_task(vectorize_chat_log(log_id, user_query, ai_response))
+                
         else:
             logging.getLogger(__name__).warning("Chat log saved but no data returned.")
     except Exception as e:
-        logging.getLogger(__name__).error(f"Failed to save chat log: {e}", exc_info=True)
+        logging.getLogger(__name__).error(f"Failed to save and vectorize chat log: {e}", exc_info=True)
 
 
 @traceable(name="Feedback_Analysis_Job", run_type="chain")
