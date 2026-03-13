@@ -409,7 +409,7 @@ tr:hover td { background: #fafbff; }
         <a href="/logout" class="nav-btn right">🚪 ログアウト</a>
     </div>
 
-    <div class="dashboard">
+   <div class="dashboard">
 
         <div class="main-area">
 
@@ -453,27 +453,21 @@ tr:hover td { background: #fafbff; }
                 </div>
             </div>
 
-        </div><div class="sidebar">
+            <div class="chart-box">
+                <h3>📈 評価の内訳</h3>
+                <canvas id="ratingChart" height="160"></canvas>
+            </div>
 
-            <div class="vec-status-card">
-                <h3>🔢 AI分析データの準備状況</h3>
+        </div>
+        <div class="sidebar">
 
-                <div class="vec-row" style="margin-top:10px">
-                    <span class="label">意見・要望</span>
-                    <span class="nums" id="vecCmNum">— / —</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="vecCmBar" style="width:0%"></div>
-                </div>
-
-                <div class="vec-actions">
-                    <button class="vec-btn primary" id="vecBothBtn" onclick="runVectorize('both')">
-                        ⚡ 未処理を一括ベクトル化
-                    </button>
-                    <button class="vec-btn secondary" onclick="fetchVecStatus()">
-                        🔄 状態確認
-                    </button>
-                </div>
+            <div class="vec-status-card" style="border-left-color: #28a745; background: #f8fff9; padding: 15px;">
+                <h3 style="margin-bottom: 0; font-size: 0.9rem; color: #155724; display: flex; align-items: center; gap: 8px;">
+                    <span>✅</span> データのAI最適化は完了しています
+                </h3>
+                <p style="font-size: 0.75rem; color: #666; margin-top: 6px; line-height: 1.4;">
+                    学生の声はリアルタイムでベクトル化され、AI相談パートナーへ反映されています。
+                </p>
             </div>
 
             <div class="chat-panel">
@@ -511,12 +505,10 @@ tr:hover td { background: #fafbff; }
                         ➤
                     </button>
                 </div>
-            </div><div class="chart-box">
-                <h3>📈 評価の内訳</h3>
-                <canvas id="ratingChart" height="160"></canvas>
             </div>
 
-        </div></div></div><div class="toast" id="toast"></div>
+        </div>
+        </div> </div> <div class="toast" id="toast"></div>
 
 <script src="/static/stats.js"></script>
 
