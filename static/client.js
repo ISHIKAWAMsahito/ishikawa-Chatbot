@@ -122,23 +122,24 @@ darkModeBtn.addEventListener('click', () => {
                 errorMessage.style.display = 'none';
 
                 try {
-                    if (!window.supabaseClient) {
-                        console.error("❌ エラー: Supabaseクライアントが null です");
-                        alert("システム接続エラー: コメント機能は現在利用できません。");
-                        sendCommentBtn.disabled = false;
-                        return;
-                    }
-
-                    const table = window.supabaseClient.from('anonymous_comments');
-                    const insertData = {
-                        comment: comment,
-                        created_at: new Date().toISOString()
+                    // バックエンドAPI経由で送信し、サーバ側で匿名コメントを保存＆自動ベクトル化
+                    const payload = {
+                        feedback_id: "anonymous",      // チャットログに紐づかない純粋なコメント
+                        rating: "comment_only",        // 種別を判別しやすい任意のラベル
+                        comment: comment
                     };
 
-                    const response = await table.insert([insertData]);
+                    const response = await fetch(`${BACKEND_API_BASE_URL}/api`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                        credentials: 'include', // セッション認証用
+                    });
 
-                    if (response.error) {
-                        throw new Error(response.error.message || JSON.stringify(response.error));
+                    if (!response.ok) {
+                        const data = await response.json().catch(() => ({}));
+                        const msg = data.detail || `コメント送信に失敗しました (status: ${response.status})`;
+                        throw new Error(msg);
                     }
 
                     successMessage.style.display = 'block';
