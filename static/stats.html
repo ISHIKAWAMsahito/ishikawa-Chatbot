@@ -460,53 +460,48 @@ tr:hover td { background: #fafbff; }
 
         </div>
         <div class="sidebar">
-
-            <div class="vec-status-card" style="border-left-color: #28a745; background: #f8fff9; padding: 15px;">
-                <h3 style="margin-bottom: 0; font-size: 0.9rem; color: #155724; display: flex; align-items: center; gap: 8px;">
-                    <span>✅</span> データのAI最適化は完了しています
-                </h3>
-                <p style="font-size: 0.75rem; color: #666; margin-top: 6px; line-height: 1.4;">
-                    学生の声はリアルタイムでベクトル化され、AI相談パートナーへ反映されています。
-                </p>
-            </div>
-
-            <div class="chat-panel">
-                <div class="chat-panel-header">
-                    <h3>🤖 AI 業務改善パートナー</h3>
-                    <p>蓄積された学生とのやりとりをもとに、改善提案・動向分析をお手伝いします</p>
+            <div class="chat-panel" style="border: 1px solid #eef0f7; box-shadow: 0 10px 25px rgba(0,0,0,0.05);">
+                <div class="chat-panel-header" style="padding: 20px;">
+                    <h3 style="font-size: 1.1rem; color: #333; margin-bottom: 6px;">🤖 AI 業務改善パートナー</h3>
+                    <p style="font-size: 0.85rem; color: #777; line-height: 1.4;">蓄積された学生とのやりとりをもとに、改善提案・動向分析をお手伝いします</p>
                 </div>
 
-                <div class="example-queries">
-                    <p>💡 こんな質問ができます</p>
-                    <div class="ex-chips">
-                        <span class="ex-chip" onclick="setQuery('最近の学生が困っていることを教えてください')">最近の学生の困りごと</span>
-                        <span class="ex-chip" onclick="setQuery('履修登録に関する質問の傾向を分析してください')">履修登録の傾向</span>
-                        <span class="ex-chip" onclick="setQuery('FAQに追加すべき項目はありますか？')">FAQ改善案</span>
-                        <span class="ex-chip" onclick="setQuery('学生の意見・要望で多いものは何ですか？')">意見・要望の傾向</span>
-                        <span class="ex-chip" onclick="setQuery('AIが回答できていない質問のパターンを教えてください')">未解決の質問</span>
+                <div class="example-queries" style="padding: 0 20px 15px 20px; border-bottom: 1px solid #f8f9fc;">
+                    <p style="font-size: 0.8rem; color: #999; margin-bottom: 10px; display: flex; align-items: center; gap: 5px;">
+                        <span>💡</span> こんな質問ができます
+                    </p>
+                    <div class="ex-chips" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                        <span class="ex-chip" onclick="setQuery('最近の学生が困っていることを教えてください')" style="background: #f0f4ff; border: 1px solid #d0daff; color: #667eea; padding: 6px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; cursor: pointer;">最近の学生の困りごと</span>
+                        <span class="ex-chip" onclick="setQuery('履修登録に関する質問の傾向を分析してください')" style="background: #f0f4ff; border: 1px solid #d0daff; color: #667eea; padding: 6px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; cursor: pointer;">履修登録の傾向</span>
+                        <span class="ex-chip" onclick="setQuery('FAQに追加すべき項目はありますか？')" style="background: #f0f4ff; border: 1px solid #d0daff; color: #667eea; padding: 6px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; cursor: pointer;">FAQ改善案</span>
+                        <span class="ex-chip" onclick="setQuery('学生の意見・要望で多いものは何ですか？')" style="background: #f0f4ff; border: 1px solid #d0daff; color: #667eea; padding: 6px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; cursor: pointer;">意見・要望の傾向</span>
+                        <span class="ex-chip" onclick="setQuery('AIが回答できていない質問のパターンを教えてください')" style="background: #f0f4ff; border: 1px solid #d0daff; color: #667eea; padding: 6px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; cursor: pointer;">未解決の質問</span>
                     </div>
                 </div>
 
-                <div class="chat-history" id="chatHistory">
-                    <div class="msg ai">
-                        こんにちは。学生対応改善のサポートをします。
-                        お気軽に質問してください！
+                <div class="chat-history" id="chatHistory" style="padding: 20px; background: #fff; min-height: 250px;">
+                    <div class="msg ai" style="background: #f8f9fa; border: 1px solid #eee; padding: 12px 18px; border-radius: 12px; font-size: 0.95rem; color: #444; margin-bottom: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">
+                        こんにちは。学生対応改善のサポートをします。 お気軽に質問してください！
                     </div>
                 </div>
 
-                <div class="chat-input-area">
-                    <textarea
-                        id="queryInput"
-                        class="chat-textarea"
-                        placeholder="質問を入力（Shift+Enterで改行）"
-                        onkeydown="handleKey(event)"
-                    ></textarea>
-                    <button class="send-btn" id="sendBtn" onclick="sendQuery()" title="送信">
-                        ➤
-                    </button>
+                <div class="chat-input-area" style="padding: 15px 20px 20px 20px; border-top: 1px solid #f0f0f0;">
+                    <div style="display: flex; gap: 10px; align-items: flex-end; width: 100%;">
+                        <textarea
+                            id="queryInput"
+                            class="chat-textarea"
+                            placeholder="質問を入力（Shift+Enterで改行）"
+                            onkeydown="handleKey(event)"
+                            style="flex: 1; border: 1px solid #e0e0e0; border-radius: 12px; padding: 12px; font-size: 0.95rem; min-height: 50px; outline: none; transition: border-color 0.2s;"
+                        ></textarea>
+                        <button class="send-btn" id="sendBtn" onclick="sendQuery()" 
+                                style="width: 50px; height: 50px; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; border-radius: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;">
+                            <span style="font-size: 1.2rem; transform: rotate(0deg);">➤</span>
+                        </button>
+                    </div>
                 </div>
             </div>
-
+        </div>
         </div>
         </div> </div> <div class="toast" id="toast"></div>
 
