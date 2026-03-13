@@ -39,9 +39,9 @@ class FeedbackManager:
                 
                 if res.data:
                     new_comment_id = res.data[0]["id"]
-                    # ★ 保存直後にベクトル化をバックグラウンドで実行
-                    asyncio.create_task(vectorize_comment(new_comment_id, comment.strip()))
-                    logging.info(f"コメント自動ベクトル化開始(ID: {new_comment_id})")
+                    # 確実にベクトル化が終わるのを待つ
+                    await vectorize_comment(new_comment_id, comment.strip())
+                    logging.info(f"コメント自動ベクトル化完了(ID: {new_comment_id})")
 
         except Exception as e:
             logging.error(f"フィードバック保存エラー: {e}")

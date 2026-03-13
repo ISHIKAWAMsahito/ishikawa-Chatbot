@@ -211,8 +211,8 @@ async def _save_and_vectorize_log(log_entry: ChatLogCreate) -> None:
             user_query = data.get("user_query", "")
             ai_response = data.get("ai_response", "")
             if user_query and ai_response:
-                # vectorize_chat_log をバックグラウンドで実行
-                asyncio.create_task(vectorize_chat_log(log_id, user_query, ai_response))
+                # 確実にベクトル化が終わるのを待つ
+                await vectorize_chat_log(log_id, user_query, ai_response)
                 
         else:
             logging.getLogger(__name__).warning("Chat log saved but no data returned.")
