@@ -63,13 +63,20 @@ body {
 .nav-btn.right { right: 24px; }
 
 /* ダッシュボード本体 */
+/* ダッシュボード本体 */
 .dashboard {
     display: grid;
-    grid-template-columns: 1fr 480px;
-    gap: 28px;
-    padding: 28px;
+    /* ★ 左側が柔軟に縮むようにし、右側のチャット幅を 400px に調整 */
+    grid-template-columns: minmax(0, 1fr) 400px;
+    gap: 24px;
+    padding: 24px;
     flex-grow: 1;
     min-height: 0;
+}
+
+/* ★ 要素が画面外に押し広げられるのを防ぐストッパーを追加 */
+.main-area, .sidebar {
+    min-width: 0;
 }
 
 /* --- KPIカード --- */
@@ -385,7 +392,7 @@ tr:hover td { background: #fafbff; }
 .toast.info    { background: #17a2b8; }
 
 /* レスポンシブ */
-@media (max-width: 1100px) {
+@media (max-width: 1200px) {
     .dashboard { grid-template-columns: 1fr; }
     .kpi-row   { grid-template-columns: repeat(2, 1fr); }
     .sidebar   { min-height: 600px; }
