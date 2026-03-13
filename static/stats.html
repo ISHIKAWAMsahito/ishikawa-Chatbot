@@ -416,11 +416,11 @@ tr:hover td { background: #fafbff; }
         <a href="/logout" class="nav-btn right">🚪 ログアウト</a>
     </div>
 
-   <div class="dashboard">
+   <div class="dashboard" style="display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 24px; padding: 24px;">
 
-        <div class="main-area">
-
-            <div class="kpi-row">
+        <div class="main-area" style="display: flex; flex-direction: column; gap: 24px; min-width: 0;">
+            
+            <div class="kpi-row" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
                 <div class="kpi-card">
                     <h3>📝 総フィードバック</h3>
                     <div class="val" id="kpiTotal">—</div>
@@ -459,21 +459,25 @@ tr:hover td { background: #fafbff; }
                     </table>
                 </div>
             </div>
-
-            <div class="chart-box">
-                <h3>📈 評価の内訳</h3>
-                <canvas id="ratingChart" height="160"></canvas>
-            </div>
-
         </div>
-        <div class="sidebar">
-            <div class="chat-panel" style="border: 1px solid #eef0f7; box-shadow: 0 10px 25px rgba(0,0,0,0.05);">
-                <div class="chat-panel-header" style="padding: 20px;">
+
+        <div class="sidebar" style="min-width: 0;">
+            <div class="chart-box" style="height: 100%; display: flex; flex-direction: column;">
+                <h3>📈 評価の内訳</h3>
+                <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center;">
+                    <canvas id="ratingChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-container-bottom" style="grid-column: 1 / -1; margin-top: 8px;">
+            <div class="chat-panel" style="border: 1px solid #eef0f7; box-shadow: 0 10px 25px rgba(0,0,0,0.05); min-height: 500px;">
+                <div class="chat-panel-header" style="padding: 20px; border-bottom: 1px solid #f0f0f0;">
                     <h3 style="font-size: 1.1rem; color: #333; margin-bottom: 6px;">🤖 AI 業務改善パートナー</h3>
                     <p style="font-size: 0.85rem; color: #777; line-height: 1.4;">蓄積された学生とのやりとりをもとに、改善提案・動向分析をお手伝いします</p>
                 </div>
 
-                <div class="example-queries" style="padding: 0 20px 15px 20px; border-bottom: 1px solid #f8f9fc;">
+                <div class="example-queries" style="padding: 15px 20px; border-bottom: 1px solid #f8f9fc;">
                     <p style="font-size: 0.8rem; color: #999; margin-bottom: 10px; display: flex; align-items: center; gap: 5px;">
                         <span>💡</span> こんな質問ができます
                     </p>
@@ -486,31 +490,31 @@ tr:hover td { background: #fafbff; }
                     </div>
                 </div>
 
-                <div class="chat-history" id="chatHistory" style="padding: 20px; background: #fff; min-height: 250px;">
+                <div class="chat-history" id="chatHistory" style="padding: 20px; background: #fff; flex-grow: 1; min-height: 300px;">
                     <div class="msg ai" style="background: #f8f9fa; border: 1px solid #eee; padding: 12px 18px; border-radius: 12px; font-size: 0.95rem; color: #444; margin-bottom: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">
                         こんにちは。学生対応改善のサポートをします。 お気軽に質問してください！
                     </div>
                 </div>
 
-                <div class="chat-input-area" style="padding: 15px 20px 20px 20px; border-top: 1px solid #f0f0f0;">
+                <div class="chat-input-area" style="padding: 15px 20px 20px 20px; border-top: 1px solid #f0f0f0; background: #fff;">
                     <div style="display: flex; gap: 10px; align-items: flex-end; width: 100%;">
                         <textarea
                             id="queryInput"
                             class="chat-textarea"
                             placeholder="質問を入力（Shift+Enterで改行）"
                             onkeydown="handleKey(event)"
-                            style="flex: 1; border: 1px solid #e0e0e0; border-radius: 12px; padding: 12px; font-size: 0.95rem; min-height: 50px; outline: none; transition: border-color 0.2s;"
+                            style="flex: 1; border: 1px solid #e0e0e0; border-radius: 12px; padding: 12px; font-size: 0.95rem; min-height: 52px; outline: none;"
                         ></textarea>
                         <button class="send-btn" id="sendBtn" onclick="sendQuery()" 
-                                style="width: 50px; height: 50px; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; border-radius: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;">
-                            <span style="font-size: 1.2rem; transform: rotate(0deg);">➤</span>
+                                style="width: 52px; height: 52px; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; border-radius: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                            <span style="font-size: 1.2rem;">➤</span>
                         </button>
                     </div>
                 </div>
             </div>
         </div>
-        </div>
-        </div> </div> <div class="toast" id="toast"></div>
+
+    </div> </div> <div class="toast" id="toast"></div>
 
 <script src="/static/stats.js"></script>
 
