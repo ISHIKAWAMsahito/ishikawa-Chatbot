@@ -85,9 +85,17 @@ function renderDashboard(data) {
             tdNo.textContent = `FB${index + 1}`;
 
             const date = new Date(item.created_at).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' });
-            const ratingBadge = item.rating === 'good'
-                ? '<span class="badge good">👍 Good</span>'
-                : '<span class="badge bad">👎 Bad</span>';
+            
+            // 評価に応じたバッジの出し分け
+            let ratingBadge = '';
+            if (item.rating === 'good') {
+                ratingBadge = '<span class="badge good">👍 Good</span>';
+            } else if (item.rating === 'bad') {
+                ratingBadge = '<span class="badge bad">👎 Bad</span>';
+            } else {
+                // 評価が空、または good/bad 以外の場合
+                ratingBadge = '<span class="badge" style="background: #e9ecef; color: #495057;">💬 評価なし</span>';
+            }
 
             const tdDate   = document.createElement('td');
             tdDate.style.color = '#999';
