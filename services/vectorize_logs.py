@@ -40,9 +40,6 @@ async def _embed_text(text: str) -> Optional[list[float]]:
                 task_type="retrieval_document",
             ),
         )
-        # 👇 この1行を追加して、AIが作った長さをログに出力させる
-        logger.info(f"★ AIが生成したベクトルの次元数: {len(result['embedding'])}")
-        
         return result["embedding"]
     except Exception as e:
         logger.warning(f"Embedding generation failed: {e}")
