@@ -299,13 +299,24 @@ class SearchService:
                 break  # 条件を満たすFAQが見つかったら即採用してループを抜ける
 
         if matched_faq:
-            # --- FAQ一致モード ---
+            # --- FAQ優先＋一般資料補足モード ---
             logger.info(
                 f"FAQ Match Triggered: Score={matched_faq.score:.1f}, Sim={matched_faq.similarity:.3f}"
             )
+            
+            # 1. FAQ以外の一般資料を抽出する
+            other_docs = [doc for doc in reranked_results if doc.id != matched_faq.id]
+            
+            # 2. 多様性フィルターなどを通して上位の一般資料を数件ピックアップ（既存のメソッドを活用）
+            # ※もし filter_diversity を使わない場合は、シンプルに other_docs[:3] などでもOKです。
+            filtered_other = self.filter_diversity(other_docs)
+            
+            # 3. FAQを「先頭（最優先）」にし、後ろに一般資料をくっつける（例としてFAQ＋一般資料3件）
+            combined_docs = [matched_faq] + filtered_other[:3]
+
             return {
-                "documents": [matched_faq.model_dump()],
-                "is_faq_match": True,
+                "documents": [doc.model_dump() for doc in combined_docs],
+                "is_faq_match": True, # フロントエンド側でFAQヒットのバッジ等を出すためにTrueのままにしておく
             }
         else:
             # --- 通常資料モード ---
