@@ -189,9 +189,17 @@
     .message-content a { color: #007bff; text-decoration: underline; }
     .message-content a:hover { color: #0056b3; }
     .message-time { font-size: 0.8rem; opacity: 0.7; margin-top: 8px; /* 統一 */ }
-    .important-note {
-        color: red;
-        font-weight: bold;
+    .warning-text {
+        display: block;            /* ボックスとして表示 */
+        margin-top: 15px;          /* 上に余白を作る */
+        padding: 12px;             /* 内側に余白を作る */
+        background-color: #fff4e5; /* 優しいオレンジの背景 */
+        color: #664d03;            /* 読みやすい濃い茶色の文字 */
+        border-left: 4px solid #ff9800; /* 左側にアクセントの線を引く */
+        border-radius: 8px;        /* 角を少し丸くする */
+        font-size: 0.85rem;        /* 管理画面の情報の邪魔にならないサイズ */
+        font-weight: 500;          /* ほどよい太さに */
+        line-height: 1.5;          /* 行間を広げて読みやすく */
     }
 
     .chat-input-container { padding: 24px; /* 統一 */ background: #f8f9fa; border-top: 1px solid #e9ecef; }
@@ -419,8 +427,23 @@
             display: block;
             width: fit-content;
             margin: 10px auto;
+            /* 追加：チャット周りの文字サイズ最適化 */
+        .message-content { 
+            font-size: 0.9rem; 
+            line-height: 1.4; 
+        }
+        .chat-input { 
+            font-size: 14px; 
+        }
+        .send-btn { 
+            font-size: 0.9rem; 
+        }
+        .chat-header {
+            font-size: 1rem;
         }
     }
+        }
+
     /* --- Admin用 ダークモード設定 --- */
 body.dark-mode {
     background: linear-gradient(135deg, #1f1f2e 0%, #161625 100%) !important;
@@ -524,16 +547,15 @@ body.dark-mode .total-chunks-info {
                 <div class="chat-header">💬 AIチャット</div>
                 <div class="chat-messages" id="chatMessages">
                     <div class="message bot">
-                        <div class="message-content">
+                        <div class="message-content" style="white-space: normal;">
                             私は学生支援チャットボットです。🚀<br>
                             - 学生証を紛失・盗難・汚損したときは？<br>
                             - 新しいサークルを作るには？<br>
                             - 休学・復学・退学の手続きをしたいときは？<br>
-                            様々な質問にお答えします！
-                            <span class="important-note">
-                            ※氏名・住所・学籍番号などの個人情報は入力しないでください。
-                            </span>
-                        </div>
+                            様々な質問にお答えします！<br><br>
+                            
+                            <span class="warning-text">※氏名・住所・学籍番号などの個人情報は入力しないでください。
+重要な決定をする前に、必ず公式情報を確認してください。</span></div>
                         <div class="message-time">システム起動時刻</div>
                     </div>
                 </div>

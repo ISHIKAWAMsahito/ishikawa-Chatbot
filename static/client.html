@@ -203,13 +203,26 @@
         .success-message { color: #28a745; font-weight: 600; margin-top: 10px; display: none; }
         .error-message { color: #dc3545; font-weight: 600; margin-top: 10px; display: none; }
 
-        .warning-text { color: red; font-weight: bold; }
+        /* ここを新しいデザインに差し替えます */
+        .warning-text {
+            display: block;            /* 幅いっぱいに広げて自動調整しやすくする */
+            margin-top: 15px;          /* 上に余白を作る */
+            padding: 12px;             /* 内側に余白を作る */
+            background-color: #fff4e5; /* 優しいオレンジの背景 */
+            color: #664d03;            /* 読みやすい濃い茶色の文字 */
+            border-left: 4px solid #ff9800; /* 左側にアクセントの線を引く */
+            border-radius: 8px;        /* 角を少し丸くする */
+            font-size: 0.85rem;        /* PC・スマホ両方で邪魔にならないサイズ */
+            font-weight: 500;          /* ほどよい太さに */
+            line-height: 1.5;          /* 行間を広げて読みやすく */
+        }
+
+        /* --- ここから下は変更せずにそのまま残してください --- */
         .theme-selector { margin-top: 20px; color: rgba(255, 255, 255, 0.9); font-size: 0.9rem; }
         .theme-selector p { margin-bottom: 8px; }
         .theme-selector div { display: flex; justify-content: center; gap: 15px; }
         .theme-btn { width: 28px; height: 28px; border-radius: 50%; border: 2px solid white; cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
         .theme-btn:hover { transform: scale(1.15); box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
-
         .theme-btn[data-theme="default"] { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
         .theme-btn[data-theme="green"] { background: linear-gradient(135deg, #2AF598 0%, #009EFD 100%); }
         .theme-btn[data-theme="orange"] { background: linear-gradient(135deg, #F6D365 0%, #FDA085 100%); }
@@ -225,6 +238,32 @@
         @media (max-width: 480px) {
             body { padding: 5px; }
             .container { height: calc(100vh - 10px); }
+            /* メッセージ本文の文字サイズ */
+            .message-content { 
+                font-size: 0.9rem; /* 標準より少し小さく */
+                line-height: 1.4;  /* 行間も少し詰める */
+            }
+            
+            /* 入力欄の文字サイズ */
+            .chat-input { 
+                font-size: 14px; /* スマホでの入力しやすさを考慮 */
+            }
+            
+            /* 送信ボタンの文字サイズ */
+            .send-btn { 
+                font-size: 0.9rem; 
+            }
+            
+            /* メッセージの時間の文字サイズ */
+            .message-time { 
+                font-size: 0.7rem; 
+            }
+            
+            /* チャット上部のヘッダー文字サイズ */
+            .chat-header {
+                font-size: 1rem;
+                padding: 10px;
+            }
             .header { padding: 20px; display: flex; flex-direction: column; align-items: center; }
             .header h1 { font-size: 1.6rem; }
             .header .subtitle { font-size: 0.9rem; }
@@ -350,17 +389,15 @@ body.dark-mode .dark-mode-toggle {
         <div class="chat-header">💬 AIチャット</div>
         <div class="chat-messages" id="chatMessages">
             <div class="message bot">
-                <div class="message-content">
-                    私は学生支援チャットボットです。🤖<br>
-                    - 学生証をなくした・盗難・汚してしまったときは?<br>
-                    - 新しいサークルを作るには?<br>
-                    - 休学・復学・退学の手続きをしたいときは?<br>
-                    様々な質問にお答えします!
-                    <span class="warning-text">
-            ※氏名・住所・学籍番号などの個人情報は入力しないでください。
-                    重要な決定をする前に、必ず公式情報を確認してください。
-                    </span>
-                </div>
+                <div class="message-content" style="white-space: normal;">私は学生支援チャットボットです。🤖<br>
+- 学生証をなくした・盗難・汚してしまったときは?<br>
+- 新しいサークルを作るには?<br>
+- 休学・復学・退学の手続きをしたいときは?<br>
+様々な質問にお答えします!
+<span class="warning-text">※氏名・住所・学籍番号などの個人情報は入力しないでください。
+重要な決定をする前に、必ず公式情報を確認してください。</span></div>
+                <div class="message-time">システム起動時刻</div>
+            </div>
                 <div class="message-time">システム起動時刻</div>
             </div>
         </div>
