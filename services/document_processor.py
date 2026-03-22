@@ -1,15 +1,136 @@
 import io
 import os
 import re
+import asyncio
 import hashlib
 import logging
 import tempfile
-from typing import Any, Iterator, Optional
+from typing import Any, AsyncIterator, Iterator, Optional
 
+import google.generativeai as genai
 import pypdf
+from google.generativeai.types import HarmBlockThreshold, HarmCategory
+from PIL import Image
 from docx import Document as DocxDocument
-from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document as LangChainDocument
+
+# Gemini Vision（OCR）用。学術・事務文書で過度にブロックされない設定
+VISION_SAFETY_SETTINGS = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+}
+
+GEMINI_VISION_MODEL = "models/gemini-2.5-flash"
+
+_genai_vision_configured = False
+
+
+def _ensure_genai_vision_configured() -> None:
+    """OCR 用に Gemini を環境変数の API キーで初期化（冪等）。"""
+    global _genai_vision_configured
+    if _genai_vision_configured:
+        return
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    _genai_vision_configured = True
+
+
+def _gemini_response_text(response: Any) -> str:
+    """generate_content の応答からテキストを取り出す（ブロック時のフォールバック含む）。"""
+    try:
+        t = getattr(response, "text", None)
+        if t and str(t).strip():
+            return str(t).strip()
+    except Exception:
+        pass
+    try:
+        cands = getattr(response, "candidates", None) or []
+        if not cands:
+            return ""
+        parts = getattr(cands[0].content, "parts", None) or []
+        return "".join(getattr(p, "text", "") or "" for p in parts).strip()
+    except Exception:
+        return ""
+
+
+OCR_VISION_PROMPT_TEMPLATE = """この画像は公的・業務用の文書資料の1ページです。次を厳守して文字起こししてください。
+
+【出力形式】
+- 必ず Markdown で構造化すること（見出しは # / ## / ###、箇条書きは - または番号付きリスト）。
+- 表は Markdown テーブル（| 列1 | 列2 |）で再現し、列・行の対応を維持すること。結合セルは可能な範囲で注記で示すこと。
+- 脚注・注釈・欄外注記・図表のキャプション・※印の説明は省略せず、本文と区別できる形で保持すること。
+- 読み取れない箇所のみ [判読不能] とし、それ以外は推測で補完しないこと。
+- 前置き・後書き・「この画像は〜」などのメタ説明は出力しない。抽出した本文のみを返すこと。
+
+【文脈】元PDFファイル名: {source_pdf_name} / ページ番号: {page_num}
+"""
+
+
+async def _extract_text_with_gemini_vision(
+    jpeg_bytes: bytes,
+    page_num: int,
+    source_pdf_name: str,
+    max_retries: int = 4,
+) -> str:
+    """
+    Gemini 2.5 Flash による画像OCR（Markdown構造化指示）。
+    429 / Quota 時は asyncio.sleep しながらリトライする。
+    """
+    _ensure_genai_vision_configured()
+    if not os.getenv("GEMINI_API_KEY"):
+        logging.error("GEMINI_API_KEY が未設定のため PDF OCR を実行できません")
+        return ""
+
+    prompt = OCR_VISION_PROMPT_TEMPLATE.format(
+        source_pdf_name=source_pdf_name,
+        page_num=page_num,
+    )
+    image = Image.open(io.BytesIO(jpeg_bytes))
+    model = genai.GenerativeModel(GEMINI_VISION_MODEL)
+
+    last_err: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = await model.generate_content_async(
+                [prompt, image],
+                safety_settings=VISION_SAFETY_SETTINGS,
+            )
+            text = _gemini_response_text(response)
+            if text:
+                return text
+            logging.warning(
+                "Gemini Vision が空応答 (page=%s, attempt=%s)", page_num, attempt
+            )
+            if attempt < max_retries:
+                await asyncio.sleep(2)
+                continue
+            return ""
+        except Exception as e:
+            last_err = e
+            err_s = str(e).lower()
+            is_quota = "429" in str(e) or "quota" in err_s or "resource_exhausted" in err_s
+            if is_quota and attempt < max_retries:
+                wait = 25 + attempt * 15
+                logging.warning(
+                    "Gemini Vision 429/Quota (page=%s)。%s秒待機してリトライ (%s/%s)",
+                    page_num,
+                    wait,
+                    attempt + 1,
+                    max_retries,
+                )
+                await asyncio.sleep(wait)
+                continue
+            logging.error("Gemini Vision OCR エラー (page=%s): %s", page_num, e)
+            if attempt < max_retries:
+                await asyncio.sleep(5)
+                continue
+            break
+    if last_err:
+        logging.error("Gemini Vision OCR 最終失敗 (page=%s): %s", page_num, last_err)
+    return ""
+
 
 class SimpleDocumentProcessor:
     """
@@ -156,22 +277,9 @@ class SimpleDocumentProcessor:
 
 
 # ---------------------------------------------------------------------------
-# 高精度PDFモード: 1ページずつ画像化 → Storage へ直接アップロード → OCRスタブ → チャンキング
-# （poppler_path は指定しない。Linux/Render では poppler-utils が PATH に必要）
+# 高精度PDFモード: 1ページずつ画像化 → Storage へ直接アップロード → Gemini Vision OCR → チャンキング
+# convert_from_path に poppler_path は渡さない（システム PATH の poppler を使用）
 # ---------------------------------------------------------------------------
-
-
-def _ocr_stub_extract_text(jpeg_bytes: bytes, page_num: int, source_name: str) -> str:
-    """
-    OCR のスタブ: 本番では Tesseract / Vision API 等に差し替え可能。
-    jpeg_bytes は将来の実OCRで使用する。
-    """
-    _ = jpeg_bytes
-    return (
-        f"[高精度モード ページ{page_num}] （OCRスタブ）\n"
-        f"元ファイル: {source_name}\n"
-        "※本番運用時はこのプレースホルダを実OCR結果に置き換えてください。"
-    )
 
 
 def _pdf_page_count(pdf_path: str) -> int:
@@ -223,7 +331,7 @@ def _upload_jpeg_to_supabase(
     )
 
 
-def iter_pdf_ocr_document_chunks(
+async def iter_pdf_ocr_document_chunks(
     pdf_bytes: bytes,
     original_filename: str,
     category: str,
@@ -232,26 +340,41 @@ def iter_pdf_ocr_document_chunks(
     processor: SimpleDocumentProcessor,
     bucket: str = "images",
     dpi: int = 150,
-) -> Iterator[LangChainDocument]:
+) -> AsyncIterator[LangChainDocument]:
     """
-    PDF を一時ファイルに保存し、ページ単位で画像化→Storage アップロード→OCRスタブ→SimpleDocumentProcessor でチャンキング。
-    各チャンクの metadata に element_type=image_ocr, image_path, source を付与する。
+    PDF を一時ファイルに保存し、ページ単位で画像化→Storage アップロード→Gemini Vision OCR→SimpleDocumentProcessor でチャンキング。
+    各チャンクの metadata に element_type=image_ocr, image_path（ハッシュ付きjpgファイル名）, source を付与する。
+    親子チャンキングの親文脈キーは process_and_chunk 内の parent_content に統一。
     """
     safe_base = re.sub(r"[^\w\.\-]", "_", os.path.basename(original_filename))[:120] or "document"
     fd, path = tempfile.mkstemp(suffix=".pdf")
     try:
         os.write(fd, pdf_bytes)
         os.close(fd)
-        n_pages = _pdf_page_count(path)
+        n_pages = await asyncio.to_thread(_pdf_page_count, path)
         for page_num in range(1, n_pages + 1):
-            jpeg_bytes = _render_single_page_jpeg(path, page_num, dpi=dpi)
+            jpeg_bytes = await asyncio.to_thread(
+                _render_single_page_jpeg, path, page_num, dpi
+            )
             digest = hashlib.sha256(jpeg_bytes).hexdigest()[:24]
+            # Storage に保存するオブジェクト名（ハッシュ付き・一意）— metadata.image_path に同じ値を格納
             image_filename = f"{safe_base}_p{page_num}_{digest}.jpg"
             storage_object_path = f"pdf_ocr/{image_filename}"
-            _upload_jpeg_to_supabase(
-                supabase_client, bucket, storage_object_path, jpeg_bytes
+            await asyncio.to_thread(
+                _upload_jpeg_to_supabase,
+                supabase_client,
+                bucket,
+                storage_object_path,
+                jpeg_bytes,
             )
-            ocr_text = _ocr_stub_extract_text(jpeg_bytes, page_num, original_filename)
+            ocr_text = await _extract_text_with_gemini_vision(
+                jpeg_bytes, page_num, original_filename
+            )
+            if not ocr_text.strip():
+                ocr_text = (
+                    f"[ページ{page_num}] OCR結果が空でした。"
+                    f"画像は Storage に保存済み: {image_filename}"
+                )
             synthetic_filename = f"{safe_base}_p{page_num}.txt"
             for doc in processor.process_and_chunk(
                 synthetic_filename,
@@ -262,6 +385,7 @@ def iter_pdf_ocr_document_chunks(
                 doc.metadata["element_type"] = "image_ocr"
                 doc.metadata["image_path"] = image_filename
                 doc.metadata["source"] = original_filename
+                # 親子チャンキングの親テキストキーは parent_content に統一（上書きしない）
                 yield doc
     finally:
         try:

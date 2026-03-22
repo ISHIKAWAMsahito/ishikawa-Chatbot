@@ -365,20 +365,16 @@ async def upload_document(
         )
 
         if use_pdf_high_accuracy:
-
-            def _collect_ocr_docs():
-                return list(
-                    iter_pdf_ocr_document_chunks(
-                        content,
-                        filename,
-                        category,
-                        collection_name,
-                        client,
-                        simple_processor,
-                    )
-                )
-
-            docs = await asyncio.to_thread(_collect_ocr_docs)
+            docs = []
+            async for doc in iter_pdf_ocr_document_chunks(
+                content,
+                filename,
+                category,
+                collection_name,
+                client,
+                simple_processor,
+            ):
+                docs.append(doc)
             if not docs:
                 raise HTTPException(400, "OCR処理でドキュメントを生成できませんでした。")
             total_chunks = await _ingest_document_stream(

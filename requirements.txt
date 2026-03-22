@@ -15,20 +15,20 @@ Authlib==1.6.3
 itsdangerous==2.2.0
 certifi==2025.10.5
 
-# --- Google Gemini ---
+# --- Google Gemini（チャット・Embedding・PDF高精度OCRの Vision 兼用）---
 google-generativeai==0.8.5
 
 # --- Supabase DB ---
 supabase==2.24.0
 
-# --- ドキュメント処理 (軽量版) ---
+# --- ドキュメント処理（標準抽出 + PDF画像化OCR）---
 # PyPDF2==3.0.1      # 【削除】脆弱性あり・開発終了のため削除
-pypdf>=6.4.0         # 【追加】v5系の脆弱性(CWE-770, CWE-409等)修正済み
-python-docx==1.2.0
+pypdf>=6.4.0         # PDF テキスト抽出（標準モード）
+python-docx==1.2.0   # Word 抽出
 langchain-text-splitters
-# PDF→画像（高精度モード）。Linux/Render では poppler-utils が必要（Dockerfile 参照）
+# PDF→画像（高精度OCRモード）。Render では render.yaml の buildCommand で poppler-utils 導入（Dockerfile でも可）
 pdf2image>=1.17.0
-Pillow>=10.0.0
+Pillow>=10.0.0       # 画像処理（JPEG 化・Vision 入力）
 
 # --- 監視・トレース・リトライ (★重要: LangSmith対応) ---
 langsmith
