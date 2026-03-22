@@ -650,13 +650,22 @@ body.dark-mode .total-chunks-info {
                     <div class="document-upload">
                         <input type="file" id="fileInput" accept=".txt,.md,.pdf,.docx" multiple>
                         <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📁 文書アップロード</button>
-                        <p class="upload-note">
-                            PDFは自動で画像化・OCR経路で取り込みます。その他（.txt / .md / .docx）は標準抽出です。
-                        </p>
-                        <p class="upload-note">
-                            ※メタデータ登録のため、ファイル名は「<b>カテゴリ名</b>_ファイル名.txt」の形式にしてください。
-                        </p>
-                    </div>
+                       <div class="upload-note">
+    <div style="margin-bottom: 12px; font-weight: bold; color: #333;">【自動判別】</div>
+    <ul style="list-style: none; padding-left: 0; margin-bottom: 12px;">
+        <li style="margin-bottom: 8px; display: flex; align-items: flex-start;">
+            <span style="margin-right: 8px;">📄</span>
+            <span><strong>PDFファイル</strong>：<br>図表や複雑なレイアウトも読み取ります。</span>
+        </li>
+        <li style="display: flex; align-items: flex-start;">
+            <span style="margin-right: 8px;">📝</span>
+            <span><strong>Word・テキスト</strong>：<br>図表などがない文字を取り込みます。</span>
+        </li>
+    </ul>
+    <p style="font-size: 0.85rem; border-top: 1px solid #ddd; pt: 8px; color: #d9ab4f; font-weight: 500;">
+        ※資料の形式を気にせず、そのままアップロードして大丈夫です。
+    </p>
+</div>
                     <div class="document-list" id="documentList"></div>
                 </div>
 
