@@ -26,6 +26,9 @@ supabase==2.24.0
 pypdf>=6.4.0         # 【追加】v5系の脆弱性(CWE-770, CWE-409等)修正済み
 python-docx==1.2.0
 langchain-text-splitters
+# PDF→画像（高精度モード）。Linux/Render では poppler-utils が必要（Dockerfile 参照）
+pdf2image>=1.17.0
+Pillow>=10.0.0
 
 # --- 監視・トレース・リトライ (★重要: LangSmith対応) ---
 langsmith

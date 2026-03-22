@@ -1,4 +1,5 @@
 import logging
+import os
 import certifi
 import asyncio
 import traceback
@@ -25,7 +26,7 @@ from core import settings
 from core.config import ACTIVE_COLLECTION_NAME
 
 # ★修正ポイント1: クラスを直接インポートする
-from services.document_processor import SimpleDocumentProcessor
+from services.document_processor import SimpleDocumentProcessor, iter_pdf_ocr_document_chunks
 
 router = APIRouter()
 
@@ -131,6 +132,45 @@ async def process_batch_insert(batch_docs: List[Any], embedding_model: str, coll
             else:
                 logging.error(f"バッチ処理エラー: {e}")
                 raise e
+
+
+def _category_from_filename(filename: str) -> str:
+    """アップロードノート: 「カテゴリ名_ファイル名」形式を想定。"""
+    name = os.path.basename(filename)
+    if "_" in name:
+        return name.split("_", 1)[0]
+    return "一般"
+
+
+async def _ingest_document_stream(
+    doc_iter,
+    embedding_model: str,
+    collection_name: str,
+) -> int:
+    """Iterator からチャンクを読み、バッチで embedding 付き insert する。"""
+    seen_contents = set()
+    batch_docs: List[Any] = []
+    total_chunks = 0
+    for doc in doc_iter:
+        chunk_hash = hashlib.sha256(doc.page_content.encode()).hexdigest()
+        if chunk_hash in seen_contents:
+            continue
+        seen_contents.add(chunk_hash)
+        if "collection_name" not in doc.metadata:
+            doc.metadata["collection_name"] = collection_name
+        batch_docs.append(doc)
+        if len(batch_docs) >= 30:
+            total_chunks += await process_batch_insert(
+                batch_docs, embedding_model, collection_name
+            )
+            batch_docs = []
+            await asyncio.sleep(0.2)
+    if batch_docs:
+        total_chunks += await process_batch_insert(
+            batch_docs, embedding_model, collection_name
+        )
+    return total_chunks
+
 
 # ----------------------------------------------------------------
 # Webスクレイピング処理
@@ -281,6 +321,92 @@ async def scrape_website(request: ScrapeRequest, user: dict = Depends(require_au
         logging.error(f"Scrape Error: {e}", exc_info=LOG_EXC_INFO)
         raise HTTPException(500, "スクレイピングに失敗しました。")
     # ▲▲▲ 追加したエラーハンドリング（アプローチ2） ▲▲▲
+
+
+# ----------------------------------------------------------------
+# 文書アップロード（拡張子で自動: .pdf → 高精度画像化＋OCR、それ以外 → 標準抽出）
+# ----------------------------------------------------------------
+@router.post("/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    collection_name: str = Form(..., max_length=256),
+    embedding_model: str = Form("models/gemini-embedding-001", max_length=128),
+    user: dict = Depends(require_auth),
+):
+    if not database.db_client or not simple_processor:
+        raise HTTPException(503, "システム初期化エラー")
+
+    raw_name = file.filename or "document"
+    filename = os.path.basename(raw_name)
+    if not filename or filename in (".", ".."):
+        raise HTTPException(400, "無効なファイル名です。")
+
+    lower = filename.lower()
+    allowed_ext = (".pdf", ".docx", ".txt", ".md")
+    if not any(lower.endswith(ext) for ext in allowed_ext):
+        raise HTTPException(400, "許可されていないファイル形式です。")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "ファイルが空です。")
+
+    max_bytes = 50 * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(400, "ファイルサイズが大きすぎます。")
+
+    category = _category_from_filename(filename)
+    use_pdf_high_accuracy = lower.endswith(".pdf")
+
+    try:
+        client = (
+            database.db_client.client
+            if hasattr(database.db_client, "client")
+            else database.db_client
+        )
+
+        if use_pdf_high_accuracy:
+
+            def _collect_ocr_docs():
+                return list(
+                    iter_pdf_ocr_document_chunks(
+                        content,
+                        filename,
+                        category,
+                        collection_name,
+                        client,
+                        simple_processor,
+                    )
+                )
+
+            docs = await asyncio.to_thread(_collect_ocr_docs)
+            if not docs:
+                raise HTTPException(400, "OCR処理でドキュメントを生成できませんでした。")
+            total_chunks = await _ingest_document_stream(
+                iter(docs),
+                embedding_model,
+                collection_name,
+            )
+        else:
+            doc_generator = simple_processor.process_and_chunk(
+                filename=filename,
+                content=content,
+                category=category,
+                collection_name=collection_name,
+            )
+            total_chunks = await _ingest_document_stream(
+                doc_generator,
+                embedding_model,
+                collection_name,
+            )
+
+        return {"message": f"「{filename}」の取り込み完了", "chunks": total_chunks}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Upload error: {e}", exc_info=LOG_EXC_INFO)
+        raise HTTPException(500, GENERIC_ERROR_MSG)
+
 
 # --- 以下、既存のエンドポイント ---
 @router.get("/all")

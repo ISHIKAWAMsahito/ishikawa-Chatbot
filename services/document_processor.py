@@ -1,7 +1,11 @@
 import io
+import os
 import re
+import hashlib
 import logging
-from typing import Iterator, Optional
+import tempfile
+from typing import Any, Iterator, Optional
+
 import pypdf
 from docx import Document as DocxDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
@@ -149,6 +153,122 @@ class SimpleDocumentProcessor:
                 }
                 yield LangChainDocument(page_content=child_text, metadata=metadata)
         logging.info(f"{filename}: Processing complete (Stream finished).")
+
+
+# ---------------------------------------------------------------------------
+# 高精度PDFモード: 1ページずつ画像化 → Storage へ直接アップロード → OCRスタブ → チャンキング
+# （poppler_path は指定しない。Linux/Render では poppler-utils が PATH に必要）
+# ---------------------------------------------------------------------------
+
+
+def _ocr_stub_extract_text(jpeg_bytes: bytes, page_num: int, source_name: str) -> str:
+    """
+    OCR のスタブ: 本番では Tesseract / Vision API 等に差し替え可能。
+    jpeg_bytes は将来の実OCRで使用する。
+    """
+    _ = jpeg_bytes
+    return (
+        f"[高精度モード ページ{page_num}] （OCRスタブ）\n"
+        f"元ファイル: {source_name}\n"
+        "※本番運用時はこのプレースホルダを実OCR結果に置き換えてください。"
+    )
+
+
+def _pdf_page_count(pdf_path: str) -> int:
+    """pdf2image: 総ページ数（1ページ以上）。"""
+    from pdf2image import pdfinfo_from_path
+
+    info = pdfinfo_from_path(pdf_path)
+    raw = info.get("Pages", 1)
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        n = 1
+    return max(1, n)
+
+
+def _render_single_page_jpeg(pdf_path: str, page_num: int, dpi: int = 150) -> bytes:
+    """1ページのみレンダリングし JPEG バイナリにする（全ページ一括禁止）。"""
+    from pdf2image import convert_from_path
+
+    images = convert_from_path(
+        pdf_path,
+        first_page=page_num,
+        last_page=page_num,
+        dpi=dpi,
+    )
+    try:
+        img = images[0]
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85, optimize=True)
+        return buf.getvalue()
+    finally:
+        images.clear()
+        del images
+
+
+def _upload_jpeg_to_supabase(
+    supabase_client: Any,
+    bucket: str,
+    storage_object_path: str,
+    jpeg_bytes: bytes,
+) -> None:
+    """Supabase Storage に JPEG を直接アップロード（ローカルファイルに保存しない）。"""
+    supabase_client.storage.from_(bucket).upload(
+        storage_object_path,
+        jpeg_bytes,
+        {"content-type": "image/jpeg"},
+    )
+
+
+def iter_pdf_ocr_document_chunks(
+    pdf_bytes: bytes,
+    original_filename: str,
+    category: str,
+    collection_name: str,
+    supabase_client: Any,
+    processor: SimpleDocumentProcessor,
+    bucket: str = "images",
+    dpi: int = 150,
+) -> Iterator[LangChainDocument]:
+    """
+    PDF を一時ファイルに保存し、ページ単位で画像化→Storage アップロード→OCRスタブ→SimpleDocumentProcessor でチャンキング。
+    各チャンクの metadata に element_type=image_ocr, image_path, source を付与する。
+    """
+    safe_base = re.sub(r"[^\w\.\-]", "_", os.path.basename(original_filename))[:120] or "document"
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    try:
+        os.write(fd, pdf_bytes)
+        os.close(fd)
+        n_pages = _pdf_page_count(path)
+        for page_num in range(1, n_pages + 1):
+            jpeg_bytes = _render_single_page_jpeg(path, page_num, dpi=dpi)
+            digest = hashlib.sha256(jpeg_bytes).hexdigest()[:24]
+            image_filename = f"{safe_base}_p{page_num}_{digest}.jpg"
+            storage_object_path = f"pdf_ocr/{image_filename}"
+            _upload_jpeg_to_supabase(
+                supabase_client, bucket, storage_object_path, jpeg_bytes
+            )
+            ocr_text = _ocr_stub_extract_text(jpeg_bytes, page_num, original_filename)
+            synthetic_filename = f"{safe_base}_p{page_num}.txt"
+            for doc in processor.process_and_chunk(
+                synthetic_filename,
+                ocr_text.encode("utf-8"),
+                category,
+                collection_name,
+            ):
+                doc.metadata["element_type"] = "image_ocr"
+                doc.metadata["image_path"] = image_filename
+                doc.metadata["source"] = original_filename
+                yield doc
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
 
 # グローバルインスタンス
 simple_processor: Optional[SimpleDocumentProcessor] = None

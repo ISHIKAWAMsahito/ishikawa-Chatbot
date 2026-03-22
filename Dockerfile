@@ -8,6 +8,10 @@ ENV PYTHONUNBUFFERED=1 \
 # 作業ディレクトリを作成
 WORKDIR /app
 
+# pdf2image 用（poppler_path は指定しない前提でシステム PATH を使用）
+RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 # 2. 依存関係のインストール（ここを最優先でキャッシュさせる）
 # requirements.txtに変更がない限り、このレイヤーは再利用されます
 COPY requirements.txt .
