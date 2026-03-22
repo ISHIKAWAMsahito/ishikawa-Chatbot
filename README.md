@@ -43,36 +43,52 @@ Render / Docker / LangSmith / UptimeRobot(トレース・評価)
 
 ```text
 .
-├── main.py                  # アプリケーション本体、Lifespan管理、ルーター登録
+├── main.py                  # アプリケーション本体、Lifespan管理、各ルーターの登録 
 ├── static/                  # 静的ファイル (フロントエンド)
-│   ├── client.html          # 学生用チャット画面
-│   ├── admin.html           # 管理者用ダッシュボード
-│   ├── DB.html              # ナレッジベース(DB)管理画面
-│   ├── stats.html           # 統計・AI改善相談画面 (Update)
-│   └── style.css            # 共通スタイルシート
+│   ├── client.html          # 学生用チャット画面 
+│   ├── admin.html           # 管理者用ダッシュボード 
+│   ├── DB.html              # ナレッジベース(DB)管理画面 
+│   ├── stats.html           # 統計・AI改善相談画面 
+│   ├── style.css            # アプリ全体のスタイルシート 
+│   ├── admin.js             # 管理者用「コマンドセンター」ロジック (New) 
+│   └── client.js            # 学生用UI制御・対話ロジック (New) 
 │
-├── api/                     # APIエンドポイント (ルーター)
-│   ├── auth.py              # Auth0認証処理
-│   ├── chat.py              # チャット・履歴・フィードバック API
-│   ├── documents.py         # ナレッジ(RAG用)登録・検索 API
-│   ├── system.py            # 設定管理・ヘルスチェック API
-│   └── stats.py             # 統計・対話ログ分析 API (Update)
+├── api/                     # APIエンドポイント (FastAPIルーター)
+│   ├── __init__.py          # パッケージ初期化 
+│   ├── auth.py              # Auth0認証・HTML提供 
+│   ├── chat.py              # チャット・履歴 API 
+│   ├── documents.py         # ナレッジ管理・安全なWebスクレイピング API 
+│   ├── fallbacks.py         # Q&A管理 API (New) 
+│   ├── feedback.py          # フィードバック収集 API (New) 
+│   ├── system.py            # 設定・ヘルスチェック・コレクション管理 
+│   └── stats.py             # 統計・AI分析 API 
 │
 ├── services/                # ビジネスロジック
-│   ├── chat_logic.py        # RAGパイプライン制御・ログ保存トリガー (Update)
-│   ├── chat_log.py          # 対話ログのDB保存・永続化処理 (New)
-│   ├── search.py            # クエリ拡張・リランク・ハイブリッド検索
-│   ├── llm.py               # Gemini API連携・リトライ処理
-│   ├── prompts.py           # プロンプト一元管理 (Update)
-│   └── document_processor.py # テキスト抽出・チャンキング
+│   ├── __init__.py          # パッケージ初期化 
+│   ├── chat_logic.py        # メインフロー制御・履歴管理 
+│   ├── chat_log.py          # 対話ログの保存・永続化処理
+│   ├── search.py            # クエリ拡張・リランク・Lost in the Middle対策 
+│   ├── llm.py               # Gemini API連携・Tenacityリトライ処理 
+│   ├── prompts.py           # プロンプト一元管理 
+│   ├── document_processor.py # テキスト抽出・チャンキング 
+│   ├── feedback.py          # フィードバック保存・集計ロジック (New) 
+│   ├── storage.py           # Supabaseストレージ操作・署名付きURL生成 (New) 
+│   ├── vectorize_logs.py    # ログ・コメントの分析用ベクトル化サービス (New) 
+│   ├── text_processor.py    # テキスト洗浄・XSS対策・正規化 (New) 
+│   └── utils.py             # 汎用ヘルパー (URLリンク化など) (New) 
 │
-├── core/                    # 中核設定
-│   ├── database.py          # Supabase(PostgreSQL)接続管理
-│   ├── config.py            # 環境変数・定数定義
-│   └── dependencies.py      # 認証・認可依存関係 (require_auth)
+├── core/                    # 中核設定・コンポーネント
+│   ├── __init__.py          # パッケージ初期化 
+│   ├── database.py          # SupabaseClientManager (接続管理) 
+│   ├── config.py            # 環境変数・定数・OAuth定義 
+│   ├── settings.py          # Settings/ConnectionManager (New) 
+│   ├── constants.py         # 固定メッセージ・設定値の一元管理 (New) 
+│   ├── dependencies.py      # 認証依存関係 (require_auth) 
+│   └── ws_auth.py           # WebSocket用の検証関数 (New) 
 │
 └── models/                  # データモデル
-    └── schemas.py           # Pydanticモデル定義 (Update)
+    ├── __init__.py          # パッケージ初期化 
+    └── schemas.py           # Pydanticリクエスト/レスポンスモデル
 
 🛠️ セットアップ
 1. 環境変数の設定
