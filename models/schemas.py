@@ -160,6 +160,18 @@ class AnalysisQuery(BaseModel):
     target_period_days: int = Field(30, description="分析対象とする過去の日数")
 
 
+class InputValidationResult(BaseModel):
+    """入力バリデーション結果"""
+    is_safe: bool = True
+    matched_keyword: Optional[str] = None
+
+
+class OutputFilterResult(BaseModel):
+    """出力フィルタリング結果"""
+    filtered_text: str
+    redaction_count: int = 0
+
+
 # -----------------------------------------------------------------------------
 # Search Result Models
 # -----------------------------------------------------------------------------

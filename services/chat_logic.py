@@ -23,6 +23,8 @@ from services.utils import (
 )
 from services import prompts
 from services.vectorize_logs import vectorize_chat_log
+from services.constants import SAFETY_ERROR_MESSAGE
+from services.text_processor import validate_input, filter_output
 
 llm_service = LLMService()
 search_service = SearchService(llm_service)
@@ -62,6 +64,24 @@ async def enhanced_chat_logic(
     ai_response_full = ""
 
     try:
+        if not validate_input(user_input):
+            yield send_sse({"content": SAFETY_ERROR_MESSAGE})
+            history_manager.add(session_id, "assistant", SAFETY_ERROR_MESSAGE)
+            log_entry = ChatLogCreate(
+                session_id=session_id,
+                user_query=user_input,
+                ai_response=SAFETY_ERROR_MESSAGE,
+                metadata={
+                    "collection": collection_name,
+                    "result": "blocked_input",
+                    "top_k": top_k,
+                    "search_mode": search_mode,
+                },
+            )
+            asyncio.create_task(_save_and_vectorize_log(log_entry))
+            yield send_sse({"done": True, "feedback_id": str(uuid.uuid4())})
+            return
+
         history_manager.add(session_id, "user", user_input)
 
         yield send_sse({"status_message": "🔍 質問を分析しています..."})
@@ -150,8 +170,9 @@ async def enhanced_chat_logic(
             system_prompt=full_system_prompt,
         ):
             text_chunk = chunk if isinstance(chunk, str) else chunk.get("content", "")
-            ai_response_full += text_chunk
-            yield send_sse({"content": text_chunk})
+            safe_chunk = filter_output(text_chunk)
+            ai_response_full += safe_chunk
+            yield send_sse({"content": safe_chunk})
 
         # 4. 参照元リスト
         references_text = format_references(search_results)

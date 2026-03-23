@@ -1,103 +1,81 @@
 import html
 import re
-from typing import Optional
+
+from models.schemas import InputValidationResult, OutputFilterResult
+from services.constants import BLOCK_KEYWORDS, PII_PATTERNS
+
 
 class TextProcessor:
-    """テキスト処理を一元化するクラス
-    
-    ホワイトスペース正規化、マークダウン変換、HTMLエスケープを統一的に処理します
-    """
-    
-    # マークダウンヘッダーのマッピング（★修正：途切れていた正規表現を補完）
-    # 行頭(^)にあるローマ数字(Ⅰ〜Ⅻ または I,V,X)をグループ1(\1)として捉え、
-    # ピリオドや空白を挟んで、続く文字列をグループ2(\2)として捉えます。
-    ROMAN_NUMERAL_PATTERN = r'^([Ⅰ-ⅫIIVX]+)[．\.\s]+(.*)$'
-    
+    """テキスト処理を一元化するクラス。"""
+
+    ROMAN_NUMERAL_PATTERN = r"^([Ⅰ-ⅫIIVX]+)[．\.\s]+(.*)$"
+
     @staticmethod
     def normalize_whitespace_and_newlines(text: str) -> str:
-        """ホワイトスペースと改行を正規化する
-        
-        Args:
-            text: 正規化対象のテキスト
-            
-        Returns:
-            正規化されたテキスト
-        """
         if not text:
             return ""
-        
-        # タブと全角スペースを半角スペースに統一
         text = text.replace("\t", " ").replace("　", " ")
-        
-        # 複数の改行をシングル改行に統一
-        text = re.sub(r'(\n|\r|\r\n)+', '\n', text)
-        
-        # 複数の連続スペースをシングルスペースに統一
-        text = re.sub(r'[ \t]+', ' ', text)
-        
+        text = re.sub(r"(\n|\r|\r\n)+", "\n", text)
+        text = re.sub(r"[ \t]+", " ", text)
         return text.strip()
-    
+
     @staticmethod
     def apply_markdown_headers(text: str) -> str:
-        """ローマ数字の見出しをマークダウンヘッダーに変換する
-        
-        Args:
-            text: 変換対象のテキスト
-            
-        Returns:
-            マークダウン適用後のテキスト
-        """
         if not text:
             return ""
-        
-        # ローマ数字見出しをマークダウンH1に変換
-        # 例: 「Ⅰ. 履修について」 -> 「# Ⅰ．履修について」
-        text = re.sub(
+        return re.sub(
             TextProcessor.ROMAN_NUMERAL_PATTERN,
-            r'# \1．\2',
+            r"# \1．\2",
             text,
-            flags=re.MULTILINE
+            flags=re.MULTILINE,
         )
-        
-        return text
-    
+
     @staticmethod
     def escape_html_content(text: str) -> str:
-        """HTMLコンテンツをエスケープして XSS を防ぐ
-        
-        Args:
-            text: エスケープ対象のテキスト
-            
-        Returns:
-            エスケープされたテキスト
-        """
         if not text:
             return ""
-        
         return html.escape(text, quote=True)
-    
+
     @staticmethod
     def process_scraped_content(text: str, escape_html: bool = True) -> str:
-        """Webスクレイプコンテンツを処理する
-        
-        Args:
-            text: 処理対象のテキスト
-            escape_html: HTMLエスケープを実行するか（デフォルト: True）
-            
-        Returns:
-            処理されたテキスト
-        """
         if not text:
             return ""
-        
-        # ステップ1: ホワイトスペース正規化
         text = TextProcessor.normalize_whitespace_and_newlines(text)
-        
-        # ステップ2: HTMLエスケープ（スクレイプコンテンツのセキュリティ対策）
         if escape_html:
             text = TextProcessor.escape_html_content(text)
-        
-        # ステップ3: マークダウン適用
-        text = TextProcessor.apply_markdown_headers(text)
-        
-        return text
+        return TextProcessor.apply_markdown_headers(text)
+
+
+def inspect_input(text: str) -> InputValidationResult:
+    """入力に危険キーワードが含まれるかを判定する。"""
+    if not text:
+        return InputValidationResult(is_safe=True, matched_keyword=None)
+
+    lowered = text.lower()
+    for keyword in BLOCK_KEYWORDS:
+        if keyword in lowered:
+            return InputValidationResult(is_safe=False, matched_keyword=keyword)
+    return InputValidationResult(is_safe=True, matched_keyword=None)
+
+
+def validate_input(text: str) -> bool:
+    """危険入力でなければ True。"""
+    return inspect_input(text).is_safe
+
+
+def inspect_and_filter_output(text: str) -> OutputFilterResult:
+    """PIIパターンを伏せ字にして結果を返す。"""
+    if not text:
+        return OutputFilterResult(filtered_text="", redaction_count=0)
+
+    filtered = text
+    redaction_count = 0
+    for pattern in PII_PATTERNS:
+        filtered, count = pattern.subn("****", filtered)
+        redaction_count += count
+    return OutputFilterResult(filtered_text=filtered, redaction_count=redaction_count)
+
+
+def filter_output(text: str) -> str:
+    """出力中の個人情報らしき文字列をマスクする。"""
+    return inspect_and_filter_output(text).filtered_text
